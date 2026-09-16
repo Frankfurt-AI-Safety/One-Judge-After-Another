@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.venv/
+.venv-*/
+venv/
+.env
+
+# Corpora and generated artefacts: never committed. PERSUADE is CC BY-NC-SA (no
+# redistribution of derived essays), Bias-in-Bios is biographies of identifiable people,
+# ASAP is under Kaggle terms. Regenerate locally with runners/generate_*.py.
+/data
+/artifacts
+/plots
+/logs
+
+.DS_Store
+/.claude
+
+# Local working context for Claude Code — not published.
+/CLAUDE.md

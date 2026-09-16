@@ -1,0 +1,31 @@
+# Demographic bias — sex axis, CV-screening arm, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Direct-scoring path: difference-of-means "sex" probe over matched real-biography profiles, then
+# auto-influence (score gap when only sex is swapped) baseline vs null-space-projected.
+# Generate the data first: python experiments/generate_bios_data.py --from-hub
+#
+#   python experiments/run_experiment.py --config configs/demographic_cv_sex_qwen06.yaml
+
+name: demographic_cv_sex_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+dataset_source: data/demographic/cv/pairs.jsonl
+dataset_name: cv_sex
+probe_size: 300
+max_test_examples: 200
+split_seed: 42
+
+null_alpha: 1.0
+batch_size: 8
+max_length: 2048
+device: auto   # CUDA if present, else MLX on Apple Silicon, else CPU
+
+save_probe: true
+
+extra:
+  domain: cv
+  axis: sex
+  encoding: explicit

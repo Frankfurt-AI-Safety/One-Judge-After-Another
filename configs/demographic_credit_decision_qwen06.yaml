@@ -1,0 +1,32 @@
+# Demographic bias — DECISION-RESPONSE arm, credit, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# USER presents a loan applicant (factorial marker: sex / age / marital status / intersection) and asks
+# whether to approve the loan; the RM scores fair vs discriminatory vs neutral vs evasive verdicts.
+# Good-credit records only. Generate the pairs (for the probe direction) with:
+#   python runners/generate_credit.py
+#
+#   python runners/run_decision_response.py --config configs/demographic_credit_decision_qwen06.yaml
+
+name: demographic_credit_decision_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+dataset_source: data/demographic/credit/pairs.jsonl
+dataset_name: credit_decision
+probe_size: 300  # TODO(cluster): ~38 records for credit; see configs/demographic_credit_sex_qwen06.yaml
+max_test_examples: 200
+split_seed: 42
+
+null_alpha: 1.0
+batch_size: 8
+max_length: 2048
+device: auto
+
+save_probe: false
+
+extra:
+  domain: credit
+  axis: sex
+  encoding: explicit

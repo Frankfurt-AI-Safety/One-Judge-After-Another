@@ -1,0 +1,92 @@
+# Base MLDE task config for the RM-bias experiments on the hessian.AI 42 cluster.
+# Derived from the onboarding config_blueprint, with our workspace and image filled in.
+#
+# Workspace: IL_rm_bias (id 142)   PFSS root: /pfss/mlde/workspaces/mlde_wsp_IL_rm_bias
+#
+# One base file; vary GPU count on the command line rather than keeping several near-copies:
+#   det shell start -w IL_rm_bias --config-file cluster/config.yaml
+#   det shell start -w IL_rm_bias --config-file cluster/config.yaml --config resources.slots=2
+#
+# Ready to use as-is. The only thing to change is `image`, and only if you switch from the
+# stock NGC image plus PFSS-installed extras to a custom image (see cluster/README.md §1).
+
+bind_mounts:
+  # Shared external area — present in the cluster's own config_blueprint.yaml.
+  - container_path: /pfss/mlde/mlde_ext
+    host_path: /pfss/mlde/mlde_ext
+    propagation: rprivate
+    read_only: false
+  # Workspace storage: code, data, HF cache and results all live here and survive the task.
+  - container_path: /pfss/mlde/workspaces/mlde_wsp_IL_rm_bias
+    host_path: /pfss/mlde/workspaces/mlde_wsp_IL_rm_bias
+    propagation: rprivate
+    read_only: false
+  - container_path: /pfss/mlde/users/ck21zoly
+    host_path: /pfss/mlde/users/ck21zoly
+    propagation: rprivate
+    read_only: false
+
+description: RM demographic-bias evaluation (inference only)
+
+# Safety net against the failure mode the onboarding deck warns about twice: an idle task
+# holding GPUs. Determined reaps the task after this long idle, so a forgotten shell stops
+# costing allocation. Harmless for batch experiments, which exit on their own.
+# Must be a DURATION STRING ("1h", "30m", "600s") -- a bare integer is rejected at launch
+# with `invalid duration`.
+idle_timeout: 1h
+
+environment:
+  add_capabilities:
+    - IPC_LOCK          # required for the InfiniBand device below
+  force_pull_image: false
+  image:
+    # The cluster's blueprint ships determinedai/pytorch-ngc:0.35.0 — an NGC PyTorch build,
+    # NOT the py-3.8-pytorch-1.12 shown on the onboarding slides, which were out of date.
+    # Set BOTH keys: a slots=0 task uses the `cpu` entry, so leaving it unset would silently
+    # fall back to a different (older) image than the GPU runs use.
+    #
+    # Two ways to get our extras (transformers, scikit-learn, concept-erasure, textstat) in:
+    #   a) point both keys at a custom image layered on this one (cluster/Dockerfile), or
+    #   b) pip install --target onto PFSS once and set PYTHONPATH below — no Docker needed.
+    # (b) is the faster route to a first result; (a) is the reproducible one. See README.
+    cpu: determinedai/pytorch-ngc:0.35.0
+    cuda: determinedai/pytorch-ngc:0.35.0
+  environment_variables:
+    # Keep every large cache on PFSS. The node-local disk is small, and slide 35 is explicit:
+    # overrunning instance storage crashes the compute node and takes other jobs with it.
+    # Exported so $PFSS is available in every task shell. Without it, the pip --target
+    # and staging commands in the README silently expand to /pylibs and fail on the
+    # filesystem root -- a shell variable set in one task does not survive into the next.
+    - PFSS=/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias
+    - HF_HOME=/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/hf_cache
+    # Requires the `hf_transfer` package in pylibs -- the Hub RAISES rather than
+    # falling back if this is 1 and the package is absent.
+    - HF_HUB_ENABLE_HF_TRANSFER=1
+    - TOKENIZERS_PARALLELISM=false
+    # Repo first, then the PFSS-installed extras (option (b) above). Harmless if unused.
+    - PYTHONPATH=/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/OneBiasAfterAnotherFork:/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/pylibs
+
+resources:
+  devices:
+    - container_path: /dev/infiniband/
+      host_path: /dev/infiniband/
+      mode: mrw
+  # The workspace has NO default compute pool set, so this must be stated explicitly on every
+  # launch or the task is rejected (42_Priority does not exist for us).
+  resource_pool: 42_Compute
+  slots: 1
+  weight: 1
+  # NOTE: `is_single_node` is deliberately NOT set here. It is rejected for NTSCs (notebooks,
+  # shells, tensorboards, commands) with "cannot be set for NTSCs" -- an NTSC is one container
+  # on one node by construction, so the guarantee is implicit and the field is meaningless.
+  #
+  # It IS required for multi-slot *experiments*: `device_map="auto"` shards one model across
+  # the GPUs visible to a single process and cannot span nodes, so an unconstrained slots=2
+  # experiment could be placed one GPU per node and either fail or silently see half the
+  # memory. Set `resources.is_single_node: true` in the experiment config used for the 70B
+  # runs, not here.
+
+# Everything up to 32B fits on one A100-80GB in bf16; the two 70B models need slots: 2.
+# Override per run instead of editing this file.
+
+work_dir: /pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/OneBiasAfterAnotherFork

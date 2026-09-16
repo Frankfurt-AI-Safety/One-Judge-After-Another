@@ -1,0 +1,34 @@
+# Demographic bias — EDUCATION (grading), ethnicity via name proxy, Skywork-Qwen3-0.6B.
+#
+# A1 header-proxy arm over real essays (PERSUADE 2.0). Same essay body, swap only the name in the header
+# (white- vs Black-coded first name, holding sex fixed). A name-proxy effect, not pure ethnicity.
+#   python experiments/generate_edu_data.py --source persuade --axes sex,ethnicity,grade_level
+#
+#   python experiments/run_experiment.py --config configs/demographic_edu_ethnicity_persuade_qwen06.yaml
+#
+# NOTE: PERSUADE variant. Not yet run through run_experiment.py; the committed single-axis results
+# are the ASAP ones (configs/demographic_edu_ethnicity_qwen06.yaml).
+
+name: demographic_edu_ethnicity_persuade_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+dataset_source: data/demographic/education/persuade/pairs.jsonl
+dataset_name: edu_ethnicity
+probe_size: 300
+max_test_examples: 200
+split_seed: 42
+
+null_alpha: 1.0
+batch_size: 8
+max_length: 2048
+device: auto
+
+save_probe: false
+
+extra:
+  domain: education
+  axis: ethnicity
+  encoding: proxy

@@ -1,0 +1,27 @@
+One Judge After Another
+Copyright 2026 Frankfurt AI Safety — RM-Bias Working Group
+
+This product includes software developed as a derivative of:
+
+    One Bias After Another
+    https://github.com/drfein/OneBiasAfterAnother
+    Licensed under the Apache License, Version 2.0
+
+Modifications made by the Frankfurt AI Safety RM-Bias Working Group, 2026:
+
+  * Added a demographic / intersectional protected-attribute pipeline: matched-pair
+    generation over real corpora (UCI German Credit, Bias in Bios, PERSUADE 2.0, ASAP-AES),
+    a single-axis structural validation gate, a self-describing manifest, and a domain
+    registry (substrates/, pairs/).
+  * Added the positioned-argument (standpoint-credibility) arm and the model-response arms
+    (decision-response, reasoning 2x2).
+  * Added LEACE + non-linear-probe concept-erasure analysis on top of the upstream
+    difference-of-means probe and null-space projection (probes/).
+  * Added cluster deployment for the hessian.AI 42 cluster (cluster/) and a static
+    experiment-review site generator (review_site/).
+  * Removed the upstream length / position / sycophancy / uncertainty bias arms, the
+    RewardBench and perplexity evaluations, and the MLX (Apple Silicon) backend. This
+    repository does not reproduce the upstream results.
+
+Files under probes/ and parts of scoring/ derive directly from the upstream project and
+retain its copyright; see LICENSE for the full Apache-2.0 terms.

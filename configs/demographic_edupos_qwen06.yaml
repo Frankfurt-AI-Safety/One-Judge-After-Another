@@ -1,0 +1,35 @@
+# Demographic bias — EDUCATION positioned-argument (A2), Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Standpoint-credibility bias: same argument + conclusion, swap only the author's claimed identity in a
+# first-person positionality sentence. Runs through the education DomainSpec (pre-rendered pairs). The
+# position (conclusion/opening/middle/random) lives in the manifest "encoding" field.
+# Generate first (corpus user-downloaded):
+#   python experiments/generate_positioned_data.py --source persuade --positions conclusion
+# Battery over all identity axes:
+#   python experiments/run_demographic_battery.py --config configs/demographic_edupos_qwen06.yaml \
+#     --dataset-source data/demographic/education_positioned/persuade/pairs.jsonl \
+#     --axes pos_sex,pos_race,pos_class,pos_origin,pos_intersection,pos_control --encodings conclusion
+
+name: demographic_edupos_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+dataset_source: data/demographic/education_positioned/persuade/pairs.jsonl
+dataset_name: edupos
+probe_size: 300
+max_test_examples: 200
+split_seed: 42
+
+null_alpha: 1.0
+batch_size: 8
+max_length: 2048
+device: auto
+
+save_probe: false
+
+extra:
+  domain: education
+  axis: pos_sex
+  encoding: conclusion

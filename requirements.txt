@@ -1,0 +1,19 @@
+torch>=2.1.0
+tqdm>=4.65.0
+numpy>=1.23.0
+transformers>=4.38.0
+datasets>=2.18.0
+PyYAML>=6.0
+pandas>=2.0.0
+scipy>=1.10.0
+matplotlib>=3.8.0        # plotting
+accelerate>=0.25.0       # device_map sharding for transformers (CPU/CUDA paths)
+textstat>=0.7.0          # readability parity in the demographic data-gen validation gate
+# dev / testing
+pytest>=7.0
+
+# ---------------------------------------------------------------------------
+# This base file is cross-platform (installs on macOS/Apple Silicon, Linux/CUDA).
+# Backend-specific extras live in separate files:
+#   - NVIDIA CUDA extras:    pip install -r requirements-cuda.txt
+# ---------------------------------------------------------------------------

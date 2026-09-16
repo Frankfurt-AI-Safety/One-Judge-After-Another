@@ -1,0 +1,30 @@
+# Demographic bias — INTERSECTION (sex×age×family), CV-screening arm, Qwen3-0.6B.
+#
+# Combined-marker contrast: female∧age-30∧parental-leave  vs  male∧age-50∧continuous-employment.
+# Generate the data first: python experiments/generate_bios_data.py --axes sex,age,family_status,intersection
+#
+#   python experiments/run_experiment.py --config configs/demographic_cv_intersection_qwen06.yaml
+
+name: demographic_cv_intersection_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+dataset_source: data/demographic/cv/pairs.jsonl
+dataset_name: cv_intersection
+probe_size: 300
+max_test_examples: 200
+split_seed: 42
+
+null_alpha: 1.0
+batch_size: 8
+max_length: 2048
+device: auto
+
+save_probe: true
+
+extra:
+  domain: cv
+  axis: intersection
+  encoding: explicit

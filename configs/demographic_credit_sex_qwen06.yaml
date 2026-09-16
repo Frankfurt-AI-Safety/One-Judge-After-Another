@@ -1,0 +1,36 @@
+# Demographic bias — sex axis, credit arm, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Direct-scoring path: difference-of-means "sex" probe over matched credit profiles, then
+# auto-influence (score gap when only sex is swapped) baseline vs null-space-projected.
+# Sex pairs come from the sex × age × marital-status factorial, so age and marital status are
+# stated and equal on both sides. Generate the data first: python runners/generate_credit.py
+#
+#   python runners/run_experiment.py --config configs/demographic_credit_sex_qwen06.yaml
+
+name: demographic_credit_sex_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+dataset_source: data/demographic/credit/pairs.jsonl
+dataset_name: credit_sex
+# probe_size counts PAIRS, not records. Credit pairs come from the sex × age × marital-status factorial:
+# 8 pairs per record per single axis (4 backgrounds × 2 templates), 2 per record for the intersection. So
+# 300 pairs = ~38 records for sex/age/marital (~150 for the intersection) — too few for a reliable
+# direction. Plan (2026-09-16): time runs on the cluster at a few sizes (e.g. 300 / 1000 / 3000) and
+# pick the largest affordable value; ~803 records x 8 = ~6.4k pairs per axis are available.
+probe_size: 300  # TODO(cluster): too few records for credit, raise once runtimes are measured (see above)
+max_test_examples: 200
+split_seed: 42
+
+null_alpha: 1.0
+batch_size: 8
+max_length: 2048
+device: auto   # CUDA if present, else MLX on Apple Silicon, else CPU
+
+save_probe: true
+
+extra:
+  axis: sex
+  encoding: explicit

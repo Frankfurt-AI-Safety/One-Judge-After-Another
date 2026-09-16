@@ -1,0 +1,32 @@
+# Demographic bias — DECISION-RESPONSE arm, CV-screening, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Models the model RESPONSE: USER presents the applicant (with the protected marker) and asks whether to
+# advance them to an interview; the RM scores fair vs discriminatory vs neutral vs evasive verdicts.
+# Runs on the Bias-in-Bios substrate (qualified records only). Generate the pairs (for the probe
+# direction) with: python runners/generate_bios.py --from-hub
+#
+#   python runners/run_decision_response.py --config configs/demographic_cv_decision_qwen06.yaml
+
+name: demographic_cv_decision_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+dataset_source: data/demographic/cv/pairs.jsonl
+dataset_name: cv_decision
+probe_size: 300
+max_test_examples: 200
+split_seed: 42
+
+null_alpha: 1.0
+batch_size: 8
+max_length: 2048
+device: auto
+
+save_probe: false
+
+extra:
+  domain: cv
+  axis: sex
+  encoding: explicit

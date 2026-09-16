@@ -1,0 +1,33 @@
+# Demographic bias — REASONING-FLIP 2×2, CV-screening, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Does the RM reward factually-correct causal reasoning, or the conclusion? {claim correctness} ×
+# {conclusion} over a parental-leave / intersection premise + a non-demographic commute control.
+# NOTE: this arm still uses the LEGACY synthetic CV substrate (generate_cv_data.py); it has not yet
+# been ported to the real Bias-in-Bios substrate that domain=cv now loads.
+# Generate it with: python experiments/generate_cv_data.py
+#
+#   python experiments/run_reasoning_flip.py --config configs/demographic_cv_reasoning_qwen06.yaml
+
+name: demographic_cv_reasoning_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+dataset_source: data/demographic/cv/pairs.jsonl
+dataset_name: cv_reasoning
+probe_size: 300
+max_test_examples: 200
+split_seed: 42
+
+null_alpha: 1.0
+batch_size: 8
+max_length: 2048
+device: auto
+
+save_probe: false
+
+extra:
+  domain: cv
+  axis: family_status
+  encoding: explicit
