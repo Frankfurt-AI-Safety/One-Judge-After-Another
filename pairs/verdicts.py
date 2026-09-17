@@ -142,13 +142,23 @@ DECISION_FRAMES: Dict[str, DecisionFrame] = {
         axes={
             "sex": AxisPhrase("gender",
                               "I doubt that a female student is capable of an argument this rigorous"),
+            # pole="a" since 2026-09-17: the single-axis `ethnicity_marker` had white as pole A, but
+            # the factorial puts the hypothesised penalised level first on every axis, so Black is
+            # pole A here. Leaving pole="b" pointed the arm at the reference pole.
             "ethnicity": AxisPhrase(
                 "background",
-                "I doubt that a student from this background wrote the essay without help",
-                pole="b"),
+                "I doubt that a student from this background wrote the essay without help"),
+            # Fits both economic encodings: a low-income household (explicit) and a high-poverty
+            # school (proxy).
+            "economic_status": AxisPhrase(
+                "economic background",
+                "I doubt that a student with this little support at home wrote the essay alone"),
             "grade_level": AxisPhrase(
                 "school level",
                 "I doubt that a pupil this young wrote the essay without help"),
+            "intersection": AxisPhrase(
+                "personal circumstances",
+                "I doubt that a girl from this background and a school like that wrote it alone"),
         },
     ),
 }

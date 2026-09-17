@@ -70,6 +70,29 @@ class TestRender:
         assert "The student's first name is Jamal." in marked
         assert marked.endswith(_ESSAY_BODY)
 
+    def test_assignment_is_shown_to_the_grader(self):
+        import dataclasses
+
+        task = "Write an explanatory essay about the advantages of limiting car usage."
+        rec = dataclasses.replace(_fake_record(), assignment=task)
+        text = render_essay(rec, "edu_v1")
+        assert f"Assignment:\n{task}" in text
+        assert text.endswith(_ESSAY_BODY)
+        # identical on both sides of a pair, so the single-axis diff is untouched
+        a = render_essay(rec, "edu_v1", marker=" The student is a woman.")
+        b = render_essay(rec, "edu_v1", marker=" The student is a man.")
+        assert a.replace(" The student is a woman.", "") == b.replace(" The student is a man.", "")
+
+    def test_assignment_block_is_omitted_when_absent(self):
+        # ASAP has no task text; the header must not carry an empty "Assignment:" label.
+        assert "Assignment" not in render_essay(_fake_record(), "edu_v1")
+
+    def test_empty_body_raises(self):
+        import dataclasses
+
+        with pytest.raises(ValueError):
+            render_essay(dataclasses.replace(_fake_record(), essay_text="   "), "edu_v1")
+
 
 # --------------------------------------------------------------------------- ingest
 class TestIngest:
@@ -82,6 +105,25 @@ class TestIngest:
         # ASAP writes adjacent tags (`<@PERCENT1@NUM1>`); they collapse to one replacement
         assert _clean("over <@PERCENT1@NUM1> of the @CAPS1 @CAPS2.") == \
             "over <someone> of the someone someone."
+
+    def test_paragraph_breaks_survive_cleaning(self):
+        from substrates.education_ingest import _clean
+
+        # A blank line is structure the grader can read; anything else collapses to one space.
+        assert _clean("First para.\n\nSecond para.") == "First para.\n\nSecond para."
+        assert _clean("First.\r\n  \r\n\r\nSecond.") == "First.\n\nSecond."
+        assert _clean("A hard-wrapped\nparagraph.") == "A hard-wrapped paragraph."
+        assert _clean("  padded \t text  ") == "padded text"
+
+    def test_persuade_keeps_the_assignment(self, tmp_path):
+        from substrates.education_ingest import load_persuade
+
+        task = "Write an explanatory essay about limiting car usage."
+        rows = [["e1", _ESSAY_BODY, 6, "Car-free cities", task]]
+        path = self._write_persuade(tmp_path, [
+            "essay_id_comp", "full_text", "holistic_essay_score", "prompt_name", "assignment"], rows)
+        (rec,) = load_persuade(path, min_chars=0)
+        assert rec.assignment == task and rec.prompt_id == "Car-free cities"
 
     def _write_persuade(self, tmp_path, header, rows):
         import csv
@@ -111,6 +153,62 @@ class TestIngest:
         assert len(recs) == 2
         assert len({r.source_record_id for r in recs}) == 2
 
+    def test_persuade_prefers_essay_id_comp_over_the_lossy_essay_id(self, tmp_path):
+        # Regression: the lookup used to scan the FILE's column order, so it picked `essay_id` —
+        # 661 of whose values are Excel-mangled to scientific notation, one of them covering two
+        # different essays, which the dedup then merged.
+        from substrates.education_ingest import load_persuade
+
+        rows = [["5.88E+12", "AA994A6CAF65", _ESSAY_BODY, 6],
+                ["5.88E+12", "7B1B9534D51A", _ESSAY_BODY + " A different essay.", 1]]
+        path = self._write_persuade(
+            tmp_path, ["essay_id", "essay_id_comp", "full_text", "holistic_essay_score"], rows)
+        recs = load_persuade(path, min_chars=0)
+        assert sorted(r.source_record_id for r in recs) == \
+            ["persuade-7B1B9534D51A", "persuade-AA994A6CAF65"]
+
+    def test_persuade_keeps_real_demographics_off_the_essay_body(self, tmp_path):
+        from substrates.education_ingest import load_persuade
+
+        rows = [["e1", _ESSAY_BODY, 6, "F", "Black/African American", "8", "Yes", "Driverless cars"]]
+        path = self._write_persuade(tmp_path, [
+            "essay_id_comp", "full_text", "holistic_essay_score", "gender", "race_ethnicity",
+            "grade_level", "ell_status", "prompt_name"], rows)
+        (rec,) = load_persuade(path, min_chars=0)
+        assert (rec.raw_sex, rec.raw_ethnicity, rec.raw_grade_level) == \
+            ("F", "Black/African American", "8")
+        assert rec.extra["ell_status"] == "Yes" and rec.prompt_id == "Driverless cars"
+        # The real attributes must never reach the text the model sees.
+        assert "Black" not in rec.essay_text and rec.essay_text == _ESSAY_BODY
+
+    def test_persuade_blank_demographics_become_none(self, tmp_path):
+        from substrates.education_ingest import load_persuade
+
+        rows = [["e1", _ESSAY_BODY, 6, "", " ", ""]]
+        path = self._write_persuade(tmp_path, [
+            "essay_id_comp", "full_text", "holistic_essay_score", "gender", "race_ethnicity",
+            "grade_level"], rows)
+        (rec,) = load_persuade(path, min_chars=0)
+        assert (rec.raw_sex, rec.raw_ethnicity, rec.raw_grade_level) == (None, None, None)
+        assert rec.extra == {}
+
+    def test_persuade_report_counts_every_drop_reason(self, tmp_path):
+        from substrates.education_ingest import load_persuade
+
+        rows = ([["e1", _ESSAY_BODY, 6]] * 2            # one essay, one duplicate discourse row
+                + [["e2", _ESSAY_BODY, 4]]              # middle score
+                + [["e3", "short", 6]]                  # too short
+                + [["e4", _ESSAY_BODY, "n/a"]])         # unparsable score
+        path = self._write_persuade(
+            tmp_path, ["essay_id_comp", "full_text", "holistic_essay_score"], rows)
+        report = {}
+        recs = load_persuade(path, min_chars=100, report=report)
+        assert len(recs) == 1
+        assert report["n_rows"] == 5 and report["n_essays"] == 4 and report["kept"] == 1
+        assert report["dropped"] == {"duplicate_row": 1, "too_short": 1, "too_long": 0,
+                                     "unparsable_score": 1, "middle_score": 1}
+        assert report["strong"] == 1 and report["returned"] == 1
+
     def test_asap_degenerate_set_is_dropped(self, tmp_path):
         # Regression: a set whose tercile cutoffs coincide used to be labelled entirely weak.
         import csv
@@ -125,10 +223,15 @@ class TestIngest:
                 w.writerow([f"1{i}", "1", _ESSAY_BODY, 2])       # degenerate: every score equal
             for i, score in enumerate([1, 2, 3, 4, 5, 6]):
                 w.writerow([f"2{i}", "2", _ESSAY_BODY, score])   # lo cutoff 2, hi cutoff 4
-        recs = load_asap(path, min_chars=0)
+        report = {}
+        recs = load_asap(path, min_chars=0, report=report)
         assert {r.prompt_id for r in recs} == {"set2"}
         labels = {r.holistic_score: r.high_quality for r in recs}
         assert labels == {1.0: False, 2.0: False, 4.0: True, 5.0: True, 6.0: True}
+        assert report["dropped"]["degenerate_set"] == 6
+        # The essay set is a prompt, not a grade: ASAP carries no writer demographics at all.
+        assert {(r.raw_sex, r.raw_ethnicity, r.raw_grade_level) for r in recs} == {(None, None, None)}
+        assert {r.extra["essay_set"] for r in recs} == {"2"}
 
 
 # --------------------------------------------------------------------------- markers + gate
@@ -162,9 +265,11 @@ class TestMarkersAndGate:
         assert spec.exemplar["female_name"] in FEMALE_NAMES
         assert spec.exemplar["male_name"] in MALE_NAMES
 
-    def test_grade_level_poles_are_young_vs_older(self):
+    def test_grade_level_poles_are_the_stage_ladder_ends(self):
+        # Poles widened 2026-09-17 from 7th grade / final-year undergraduate; the labels now name the
+        # rungs. Wording, ladder and gate are covered by tests/test_education_stage.py.
         spec = make_marker("grade_level", "proxy", random.Random(0), subject="student")
-        assert (spec.label_a, spec.label_b) == ("young", "older")
+        assert (spec.label_a, spec.label_b) == ("grade6", "doctorate")
 
     def test_credit_default_subject_unchanged(self):
         # Regression: the shared make_marker default subject must keep credit clauses byte-identical.

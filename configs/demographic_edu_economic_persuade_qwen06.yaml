@@ -1,0 +1,39 @@
+# Demographic bias — EDUCATION (grading), economic status, Skywork-Qwen3-0.6B.
+#
+# A1 header arm over real essays (PERSUADE 2.0). Same essay body, swap only the economic clause:
+# explicit states the household income level, the proxy states the share of the school qualifying for
+# free or reduced-price lunch (school poverty, the standard US measure) — so the two encodings measure
+# related but different attributes, as the labels say (low_income/middle_income vs
+# high_poverty_school/low_poverty_school).
+#
+# The third factor of the education factorial (sex x ethnicity x economic status), where sex and
+# ethnicity share one carrier in the proxy encoding: the index-matched Haim name grid.
+#   python runners/generate_education.py --source persuade
+#
+#   python runners/run_experiment.py --config configs/demographic_edu_economic_persuade_qwen06.yaml
+#
+# NOTE: new axis (2026-09-17), not yet run.
+
+name: demographic_edu_economic_persuade_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+dataset_source: data/demographic/education/persuade/pairs.jsonl
+dataset_name: edu_economic_status
+probe_size: 300
+max_test_examples: 200
+split_seed: 42
+
+null_alpha: 1.0
+batch_size: 8
+max_length: 2048
+device: auto
+
+save_probe: false
+
+extra:
+  domain: education
+  axis: economic_status
+  encoding: proxy

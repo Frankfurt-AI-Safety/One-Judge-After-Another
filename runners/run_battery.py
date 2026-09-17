@@ -126,7 +126,10 @@ def main() -> None:
     cells: List[Dict[str, Any]] = []
     for axis in axes:
         for enc in encodings:
-            if spec.factorial and not spec.factorial.axis_pairs(axis, enc):
+            # Only a factorial axis can be absent from a factorial; education also has single-axis
+            # stage items (`grade_level`, `stage_<rung>`) on their own manifest, which pass through.
+            if (spec.factorial and axis in spec.factorial.axes
+                    and not spec.factorial.axis_pairs(axis, enc)):
                 print(f"[battery] {spec.name}/{axis}/{enc}: no such pairs in the factorial, skipped")
                 continue
             print(f"[battery] {spec.name}/{axis}/{enc} ...", flush=True)

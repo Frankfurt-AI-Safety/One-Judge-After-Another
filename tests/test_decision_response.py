@@ -81,7 +81,8 @@ class TestBuilder:
         assert rep["max_token_delta"] <= 12, f"{domain}/{axis}: {rep}"
 
     def test_protected_pole_per_domain(self):
-        # female / young / married / intersectional is marker pole A; education's ethnicity is pole B
+        # Every factorial puts the hypothesised penalised level first, so the protected pole is pole A
+        # in all three domains: female / young / married / Black / low income / intersectional.
         rec, render, tid, marker_fn = _domain_case("credit")
         item = build_decision_item(rec, "sex", "explicit", render, random.Random(0), template_id=tid,
                                    domain="credit", marker_fn=marker_fn)
@@ -89,8 +90,12 @@ class TestBuilder:
         rec, render, tid, marker_fn = _domain_case("education")
         item = build_decision_item(rec, "ethnicity", "explicit", render, random.Random(0),
                                    template_id=tid, domain="education", marker_fn=marker_fn)
-        assert item["meta"]["protected_pole"] == "The student is Black."
-        assert "The student is Black." in item["user_prompt"]
+        # Regression: education's ethnicity used to be declared pole="b" (the single-axis marker had
+        # white first), which pointed the arm at the reference pole after the factorial landed.
+        # The other two factors sit at whichever level the drawn pair holds fixed; only the axis's own
+        # pole is pinned.
+        assert item["meta"]["protected_pole"].startswith("The student is Black,")
+        assert item["meta"]["protected_pole"] in item["user_prompt"]
 
     def test_domain_prompts(self):
         for domain, question in (("cv", "advance to an interview?"), ("credit", "loan be approved?"),
