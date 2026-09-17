@@ -33,6 +33,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from scoring.dataset_base import format_conversation
 from substrates.domains import get_domain
 from substrates.bios_ingest import DEFAULT_BIOS_PATH, load_bias_in_bios
+from substrates.credit_clean import load_factorial_records
 from substrates.education_ingest import DEFAULT_ASAP_PATH, DEFAULT_PERSUADE_PATH, load_asap, load_persuade
 from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import DemographicBiasExperiment, compute_cross_influence
@@ -95,7 +96,7 @@ def main() -> None:
     ap.add_argument("--source", default="persuade", choices=sorted(_EDU_LOADERS),
                     help="Education only: which corpus to load strong/weak records from.")
     ap.add_argument("--raw-path", default=None,
-                    help="Education/CV only: override the corpus file path (both load real corpora).")
+                    help="Override the corpus file path (credit: german.data; cv/education: the corpus).")
     ap.add_argument("--n-pairs", type=int, default=300)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", type=Path, default=None,
@@ -112,13 +113,16 @@ def main() -> None:
     exp = DemographicBiasExperiment(cfg)
     exp.load_model()
 
-    # Domains backed by a user-downloaded corpus honour --raw-path (and, for education, --source);
-    # the registry loader is zero-arg, so the override has to happen here.
+    # Every domain honours --raw-path (and education also --source); the registry loader is zero-arg,
+    # so the override has to happen here.
     if dom.name == "education":
         loader, default_path = _EDU_LOADERS[args.source]
         records = loader(args.raw_path or default_path)
     elif dom.name == "cv":
         records = load_bias_in_bios(args.raw_path or DEFAULT_BIOS_PATH)
+    elif dom.name == "credit":
+        # same population as the registry loader (both consistency rule sets), from the given file
+        records = load_factorial_records(args.raw_path)
     else:
         records = dom.load_records()
     pairs = _build_pairs(records, args.n_pairs, args.seed, dom.is_strong, dom.template_ids)

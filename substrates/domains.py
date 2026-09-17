@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, List, Tuple
 
-from pairs.factorial import credit_marker
+from pairs.factorial import AXES as CREDIT_FACTORIAL_AXES, credit_marker
 from pairs.markers import make_marker
 from scoring.pair_dataset import ASSESSMENT_PROMPT, CreditDemographicDataset
 from scoring.bios_dataset import BIOS_ASSESSMENT_PROMPT, BiosDemographicDataset
@@ -59,7 +59,8 @@ CREDIT = DomainSpec(
     # Only records passing the consistency rules (substrates/credit_clean.py).
     load_records=load_factorial_records,
     is_strong=lambda r: r.credit_good,
-    axes=("sex", "age", "marital_status", "intersection"),
+    # Derived from the factorial so the two lists cannot drift apart.
+    axes=CREDIT_FACTORIAL_AXES + ("intersection",),
     make_marker=credit_marker,
 )
 
