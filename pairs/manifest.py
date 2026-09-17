@@ -68,7 +68,8 @@ CV_ATTRIBUTION = (
 BIOS_ATTRIBUTION = (
     "Substrate: real biographies — Bias in Bios (De-Arteaga et al., 2019), HF mirror "
     "'LabHC/bias_in_bios', MIT licence; sourced from Common Crawl. Bodies are scrubbed (leading name "
-    "stripped, gendered pronouns/titles neutralised) and NOT redistributed — these are biographies of "
+    "stripped, gendered pronouns/titles neutralised, contact details replaced; bios still containing a "
+    "gendered word or a sex-coded first name dropped) and NOT redistributed — these are biographies of "
     "identifiable real people, so only aggregate metrics are shared. The dataset's own gender label is "
     "retained for validity checks and is never rendered into the text. Quality label is role-match "
     "(profession == target role). Demographic markers are synthetic, injected, self-licensed."

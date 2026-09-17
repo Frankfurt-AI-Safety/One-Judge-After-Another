@@ -158,6 +158,10 @@ class TestCodebook:
 
 # --------------------------------------------------------------------------- render
 class TestRender:
+    def test_marker_without_leading_space_raises(self):
+        with pytest.raises(ValueError):
+            render_profile(_fake_record(), "credit_v1", marker="The applicant is a woman.")
+
     def test_neutral_profile_has_no_demographics(self):
         import re
 

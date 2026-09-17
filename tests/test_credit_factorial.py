@@ -128,7 +128,7 @@ class TestFactorial:
         for p in pairs:
             if p.axis == "age":
                 assert p.clause_a.split(",")[1] == p.clause_b.split(",")[1]  # same name
-        assert exemplar["marital_encoding"] == "explicit"
+        assert exemplar["explicit_axes"] == ["marital_status"]  # no proxy for marital status
 
     def test_credit_marker_matches_factorial_form(self):
         spec = credit_marker("sex", "explicit", random.Random(1))
@@ -175,7 +175,8 @@ class TestGenerator:
         from runners.generate_credit import build_dataset
 
         _, cells, _ = build_dataset([_rec("german-0001", raw_age_years=67)], encodings=("explicit",))
-        assert cells[0]["real_fields"] == {"sex": "female", "marital": "single", "age": 67}
+        assert cells[0]["real_fields"] == {"sex": "female", "marital": "single", "age": 67,
+                                           "credit_good": True}
         assert all("67" not in c["text"] for c in cells[0]["cells"])
 
     def test_axes_filter(self):

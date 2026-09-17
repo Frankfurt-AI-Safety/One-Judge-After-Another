@@ -24,7 +24,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import random
@@ -38,27 +37,15 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from substrates.credit_clean import FACTORIAL_RULES, RECORD_RULES, apply_rules
 from substrates.credit_ingest import DEFAULT_RAW_PATH, GermanCreditRecord, load_german_credit
 from substrates.credit_render import TEMPLATES, render_profile
-from pairs.factorial import AXES, cell_label, factorial_clause, factorial_pairs, ProxyNames
+from pairs.factorial import AXES, CREDIT_DESIGN, build_factorial_rows
 from pairs.validate import Thresholds, validate_pair
-from pairs.manifest import pair_to_record, write_manifest
+from pairs.manifest import write_manifest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s",
                     datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("gen-credit")
 
 DEFAULT_AXES = AXES + ("intersection",)
-
-
-def _block_rng(seed: int, record_id: str, template_id: str, encoding: str) -> random.Random:
-    """Per-block RNG from a stable digest (Python's built-in `hash` of strings is salted per process)."""
-    digest = hashlib.sha256(f"{seed}|{record_id}|{template_id}|{encoding}".encode("utf-8")).digest()
-    return random.Random(int.from_bytes(digest[:8], "big"))
-
-
-def _pair_suffix(cell: Dict[str, object]) -> str:
-    """Id suffix from the held-fixed levels, e.g. ``30-married``; ``corner`` for the intersection."""
-    held = [str(v) for v in cell.values() if "-vs-" not in str(v)]
-    return "-".join(held) or "corner"
 
 
 def build_dataset(
@@ -80,46 +67,21 @@ def build_dataset(
     if n_records is not None:
         order = order[:n_records]
 
-    pair_rows: List[Dict[str, Any]] = []
-    cell_rows: List[Dict[str, Any]] = []
-    gate: Dict[str, Dict[str, Any]] = {
-        enc: {"blocks_kept": 0, "blocks_dropped": 0, "failure_reasons": {}} for enc in encodings
-    }
-    for rec in order:
-        for tid in templates:
-            for enc in encodings:
-                rng = _block_rng(seed, rec.source_record_id, tid, enc)
-                pairs, texts, exemplar = factorial_pairs(rec, tid, enc, render_profile, rng,
-                                                         axes=tuple(axes))
-                failures = [res for res in (validate_pair(p, thr) for p in pairs) if not res.ok]
-                if failures:
-                    gate[enc]["blocks_dropped"] += 1
-                    reasons = gate[enc]["failure_reasons"]
-                    for res in failures:
-                        for rsn in res.reasons:
-                            key = rsn.split(" (")[0].split(" >")[0]
-                            reasons[key] = reasons.get(key, 0) + 1
-                    continue
-                gate[enc]["blocks_kept"] += 1
-                for p in pairs:
-                    item_id = (f"credit-{p.axis}-{enc}-{tid}-{rec.source_record_id}-"
-                               f"{_pair_suffix(p.intersectional_cell)}")
-                    pair_rows.append(pair_to_record(p, item_id, role="probe", seed=seed))
-                names = (ProxyNames(exemplar["female_name"], exemplar["male_name"])
-                         if enc == "proxy" else None)
-                cell_rows.append({
-                    "id": f"credit-cells-{enc}-{tid}-{rec.source_record_id}",
-                    "source_record_id": rec.source_record_id,
-                    "template_id": tid,
-                    "encoding": enc,
-                    "credit_good": rec.credit_good,
-                    "real_fields": {"sex": rec.raw_sex, "marital": rec.raw_marital,
-                                    "age": rec.raw_age_years},
-                    "exemplar": exemplar,
-                    "cells": [{**cell_label(cell), "clause": factorial_clause(cell, enc, names),
-                               "text": text} for cell, text in texts.items()],
-                })
-
+    pair_rows, cell_rows, gate = build_factorial_rows(
+        order,
+        design=CREDIT_DESIGN,
+        render_fn=render_profile,
+        id_prefix="credit",
+        domain="credit",
+        real_fields=lambda r: {"sex": r.raw_sex, "marital": r.raw_marital, "age": r.raw_age_years,
+                               "credit_good": r.credit_good},
+        axes=axes,
+        encodings=encodings,
+        templates=templates,
+        seed=seed,
+        validate=lambda pair: validate_pair(pair, thr),
+        content_label="financial_content",
+    )
     report = {
         "record_rules": record_report,
         "factorial_rules": factorial_report,

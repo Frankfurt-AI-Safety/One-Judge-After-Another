@@ -29,7 +29,6 @@ import torch
 from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import DemographicBiasExperiment, compute_auto_influence_metrics
 from substrates.domains import get_domain
-from pairs.factorial import axis_pairs
 from probes.probe import build_probe_direction, get_rewards_both, project_to_null_space
 
 ENCODINGS = ["explicit", "proxy"]
@@ -127,7 +126,7 @@ def main() -> None:
     cells: List[Dict[str, Any]] = []
     for axis in axes:
         for enc in encodings:
-            if spec.name == "credit" and not axis_pairs(axis, enc):
+            if spec.factorial and not spec.factorial.axis_pairs(axis, enc):
                 print(f"[battery] {spec.name}/{axis}/{enc}: no such pairs in the factorial, skipped")
                 continue
             print(f"[battery] {spec.name}/{axis}/{enc} ...", flush=True)

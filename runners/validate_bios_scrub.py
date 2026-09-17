@@ -112,7 +112,7 @@ def main() -> None:
     exp.load_model()
 
     need = args.probe_items + args.eval_items
-    records = load_bias_in_bios(args.raw_path, n=need, seed=args.seed)
+    records = load_bias_in_bios(args.raw_path, n=need, seed=args.seed, keep_raw=True)
     if len(records) < need:
         raise SystemExit(f"need {need} bios, loaded {len(records)} — raise the corpus sample or lower --*-items")
     random.Random(args.seed).shuffle(records)

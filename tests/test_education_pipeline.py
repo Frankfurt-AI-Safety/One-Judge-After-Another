@@ -45,6 +45,10 @@ def _fake_record(rid="essay-test", high_quality=True) -> EssayRecord:
 
 # --------------------------------------------------------------------------- render
 class TestRender:
+    def test_marker_without_leading_space_raises(self):
+        with pytest.raises(ValueError):
+            render_essay(_fake_record(), "edu_v1", marker="The student is a woman.")
+
     def test_body_is_verbatim_and_brace_safe(self):
         text = render_essay(_fake_record(), "edu_v1")
         assert _ESSAY_BODY in text                      # body copied verbatim, braces intact

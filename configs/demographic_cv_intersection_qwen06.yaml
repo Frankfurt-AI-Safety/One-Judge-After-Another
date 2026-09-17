@@ -1,9 +1,10 @@
 # Demographic bias — INTERSECTION (sex×age×family), CV-screening arm, Qwen3-0.6B.
 #
-# Combined-marker contrast: female∧age-30∧parental-leave  vs  male∧age-50∧continuous-employment.
-# Generate the data first: python experiments/generate_bios_data.py --axes sex,age,family_status,intersection
+# Corner contrast of the hiring factorial (the pregnancy window):
+#   female ∧ age 30 ∧ on parental leave   vs   male ∧ age 50 ∧ in continuous employment.
+# Generate the data first: python runners/generate_bios.py
 #
-#   python experiments/run_experiment.py --config configs/demographic_cv_intersection_qwen06.yaml
+#   python runners/run_experiment.py --config configs/demographic_cv_intersection_qwen06.yaml
 
 name: demographic_cv_intersection_qwen06
 bias_type: demographic

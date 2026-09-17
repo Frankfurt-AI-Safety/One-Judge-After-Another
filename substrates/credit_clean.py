@@ -17,13 +17,12 @@ a rule.
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import List, Tuple
 
 from substrates.credit_ingest import (
     EMPLOYMENT, HOUSING, JOB, PEOPLE_LIABLE, PROPERTY, GermanCreditRecord, load_german_credit,
 )
-
-Rule = Tuple[str, Callable[[GermanCreditRecord], bool]]
+from substrates.rules import Rule, apply_rules  # noqa: F401  (apply_rules re-exported)
 
 RECORD_RULES: Tuple[Rule, ...] = (
     # 45 records. Possibly self-employed applicants coded without an employer, but the codebook does
@@ -54,23 +53,3 @@ def load_factorial_records(path=None) -> List[GermanCreditRecord]:
     clean, _ = apply_rules(records, RECORD_RULES)
     eligible, _ = apply_rules(clean, FACTORIAL_RULES)
     return eligible
-
-
-def apply_rules(
-    records: Sequence[GermanCreditRecord], rules: Sequence[Rule]
-) -> Tuple[List[GermanCreditRecord], Dict[str, object]]:
-    """Drop every record that trips any rule. Order is preserved.
-
-    Returns ``(kept, report)``; ``report["dropped_by_rule"]`` counts each rule a record trips, so a
-    record tripping two rules is counted under both, while ``n_in - n_out`` is the exact number dropped.
-    """
-    kept: List[GermanCreditRecord] = []
-    by_rule: Dict[str, int] = {name: 0 for name, _ in rules}
-    for rec in records:
-        hits = [name for name, pred in rules if pred(rec)]
-        for name in hits:
-            by_rule[name] += 1
-        if not hits:
-            kept.append(rec)
-    report = {"n_in": len(records), "n_out": len(kept), "dropped_by_rule": by_rule}
-    return kept, report

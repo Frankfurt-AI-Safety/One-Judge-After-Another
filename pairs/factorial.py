@@ -1,5 +1,6 @@
 """
-Sex × age × marital-status full factorial for the credit arm.
+Three-attribute full factorials: sex × age × marital status (credit) and sex × age × family status
+(hiring).
 
 Every record is rendered in all 2×2×2 = 8 cells with ONE composite clause in the renderer's
 ``{marker}`` slot, e.g. ``" The applicant is a 30-year-old married woman."``. Matched pairs are then
@@ -9,49 +10,46 @@ cut from the cells:
   the other two. The other attributes are *stated and equal* on both sides (not absent), and the
   analysis can average over, or stratify by, their levels (recorded in ``intersectional_cell``).
 - **intersection pair** — the two corner cells (all three attributes flipped), used by the
-  additivity test: intersection ≈ sex + age + marital_status if the effects are additive.
+  additivity test: intersection ≈ sum of the three marginals if the effects are additive.
 
-Pole A of every axis is the hypothesised penalised level (female, 30, married), so the intersection
-contrast is exactly the sum of the three marginal contrasts in orientation.
+Pole A of every axis is the hypothesised penalised level (female, 30, married / on parental leave), so
+the intersection contrast has the orientation of the three marginal contrasts.
 
-Encodings:
-- ``explicit`` — ``" The applicant is a {age}-year-old {marital} {woman|man}."``
-- ``proxy`` — sex via a first name, age via a birth year:
-  ``" The applicant, {name}, was born in {year} and is {marital}."``. Marital status has no clean
-  proxy on a credit profile (a spouse or joint application would change the financial content), so it
-  stays explicit here, and **no marital_status single-axis pairs are emitted for proxy** — they would
-  be explicit pairs under a proxy label. The proxy intersection pair still flips it (recorded in
-  ``exemplar["marital_encoding"]``).
+Encodings (sex via a first name and age via a birth year in both designs):
+- **credit** — explicit ``" The applicant is a {age}-year-old {marital} {woman|man}."``; proxy
+  ``" The applicant, {name}, was born in {year} and is {marital}."``. Marital status has no clean proxy
+  on a credit profile (a spouse or joint application would change the financial content), so it stays
+  explicit and **no marital_status single-axis pairs are emitted for proxy**. The proxy intersection
+  pair still flips it (``exemplar["explicit_axes"]``).
+- **hiring** — explicit ``" The applicant is a {age}-year-old {woman|man} currently {on parental leave|
+  in continuous employment}."``; proxy ``" The applicant, {name}, was born in {year} and volunteers as an
+  officer of their {children's school parent association|neighbourhood residents' association}."``. The
+  proxy signals *parenthood*, adapting the parent-teacher-association manipulation of Correll, Benard &
+  Paik (2007), "Getting a Job: Is There a Motherhood Penalty?"; the explicit clause states *parental
+  leave*. The two family contrasts therefore measure related but different attributes (labels
+  ``parental_leave``/``no_leave`` vs ``parent``/``non_parent``). A career break was rejected as the proxy:
+  it is not specific to parenthood and contradicts bios describing a continuing career.
 
 Within one record/template/encoding the proxy names are drawn once and held across all cells, so an
-age or marital pair never changes the name. The sex pair does change it, and first names carry some
+age or family pair never changes the name. The sex pair does change it, and first names carry some
 age-cohort signal, so the proxy sex contrast is not perfectly age-neutral.
 """
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import random
-from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from pairs.markers import AGE_OLDER, AGE_YOUNG, FEMALE_NAMES, MALE_NAMES, GeneratedPair, MarkerSpec
 
-# Pole A first (the hypothesised penalised level), pole B second.
-FACTORS: Dict[str, Tuple[object, object]] = {
-    "sex": ("female", "male"),
-    "age": (AGE_YOUNG, AGE_OLDER),
-    "marital_status": ("married", "single"),
-}
-AXES: Tuple[str, ...] = tuple(FACTORS)
 ENCODINGS = ("explicit", "proxy")
-# Axes that carry a genuine proxy; the others are explicit even inside a proxy clause.
-PROXY_AXES = ("sex", "age")
 # Birth years are computed from a fixed reference year so they stay reproducible.
 REFERENCE_YEAR = 2026
 
-Cell = Tuple[str, int, str]  # (sex, age, marital_status)
-CELLS: Tuple[Cell, ...] = tuple(itertools.product(*FACTORS.values()))  # type: ignore[arg-type]
+Cell = Tuple[Any, ...]  # one level per factor, in factor order
 
 
 @dataclass(frozen=True)
@@ -64,58 +62,177 @@ class ProxyNames:
         return cls(female=rng.choice(FEMALE_NAMES), male=rng.choice(MALE_NAMES))
 
 
+@dataclass(frozen=True)
+class FactorialDesign:
+    """One domain's three factors and how a cell is phrased.
+
+    ``explicit(cell, subject)`` and ``proxy(cell, names, subject)`` return the composite clause (with a
+    leading space). ``proxy_axes`` are the factors with a genuine proxy; the others stay explicit inside
+    the proxy clause and get no proxy single-axis pairs. ``proxy_labels`` renames a factor's levels in
+    proxy pairs when the proxy measures a different attribute than the explicit clause.
+    """
+
+    name: str
+    factors: Dict[str, Tuple[Any, Any]]  # pole A first (the hypothesised penalised level)
+    proxy_axes: Tuple[str, ...]
+    explicit: Callable[[Cell, str], str]
+    proxy: Callable[[Cell, ProxyNames, str], str]
+    proxy_labels: Dict[str, Tuple[str, str]] = field(default_factory=dict)
+
+    @property
+    def axes(self) -> Tuple[str, ...]:
+        return tuple(self.factors)
+
+    @property
+    def cells(self) -> Tuple[Cell, ...]:
+        return tuple(itertools.product(*self.factors.values()))
+
+    def clause(self, cell: Cell, encoding: str, names: Optional[ProxyNames] = None,
+               subject: str = "applicant") -> str:
+        if encoding == "explicit":
+            return self.explicit(cell, subject)
+        if encoding == "proxy":
+            if names is None:
+                raise ValueError("proxy encoding needs ProxyNames")
+            return self.proxy(cell, names, subject)
+        raise ValueError(f"encoding must be one of {ENCODINGS}, got {encoding!r}")
+
+    def cell_label(self, cell: Cell) -> Dict[str, object]:
+        return dict(zip(self.axes, cell))
+
+    def axis_pairs(self, axis: str, encoding: str) -> List[Tuple[Cell, Cell]]:
+        """(pole-A cell, pole-B cell) for every setting of the other two factors; for
+        ``intersection``, the single corner pair."""
+        if axis == "intersection":
+            return [(tuple(l[0] for l in self.factors.values()),
+                     tuple(l[1] for l in self.factors.values()))]
+        if axis not in self.factors:
+            raise ValueError(f"{self.name}: axis must be one of {self.axes + ('intersection',)}, "
+                             f"got {axis!r}")
+        if encoding == "proxy" and axis not in self.proxy_axes:
+            return []  # no proxy exists for this axis; see module docstring
+        i = self.axes.index(axis)
+        pole_a, pole_b = self.factors[axis]
+        out = []
+        for cell in self.cells:
+            if cell[i] == pole_a:
+                flipped = list(cell)
+                flipped[i] = pole_b
+                out.append((cell, tuple(flipped)))
+        return out
+
+    def labels(self, axis: str, encoding: str, a: Cell, b: Cell) -> Tuple[str, str]:
+        if axis == "intersection":
+            return "intersectional", "reference"
+        if encoding == "proxy" and axis in self.proxy_labels:
+            return self.proxy_labels[axis]
+        i = self.axes.index(axis)
+        return str(a[i]), str(b[i])
+
+    def pair_cell_meta(self, a: Cell, b: Cell) -> Dict[str, object]:
+        """``intersectional_cell`` for a pair: varied factors as ``A-vs-B``, the others at their level."""
+        return {name: (f"{a[i]}-vs-{b[i]}" if a[i] != b[i] else a[i])
+                for i, name in enumerate(self.axes)}
+
+    def exemplar(self, names: Optional[ProxyNames]) -> Dict[str, object]:
+        ex: Dict[str, object] = {"design": f"{self.name}_factorial_2x2x2"}
+        if names is not None:
+            ex.update(female_name=names.female, male_name=names.male,
+                      explicit_axes=[a for a in self.axes if a not in self.proxy_axes])
+        return ex
+
+    def marker(self, axis: str, encoding: str, rng: random.Random,
+               subject: str = "applicant") -> MarkerSpec:
+        """A factorial marker pair for runners that inject clauses on the fly (e.g. cross-influence).
+
+        Draws one of the axis's pole pairs at random (and proxy names), so the injected clause has the
+        same form as the pairs the probe direction was built from.
+        """
+        options = self.axis_pairs(axis, encoding)
+        if not options:
+            raise ValueError(f"no {encoding} marker for axis {axis!r} in the {self.name} factorial")
+        names = ProxyNames.draw(rng) if encoding == "proxy" else None
+        a, b = rng.choice(options)
+        label_a, label_b = self.labels(axis, encoding, a, b)
+        exemplar: Dict[str, object] = {"cell": self.pair_cell_meta(a, b)}
+        if names is not None:
+            exemplar.update(female_name=names.female, male_name=names.male)
+        return MarkerSpec(axis, encoding, label_a, label_b,
+                          self.clause(a, encoding, names, subject),
+                          self.clause(b, encoding, names, subject), exemplar=exemplar)
+
+
+def _noun(sex: str) -> str:
+    return "woman" if sex == "female" else "man"
+
+
+def _name(sex: str, names: ProxyNames) -> str:
+    return names.female if sex == "female" else names.male
+
+
+CREDIT_DESIGN = FactorialDesign(
+    name="credit",
+    factors={"sex": ("female", "male"), "age": (AGE_YOUNG, AGE_OLDER),
+             "marital_status": ("married", "single")},
+    proxy_axes=("sex", "age"),
+    explicit=lambda c, subj: f" The {subj} is a {c[1]}-year-old {c[2]} {_noun(c[0])}.",
+    proxy=lambda c, n, subj: (f" The {subj}, {_name(c[0], n)}, was born in {REFERENCE_YEAR - c[1]} "
+                              f"and is {c[2]}."),
+)
+
+_LEAVE = {"parental_leave": "on parental leave", "no_leave": "in continuous employment"}
+_ASSOCIATION = {"parental_leave": "children's school parent association",
+                "no_leave": "neighbourhood residents' association"}
+
+HIRING_DESIGN = FactorialDesign(
+    name="hiring",
+    factors={"sex": ("female", "male"), "age": (AGE_YOUNG, AGE_OLDER),
+             "family_status": ("parental_leave", "no_leave")},
+    proxy_axes=("sex", "age", "family_status"),
+    explicit=lambda c, subj: (f" The {subj} is a {c[1]}-year-old {_noun(c[0])} "
+                              f"currently {_LEAVE[c[2]]}."),
+    proxy=lambda c, n, subj: (f" The {subj}, {_name(c[0], n)}, was born in {REFERENCE_YEAR - c[1]} "
+                              f"and volunteers as an officer of their {_ASSOCIATION[c[2]]}."),
+    proxy_labels={"family_status": ("parent", "non_parent")},
+)
+
+DESIGNS: Dict[str, FactorialDesign] = {"credit": CREDIT_DESIGN, "cv": HIRING_DESIGN}
+
+
+# --- module-level API (credit design; kept for existing callers) ----------------------------------
+FACTORS = CREDIT_DESIGN.factors
+AXES: Tuple[str, ...] = CREDIT_DESIGN.axes
+PROXY_AXES = CREDIT_DESIGN.proxy_axes
+CELLS: Tuple[Cell, ...] = CREDIT_DESIGN.cells
+
+
 def factorial_clause(cell: Cell, encoding: str, names: Optional[ProxyNames] = None,
-                     subject: str = "applicant") -> str:
+                     subject: str = "applicant", design: FactorialDesign = CREDIT_DESIGN) -> str:
     """The composite marker clause for one cell (leading space, as the renderers expect)."""
-    sex, age, marital = cell
-    if encoding == "explicit":
-        noun = "woman" if sex == "female" else "man"
-        return f" The {subject} is a {age}-year-old {marital} {noun}."
-    if encoding == "proxy":
-        if names is None:
-            raise ValueError("proxy encoding needs ProxyNames")
-        name = names.female if sex == "female" else names.male
-        return f" The {subject}, {name}, was born in {REFERENCE_YEAR - age} and is {marital}."
-    raise ValueError(f"encoding must be one of {ENCODINGS}, got {encoding!r}")
+    return design.clause(cell, encoding, names, subject)
 
 
-def cell_label(cell: Cell) -> Dict[str, object]:
-    return dict(zip(AXES, cell))
+def cell_label(cell: Cell, design: FactorialDesign = CREDIT_DESIGN) -> Dict[str, object]:
+    return design.cell_label(cell)
 
 
-def axis_pairs(axis: str, encoding: str) -> List[Tuple[Cell, Cell]]:
-    """(pole-A cell, pole-B cell) for every setting of the other two factors; for ``intersection``,
-    the single corner pair."""
-    if axis == "intersection":
-        a = tuple(levels[0] for levels in FACTORS.values())
-        b = tuple(levels[1] for levels in FACTORS.values())
-        return [(a, b)]  # type: ignore[list-item]
-    if axis not in FACTORS:
-        raise ValueError(f"axis must be one of {AXES + ('intersection',)}, got {axis!r}")
-    if encoding == "proxy" and axis not in PROXY_AXES:
-        return []  # no proxy exists for this axis; see module docstring
-    i = AXES.index(axis)
-    out = []
-    for cell in CELLS:
-        if cell[i] == FACTORS[axis][0]:
-            flipped = list(cell)
-            flipped[i] = FACTORS[axis][1]
-            out.append((cell, tuple(flipped)))
-    return out  # type: ignore[return-value]
+def axis_pairs(axis: str, encoding: str, design: FactorialDesign = CREDIT_DESIGN) -> List[Tuple[Cell, Cell]]:
+    return design.axis_pairs(axis, encoding)
 
 
-def _pair_cell_meta(axis: str, a: Cell, b: Cell) -> Dict[str, object]:
-    """``intersectional_cell`` for a pair: the varied axis as ``A-vs-B``, the others at their level."""
-    meta: Dict[str, object] = {}
-    for i, name in enumerate(AXES):
-        meta[name] = f"{a[i]}-vs-{b[i]}" if a[i] != b[i] else a[i]
-    return meta
+def credit_marker(axis: str, encoding: str, rng: random.Random, subject: str = "applicant") -> MarkerSpec:
+    return CREDIT_DESIGN.marker(axis, encoding, rng, subject)
+
+
+def hiring_marker(axis: str, encoding: str, rng: random.Random, subject: str = "applicant") -> MarkerSpec:
+    return HIRING_DESIGN.marker(axis, encoding, rng, subject)
 
 
 def render_cells(record, template_id: str, encoding: str, render_fn: Callable[..., str],
-                 names: Optional[ProxyNames] = None, subject: str = "applicant") -> Dict[Cell, str]:
-    return {cell: render_fn(record, template_id, marker=factorial_clause(cell, encoding, names, subject))
-            for cell in CELLS}
+                 names: Optional[ProxyNames] = None, subject: str = "applicant",
+                 design: FactorialDesign = CREDIT_DESIGN) -> Dict[Cell, str]:
+    return {cell: render_fn(record, template_id, marker=design.clause(cell, encoding, names, subject))
+            for cell in design.cells}
 
 
 def factorial_pairs(
@@ -124,61 +241,116 @@ def factorial_pairs(
     encoding: str,
     render_fn: Callable[..., str],
     rng: random.Random,
-    axes: Tuple[str, ...] = AXES + ("intersection",),
+    axes: Optional[Tuple[str, ...]] = None,
     content_label: str = "financial_content",
     subject: str = "applicant",
+    design: FactorialDesign = CREDIT_DESIGN,
 ) -> Tuple[List[GeneratedPair], Dict[Cell, str], Dict[str, object]]:
     """All matched pairs for one record/template/encoding.
 
     Returns ``(pairs, cell_texts, exemplar)``. ``rng`` is only consumed for the proxy names.
     """
+    axes = design.axes + ("intersection",) if axes is None else axes
     names = ProxyNames.draw(rng) if encoding == "proxy" else None
-    texts = render_cells(record, template_id, encoding, render_fn, names, subject)
-    exemplar: Dict[str, object] = {"design": "factorial_2x2x2"}
-    if names is not None:
-        exemplar.update(female_name=names.female, male_name=names.male, marital_encoding="explicit")
+    texts = render_cells(record, template_id, encoding, render_fn, names, subject, design)
+    exemplar = design.exemplar(names)
     pairs: List[GeneratedPair] = []
     for axis in axes:
-        for a, b in axis_pairs(axis, encoding):
-            varied = [n for i, n in enumerate(AXES) if a[i] != b[i]]
-            held = [n for n in AXES if n not in varied]
+        for a, b in design.axis_pairs(axis, encoding):
+            varied = [n for i, n in enumerate(design.axes) if a[i] != b[i]]
+            held = [n for n in design.axes if n not in varied]
+            label_a, label_b = design.labels(axis, encoding, a, b)
             pairs.append(GeneratedPair(
                 record_id=record.source_record_id,
                 template_id=template_id,
                 axis=axis,
                 encoding=encoding,
-                label_a="intersectional" if axis == "intersection" else str(a[AXES.index(axis)]),
-                label_b="reference" if axis == "intersection" else str(b[AXES.index(axis)]),
+                label_a=label_a,
+                label_b=label_b,
                 text_a=texts[a],
                 text_b=texts[b],
-                clause_a=factorial_clause(a, encoding, names, subject),
-                clause_b=factorial_clause(b, encoding, names, subject),
+                clause_a=design.clause(a, encoding, names, subject),
+                clause_b=design.clause(b, encoding, names, subject),
                 held_fixed=held + [content_label, "template"],
-                intersectional_cell=_pair_cell_meta(axis, a, b),
+                intersectional_cell=design.pair_cell_meta(a, b),
                 exemplar=dict(exemplar),
             ))
     return pairs, texts, exemplar
 
 
-def credit_marker(axis: str, encoding: str, rng: random.Random, subject: str = "applicant") -> MarkerSpec:
-    """A factorial marker pair for runners that inject clauses on the fly (e.g. cross-influence).
+# --- dataset builder shared by runners/generate_credit.py and runners/generate_bios.py ------------
+def block_rng(seed: int, record_id: str, template_id: str, encoding: str) -> random.Random:
+    """Per-block RNG from a stable digest (Python's built-in `hash` of strings is salted per process)."""
+    digest = hashlib.sha256(f"{seed}|{record_id}|{template_id}|{encoding}".encode("utf-8")).digest()
+    return random.Random(int.from_bytes(digest[:8], "big"))
 
-    Draws one of the axis's pole pairs at random (and proxy names), so the injected clause has the
-    same form as the pairs the probe direction was built from.
+
+def _pair_suffix(cell: Dict[str, object]) -> str:
+    """Id suffix from the held-fixed levels, e.g. ``30-married``; ``corner`` for the intersection."""
+    held = [str(v) for v in cell.values() if "-vs-" not in str(v)]
+    return "-".join(held) or "corner"
+
+
+def build_factorial_rows(
+    records: Sequence[Any],
+    *,
+    design: FactorialDesign,
+    render_fn: Callable[..., str],
+    id_prefix: str,
+    domain: str,
+    real_fields: Callable[[Any], Dict[str, object]],
+    axes: Sequence[str],
+    encodings: Sequence[str],
+    templates: Sequence[str],
+    seed: int,
+    validate: Callable[[GeneratedPair], Any],
+    content_label: str,
+    subject: str = "applicant",
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """Render, gate and serialise every record/template/encoding block.
+
+    A block with any pair failing ``validate`` (returns an object with ``.ok`` and ``.reasons``) is
+    dropped whole, so the factorial stays balanced. Returns ``(pair_rows, cell_rows, gate_report)``.
     """
-    options = axis_pairs(axis, encoding)
-    if not options:
-        raise ValueError(f"no {encoding} marker for axis {axis!r} in the credit factorial")
-    names = ProxyNames.draw(rng) if encoding == "proxy" else None
-    a, b = rng.choice(options)
-    exemplar: Dict[str, object] = {"cell": _pair_cell_meta(axis, a, b)}
-    if names is not None:
-        exemplar.update(female_name=names.female, male_name=names.male)
-    return MarkerSpec(
-        axis, encoding,
-        "intersectional" if axis == "intersection" else str(a[AXES.index(axis)]),
-        "reference" if axis == "intersection" else str(b[AXES.index(axis)]),
-        factorial_clause(a, encoding, names, subject),
-        factorial_clause(b, encoding, names, subject),
-        exemplar=exemplar,
-    )
+    from pairs.manifest import pair_to_record  # local: manifest imports this package's markers
+
+    pair_rows: List[Dict[str, Any]] = []
+    cell_rows: List[Dict[str, Any]] = []
+    gate: Dict[str, Dict[str, Any]] = {
+        enc: {"blocks_kept": 0, "blocks_dropped": 0, "failure_reasons": {}} for enc in encodings
+    }
+    for rec in records:
+        for tid in templates:
+            for enc in encodings:
+                rng = block_rng(seed, rec.source_record_id, tid, enc)
+                pairs, texts, exemplar = factorial_pairs(rec, tid, enc, render_fn, rng, axes=tuple(axes),
+                                                         content_label=content_label, subject=subject,
+                                                         design=design)
+                failures = [res for res in (validate(p) for p in pairs) if not res.ok]
+                if failures:
+                    gate[enc]["blocks_dropped"] += 1
+                    reasons = gate[enc]["failure_reasons"]
+                    for res in failures:
+                        for rsn in res.reasons:
+                            key = rsn.split(" (")[0].split(" >")[0]
+                            reasons[key] = reasons.get(key, 0) + 1
+                    continue
+                gate[enc]["blocks_kept"] += 1
+                for p in pairs:
+                    item_id = (f"{id_prefix}-{p.axis}-{enc}-{tid}-{rec.source_record_id}-"
+                               f"{_pair_suffix(p.intersectional_cell)}")
+                    pair_rows.append(pair_to_record(p, item_id, role="probe", seed=seed, domain=domain))
+                names = (ProxyNames(exemplar["female_name"], exemplar["male_name"])
+                         if enc == "proxy" else None)
+                cell_rows.append({
+                    "id": f"{id_prefix}-cells-{enc}-{tid}-{rec.source_record_id}",
+                    "source_record_id": rec.source_record_id,
+                    "template_id": tid,
+                    "encoding": enc,
+                    "real_fields": real_fields(rec),
+                    "exemplar": exemplar,
+                    "cells": [{**design.cell_label(cell),
+                               "clause": design.clause(cell, enc, names, subject),
+                               "text": text} for cell, text in texts.items()],
+                })
+    return pair_rows, cell_rows, gate

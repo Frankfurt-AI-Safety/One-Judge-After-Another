@@ -11,7 +11,11 @@ Axes:
 - ``age``           : explicit "30 years old"/"50 years old"; proxy = graduation year (length-matched
                       4-digit tokens) standing in for young vs older.
 - ``family_status`` : explicit on parental leave / not; proxy = a recent multi-year career gap.
-                      Hiring arm only — it clashes with the credit profile's employment field.
+                      Used by the reasoning arm only. The hiring factorial
+                      (``pairs/factorial.py``) states parental leave and proxies *parenthood* with a
+                      parent-association role instead: a career gap is not specific to parenthood and
+                      contradicts bios describing a continuing career. Credit uses marital status,
+                      since leave/gap clashes with its employment field.
 - ``marital_status``: explicit married / single (no proxy). The credit arm composes sex, age and
                       marital status in a full factorial instead, see ``pairs/factorial.py``.
 - ``ethnicity``     : (education arm) proxy = a first name coded to different origins holding sex fixed

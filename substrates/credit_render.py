@@ -78,11 +78,13 @@ def render_profile(
             telephone and foreign-worker status NOT used).
         template_id: which template in :data:`TEMPLATES`.
         marker: demographic clause to inject at the dedicated slot. ``""`` → neutral baseline.
-            A non-empty marker should be a leading-space clause, e.g. ``" The applicant is a woman."``.
+            A non-empty marker must be a leading-space clause, e.g. ``" The applicant is a woman."``.
 
     Returns:
         The rendered profile string.
     """
     if template_id not in TEMPLATES:
         raise KeyError(f"Unknown template_id {template_id!r}; known: {sorted(TEMPLATES)}")
+    if marker and not marker.startswith(" "):
+        raise ValueError(f"marker must start with a space, got {marker!r}")
     return TEMPLATES[template_id].format(marker=marker, **_slots(record))

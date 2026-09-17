@@ -39,11 +39,13 @@ def render_essay(
         record: the essay record (only ``essay_text`` is used; no demographic fields).
         template_id: which header shell in :data:`EDU_TEMPLATES`.
         marker: demographic clause injected at the header slot. ``""`` → neutral baseline. A non-empty
-            marker should be a leading-space clause, e.g. ``" The student's name is Jamal."``.
+            marker must be a leading-space clause, e.g. ``" The student's name is Jamal."``.
 
     Returns:
         The rendered submission string (header + essay body).
     """
     if template_id not in EDU_TEMPLATES:
         raise KeyError(f"Unknown template_id {template_id!r}; known: {sorted(EDU_TEMPLATES)}")
+    if marker and not marker.startswith(" "):
+        raise ValueError(f"marker must start with a space, got {marker!r}")
     return EDU_TEMPLATES[template_id].format(marker=marker) + record.essay_text

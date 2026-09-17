@@ -92,6 +92,9 @@ Deliberately **not** carried over:
 - **The Bias-in-Bios scrub leaves residual signal** (+0.10 over chance), of which ~+0.056 is
   the irreducible occupational gender prior. The matched-pair contrast survives; the claim
   that the item is sex-neutral apart from the marker does not.
+  *Measured with the scrub before 2026-09-17.* The scrub now also drops bios that still name a
+  person by a sex-coded first name (about 36% of otherwise clean bios did) or contain further
+  gendered words; `validate_bios_scrub.py` has to be re-run.
 - **No confidence intervals or multi-seed runs** anywhere yet.
 
 ## Acknowledgement

@@ -18,6 +18,8 @@ from substrates.bios_ingest import (
     GENDERED_RE,
     PROFESSIONS,
     RealCVRecord,
+    first_name_hit,
+    first_names,
     scrub,
     scrub_detailed,
     with_article,
@@ -65,10 +67,12 @@ class TestScrub:
         out = scrub("The applicant is a poet. She writes daily, and he edits at night.")
         assert "They writes daily" in out and "they edits at night" in out
 
-    def test_leading_pronoun_is_absorbed_by_the_name_strip(self):
-        # A bio opening with a pronoun rather than a name still loses the sex signal: the leading
-        # span regex consumes it, which is the desired outcome via a different path.
-        assert scrub("She is a poet.").startswith("The applicant is a poet")
+    def test_leading_pronoun_is_not_taken_for_a_name(self):
+        # Most corpus bios open with "He"/"She". The pronoun is neutralised like any other, and the
+        # name flag stays False (it used to report "She" as the subject's name).
+        out, resolved = scrub_detailed("She is a poet. She writes daily.")
+        assert out == "They are a poet. They writes daily."
+        assert resolved is False
 
     def test_collapses_whitespace(self):
         assert "  " not in scrub("A   b\n\nc   d is a poet.")
@@ -92,7 +96,7 @@ class TestScrub:
         assert "the applicant the applicant" not in out.lower()
 
     def test_reports_when_the_name_could_not_be_resolved(self):
-        # No leading name span -> the loader must drop the bio rather than trust the body.
+        # Informational only: a name mentioned later is caught by the loader's first-name drop.
         _, resolved = scrub_detailed("Award-winning coverage of the city council since 2011.")
         assert resolved is False
         _, resolved = scrub_detailed("Maria Gonzalez is a dentist in Leeds.")
@@ -102,12 +106,160 @@ class TestScrub:
         out = scrub("Jane Doe is a dentist. Call Jane on (909) 427-3910 today.")
         assert "427-3910" not in out and "[phone]" in out
 
+    def test_strips_emails_and_urls(self):
+        out = scrub("Jane Doe is a dentist. Mail jane.doe@smile-clinic.com or see www.smile.com/jane.")
+        assert "@" not in out and "smile" not in out
+        assert "[email]" in out and out.endswith("[url].")
+
+    def test_titles_only_before_a_name(self):
+        # "MS" (the degree) and the verb "miss" are not titles; "Mrs. Smith" is.
+        out = scrub("They hold an MS in Nursing and never miss a deadline. Ask Mrs. Smith.")
+        assert "an MS in Nursing" in out and "never miss a deadline" in out
+        assert "Mrs" not in out and "Ask Smith." in out
+        assert not GENDERED_RE.search(out)
+
+    def test_surname_that_is_a_word_is_kept(self):
+        # Only the full name and the first name are replaced; surnames are not sex-coded and often
+        # double as ordinary words ("Young Adults").
+        out = scrub("Jane Young is a teacher. Jane works with Young Adults.")
+        assert out == "The applicant is a teacher. The applicant works with Young Adults."
+
+    def test_initials_and_possessives(self):
+        out = scrub("J. Robert Smith is an attorney. Robert earned a J.D. at Yale. Call Robert's office.")
+        assert "J.D." in out
+        assert "Robert" not in out
+        assert "Call the applicant's office." in out
+
+    def test_repeated_placeholder_is_collapsed_before_punctuation(self):
+        out = scrub("Jane Doe is a nurse. Ask Jane Doe Jane.")
+        assert "the applicant the applicant" not in out.lower()
+
+
+class TestLeakFilters:
+    @pytest.mark.parametrize("word", ["actress", "chairman", "brother", "Girl", "mom", "fiancée",
+                                      "spokeswoman", "grandmother"])
+    def test_gendered_words_are_flagged(self, word):
+        assert GENDERED_RE.search(f"They worked as a {word} for years.")
+
+    @pytest.mark.parametrize("text", ["They advocate for women in science.", "an MS in Nursing",
+                                      "They never miss a class.", "a manager", "the Hispanic community"])
+    def test_topical_and_innocent_words_are_not_flagged(self, text):
+        assert not GENDERED_RE.search(text)
+
+    def test_name_list_is_loaded_and_sex_coded_only(self):
+        names = first_names()
+        assert len(names) > 1000
+        assert {"John", "Mary", "Steven", "Jennifer"} <= names
+        # gender-neutral, word-like, calendar and place names are not listed
+        assert not {"Jordan", "Taylor", "Will", "Grace", "June", "Virginia", "Austin"} & names
+
+    @pytest.mark.parametrize("text,hit", [
+        ("The applicant is licensed in Arkansas. John holds a Juris Doctorate.", "John"),
+        ("They trained with Patricia Pierce at a clinic.", "Patricia"),
+        ("They studied in Santa Barbara and at Stanford.", None),
+        ("They practise in St. Louis and San Francisco.", None),
+        ("They trained at the University of Wisconsin-Madison.", None),
+        ("They graduated from Cornell University.", None),
+        ("They will join the practice in June.", None),
+        ("They trained under DeAndre at the clinic.", "DeAndre"),
+        ("They advise on ADA compliance and gave TED talks.", None),
+    ])
+    def test_first_name_hit(self, text, hit):
+        assert first_name_hit(text) == hit
+
+
+class TestLoaderFilters:
+    _FILLER = " They have practised for many years and enjoy teaching students about the field." * 5
+
+    def _write(self, tmp_path, rows):
+        pd = pytest.importorskip("pandas")
+        pytest.importorskip("pyarrow")
+        path = tmp_path / "bios.parquet"
+        pd.DataFrame(rows, columns=["hard_text", "profession", "gender"]).to_parquet(path)
+        return path
+
+    def _clean_rows(self, n):
+        # n clean bios cycling through four professions (nurse, surgeon, poet, teacher)
+        profs = [13, 25, 20, 26]
+        return [(f"She is a professional, case {k}." + self._FILLER, profs[k % 4], k % 2) for k in range(n)]
+
+    def test_drop_reasons_and_women_men_report(self, tmp_path):
+        from substrates.bios_ingest import load_bias_in_bios
+
+        rows = self._clean_rows(8) + [
+            ("He is a nurse. He advocates for women in medicine." + self._FILLER, 13, 0),  # kept, women
+            ("He is a nurse.", 13, 0),                                                    # too short
+            ("She is a nurse. She worked as an actress." + self._FILLER, 13, 1),          # gendered word
+            ("She is a nurse. Contact Patricia for details." + self._FILLER, 13, 1),      # first name
+        ]
+        report = {}
+        recs = load_bias_in_bios(self._write(tmp_path, rows), seed=0, report=report)
+        assert len(recs) == report["kept"] == 9
+        assert report["dropped"]["length"] == {0: 1, 1: 0}
+        assert report["dropped"]["gendered_word"] == {0: 0, 1: 1}
+        assert report["dropped"]["first_name"] == {0: 0, 1: 1}
+        assert report["kept_by_gender"] == {0: 5, 1: 4}
+        assert report["kept_mentioning_women_or_men"] == 1
+        assert report["kept_qualified"] == sum(r.qualified for r in recs)
+        assert all("raw_bio" not in r.extra for r in recs)
+
+    def test_role_match_is_consistent_and_never_self_for_unqualified(self, tmp_path):
+        from substrates.bios_ingest import load_bias_in_bios
+
+        recs = load_bias_in_bios(self._write(tmp_path, self._clean_rows(40)), seed=1, keep_raw=True)
+        for r in recs:
+            assert r.qualified == (r.profession == r.target_role)
+            assert r.role.endswith(r.target_role.replace("_", " "))
+            assert r.extra["raw_bio"].startswith("She is a professional")
+        # unqualified targets are the unqualified group's own professions, reshuffled
+        unq = [r for r in recs if not r.qualified]
+        assert sorted(r.target_role for r in unq) == sorted(r.profession for r in unq)
+
+    def test_unknown_or_single_profession_pool_raises(self, tmp_path):
+        from substrates.bios_ingest import load_bias_in_bios
+
+        path = self._write(tmp_path, self._clean_rows(8))
+        with pytest.raises(ValueError):
+            load_bias_in_bios(path, professions=["nurse", "astronaut"])
+        with pytest.raises(ValueError):
+            load_bias_in_bios(path, professions=["nurse"])
+
+    def test_coin_is_fixed_per_row(self):
+        from substrates.bios_ingest import _coin
+
+        flips = [_coin(42, i) for i in range(2000)]
+        assert flips == [_coin(42, i) for i in range(2000)]
+        assert 0.45 < sum(flips) / len(flips) < 0.55
+        assert flips != [_coin(7, i) for i in range(2000)]
+
+
+class TestMismatchedRoles:
+    def test_no_fixed_points_and_same_multiset(self):
+        from substrates.bios_ingest import _assign_mismatched_roles
+
+        profs = ["professor"] * 40 + ["nurse"] * 30 + ["dj"] * 20 + ["poet"] * 10
+        out = _assign_mismatched_roles(profs, random.Random(0))
+        assert all(t != p for t, p in zip(out, profs))
+        assert sorted(out) == sorted(profs)
+
+    def test_majority_profession_is_rejected(self):
+        from substrates.bios_ingest import _assign_mismatched_roles
+
+        with pytest.raises(ValueError):
+            _assign_mismatched_roles(["professor"] * 6 + ["nurse"] * 4, random.Random(0))
+        with pytest.raises(ValueError):
+            _assign_mismatched_roles(["nurse"], random.Random(0))
+        assert _assign_mismatched_roles([], random.Random(0)) == []
+
 
 class TestArticle:
     def test_article_agreement_and_underscores(self):
         assert with_article("architect") == "an architect"
         assert with_article("surgeon") == "a surgeon"
         assert with_article("software_engineer") == "a software engineer"
+
+    def test_dj_display_name(self):
+        assert with_article("dj") == "a DJ"
 
     def test_every_profession_renders(self):
         for p in PROFESSIONS:
@@ -116,6 +268,10 @@ class TestArticle:
 
 # --------------------------------------------------------------------------- render
 class TestRender:
+    def test_marker_without_leading_space_raises(self):
+        with pytest.raises(ValueError):
+            render_bio(_fake_record(), "bios_v1", marker="The applicant is a woman.")
+
     def test_body_is_verbatim_and_brace_safe(self):
         text = render_bio(_fake_record(), "bios_v1")
         assert _BIO_BODY in text                       # body copied verbatim, braces intact

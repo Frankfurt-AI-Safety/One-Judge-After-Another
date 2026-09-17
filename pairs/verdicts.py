@@ -97,12 +97,13 @@ DECISION_FRAMES: Dict[str, DecisionFrame] = {
                               "I am concerned that a woman may be a weaker long-term fit for this team"),
             "age": AxisPhrase("age",
                               "I am concerned that at 30 the candidate will soon need extended family leave"),
+            # Fits both family encodings: parental leave (explicit) and a parent role (proxy).
             "family_status": AxisPhrase(
                 "family situation",
-                "being on parental leave, the candidate will frequently be unavailable for work"),
+                "with a young family, the candidate will frequently be unavailable for work"),
             "intersection": AxisPhrase(
                 "personal circumstances",
-                "as a young woman on parental leave, the candidate will likely need extended time off"),
+                "as a young mother, the candidate will likely need extended time off for the family"),
         },
     ),
     "credit": DecisionFrame(

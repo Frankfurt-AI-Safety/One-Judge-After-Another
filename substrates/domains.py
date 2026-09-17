@@ -16,15 +16,19 @@ Imports only the dataset classes from `scoring/` and the marker builders from `p
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, List, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
-from pairs.factorial import AXES as CREDIT_FACTORIAL_AXES, credit_marker
+from pairs.factorial import (
+    AXES as CREDIT_FACTORIAL_AXES, CREDIT_DESIGN, FactorialDesign, HIRING_DESIGN,
+    credit_marker, hiring_marker,
+)
 from pairs.markers import make_marker
 from scoring.pair_dataset import ASSESSMENT_PROMPT, CreditDemographicDataset
 from scoring.bios_dataset import BIOS_ASSESSMENT_PROMPT, BiosDemographicDataset
 from scoring.education_dataset import EDU_ASSESSMENT_PROMPT, EducationDemographicDataset
+from substrates.bios_clean import load_factorial_bios
 from substrates.credit_clean import load_factorial_records
-from substrates.bios_ingest import DEFAULT_BIOS_PATH, load_bias_in_bios
+from substrates.bios_ingest import DEFAULT_BIOS_PATH
 from substrates.education_ingest import DEFAULT_PERSUADE_PATH, load_persuade
 from substrates.credit_render import TEMPLATES, render_profile
 from substrates.bios_render import BIOS_TEMPLATES, render_bio
@@ -45,6 +49,7 @@ class DomainSpec:
     is_strong: Callable[[Any], bool]       # record -> True if the "stronger" applicant
     axes: Tuple[str, ...]                  # axes present in this domain's pairs manifest
     make_marker: Callable[..., Any]        # (axis, encoding, rng, subject) -> MarkerSpec
+    factorial: Optional[FactorialDesign] = None  # set where pairs come from a 2x2x2 factorial
 
 
 # Credit: sex × age × marital status as a full factorial (pairs/factorial.py). `family_status`
@@ -62,9 +67,11 @@ CREDIT = DomainSpec(
     # Derived from the factorial so the two lists cannot drift apart.
     axes=CREDIT_FACTORIAL_AXES + ("intersection",),
     make_marker=credit_marker,
+    factorial=CREDIT_DESIGN,
 )
 
-# Hiring arm. The substrate is REAL biographies (Bias-in-Bios), not the synthetic CV generator that
+# Hiring: sex × age × family status as a full factorial (pairs/factorial.py), the pregnancy-window
+# combination. The substrate is REAL biographies (Bias-in-Bios), not the synthetic CV generator that
 # used to back this domain (removed; pre-2026-08 results were produced on it). `qualified` here means
 # role-match (profession == target_role), so it is a genuine quality axis rather than an invented
 # heuristic.
@@ -75,11 +82,13 @@ CV = DomainSpec(
     render_fn=render_bio,
     assessment_prompt=BIOS_ASSESSMENT_PROMPT,
     template_ids=tuple(sorted(BIOS_TEMPLATES)),
-    # Real biographies are user-downloaded; raises with fetch instructions if absent.
-    load_records=lambda: load_bias_in_bios(DEFAULT_BIOS_PATH),
+    # Real biographies are user-downloaded; raises with fetch instructions if absent. Only bios that
+    # pass the scrub and the factorial plausibility rules (substrates/bios_clean.py).
+    load_records=lambda: load_factorial_bios(DEFAULT_BIOS_PATH),
     is_strong=lambda r: r.qualified,
-    axes=("sex", "age", "family_status", "intersection"),
-    make_marker=make_marker,
+    axes=HIRING_DESIGN.axes + ("intersection",),
+    make_marker=hiring_marker,
+    factorial=HIRING_DESIGN,
 )
 
 EDUCATION = DomainSpec(

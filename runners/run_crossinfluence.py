@@ -32,7 +32,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from scoring.dataset_base import format_conversation
 from substrates.domains import get_domain
-from substrates.bios_ingest import DEFAULT_BIOS_PATH, load_bias_in_bios
+from substrates.bios_clean import load_factorial_bios
+from substrates.bios_ingest import DEFAULT_BIOS_PATH
 from substrates.credit_clean import load_factorial_records
 from substrates.education_ingest import DEFAULT_ASAP_PATH, DEFAULT_PERSUADE_PATH, load_asap, load_persuade
 from scoring.experiment import ExperimentConfig
@@ -119,7 +120,7 @@ def main() -> None:
         loader, default_path = _EDU_LOADERS[args.source]
         records = loader(args.raw_path or default_path)
     elif dom.name == "cv":
-        records = load_bias_in_bios(args.raw_path or DEFAULT_BIOS_PATH)
+        records = load_factorial_bios(args.raw_path or DEFAULT_BIOS_PATH)
     elif dom.name == "credit":
         # same population as the registry loader (both consistency rule sets), from the given file
         records = load_factorial_records(args.raw_path)
