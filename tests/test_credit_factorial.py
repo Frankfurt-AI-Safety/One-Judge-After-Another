@@ -210,6 +210,38 @@ class TestGroupedSplit:
         assert len(ds._probe_indices) >= 40
         assert len(ds._probe_indices) + len(ds._test_indices) == len(raw)
 
+    @pytest.mark.parametrize("axis", ["sex", "age", "marital_status"])
+    def test_capped_eval_covers_every_cell_and_template(self, tmp_path, axis):
+        # Regression (audit 2026-09-23): every record's pairs are written first-template, pole-A-cell
+        # first, and the round-robin took rank 0 of each record, so a cap <= the number of test records
+        # (the configs' 200) kept ONE cell of the other factors and ONE template — the reported
+        # marginal was a conditional effect at the worst-case corner.
+        import collections
+
+        from scoring.pair_dataset import CreditDemographicDataset
+
+        ds = CreditDemographicDataset(str(self._manifest(tmp_path, n_records=60)), axis=axis,
+                                      encoding="explicit", probe_size=40, split_seed=42,
+                                      max_test_examples=40)
+        ds._ensure_loaded()
+        test = [ds._raw_data[i] for i in ds._test_indices]
+        combos = collections.Counter(
+            (r["template_id"], tuple(sorted((k, str(v)) for k, v in r["intersectional_cell"].items()
+                                             if "-vs-" not in str(v))))
+            for r in test)
+        assert len(combos) == 8  # 4 settings of the other two factors x 2 templates
+        assert set(combos.values()) == {5}  # 40 capped pairs, exactly balanced
+        assert len({r["source_record_id"] for r in test}) == 40  # still one pair per record
+
+    def test_rotation_only_reorders_the_uncapped_eval_split(self, tmp_path):
+        from scoring.pair_dataset import CreditDemographicDataset
+
+        ds = CreditDemographicDataset(str(self._manifest(tmp_path)), axis="sex", encoding="explicit",
+                                      probe_size=40, split_seed=42)
+        ds._ensure_loaded()
+        probe, test = ds._probe_indices, ds._test_indices
+        assert not set(probe) & set(test) and len(probe) + len(test) == len(ds._raw_data)
+
     def test_test_cap_spreads_over_records(self, tmp_path):
         from scoring.pair_dataset import CreditDemographicDataset
 

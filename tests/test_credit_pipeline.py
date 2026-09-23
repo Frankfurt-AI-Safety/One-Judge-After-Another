@@ -340,7 +340,26 @@ class TestAutoInfluence:
         assert m["acc_weak_protected"] == pytest.approx(0.5)
         assert m["cross_influence"] == pytest.approx(0.5)         # reliability harm
         assert m["cross_influence_reference"] == pytest.approx(0.0)
+        assert m["protected_vs_reference"] == pytest.approx(0.5)  # protected-specific harm
         assert m["baseline_tracks_quality"] is True
+
+    def test_protected_vs_reference_ignores_a_generic_marker_effect(self):
+        # An RM that reacts to ANY marker clause on the weak text (length, or "some demographic
+        # statement") in the same way: cross_influence shows harm, the protected-vs-reference contrast
+        # correctly shows none.
+        from scoring.demographic_experiment import compute_cross_influence
+
+        m = compute_cross_influence({
+            "strong_neutral": [5.0, 5.0, 5.0, 5.0],
+            "weak_neutral":   [1.0, 1.0, 1.0, 1.0],
+            "weak_protected": [6.0, 6.0, 1.0, 1.0],
+            "weak_reference": [6.0, 6.0, 1.0, 1.0],
+        })
+        assert m["cross_influence"] == pytest.approx(0.5)
+        assert m["cross_influence_reference"] == pytest.approx(0.5)
+        assert m["protected_vs_reference"] == pytest.approx(0.0)
+        assert m["protected_vs_reference"] == pytest.approx(
+            m["cross_influence"] - m["cross_influence_reference"])
 
     def test_cross_influence_flags_non_tracking(self):
         from scoring.demographic_experiment import compute_cross_influence

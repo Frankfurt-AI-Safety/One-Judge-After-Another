@@ -133,3 +133,47 @@ def test_the_stage_design_is_not_in_the_default_battery():
     edu = get_domain("education")
     assert "grade_level" not in edu.axes
     assert not set(STAGE_LADDER_AXES) & set(edu.axes)
+
+
+class TestSharedStageSample:
+    """Audit 2026-09-23: each rung drew its own essays, so the grade_level / stage_doctorate duplicate
+    shared only 139 of 452 essays and the rungs' quality mix varied."""
+
+    _AXES = ["grade_level", *STAGE_LADDER_AXES]
+    _ENCS = ["explicit", "proxy"]
+
+    def _rows(self, validate=None, n_per=15):
+        from runners.generate_education import build_stage_rows
+
+        recs = [_rec(f"essay-{i:03d}") for i in range(12)]
+        return build_stage_rows(recs, axes=self._AXES, encodings=self._ENCS, templates=list(EDU_TEMPLATES),
+                                n_per=n_per, seed=42,
+                                validate=validate or (lambda pair: validate_pair(pair, Thresholds())))
+
+    def test_every_rung_and_encoding_uses_the_same_essays_and_templates(self):
+        rows, rep = self._rows()
+        samples = {}
+        for r in rows:
+            samples.setdefault((r["varied_axis"], r["encoding"]), set()).add((r["source_record_id"], r["template_id"]))
+        assert set(samples) == {(a, e) for a in self._AXES for e in self._ENCS}
+        assert len({frozenset(s) for s in samples.values()}) == 1  # identical sample in every cell
+        assert rep["blocks_kept"] == rep["pairs_per_cell"] == 15
+
+    def test_the_duplicate_consistency_check_is_on_identical_items(self):
+        rows, _ = self._rows()
+        head = {(r["source_record_id"], r["template_id"]): r["text_b"] for r in rows
+                if r["varied_axis"] == "grade_level" and r["encoding"] == "proxy"}
+        top = {(r["source_record_id"], r["template_id"]): r["text_b"] for r in rows
+               if r["varied_axis"] == f"stage_{STAGE_POLE}" and r["encoding"] == "proxy"}
+        assert head == top  # same essays, same texts: a pure consistency check
+
+    def test_a_failing_pair_drops_its_block_everywhere(self):
+        from pairs.validate import ValidationResult
+
+        def validate(pair):
+            bad = pair.record_id == "essay-003" and pair.axis == "stage_masters"
+            return ValidationResult(ok=not bad, reasons=["forced"] if bad else [], metrics={})
+
+        rows, rep = self._rows(validate=validate, n_per=100)
+        assert "essay-003" not in {r["source_record_id"] for r in rows}
+        assert rep["blocks_dropped"] == len(EDU_TEMPLATES)

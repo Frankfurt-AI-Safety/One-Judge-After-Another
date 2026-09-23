@@ -97,7 +97,8 @@ def main() -> None:
 
 
 def run_stage(args) -> None:
-    """The single-axis stage design: one manifest per (axis, encoding) sample, `n_per` pairs each."""
+    """The single-axis stage design: `n_per` shared (essay, template) blocks, one pair per axis and
+    encoding from each (see `build_stage_rows`)."""
     out_dir = args.out_dir or Path(f"data/demographic/education/{args.source}_stage")
     axes = ([a.strip() for a in args.axes.split(",") if a.strip()] if args.axes else ["grade_level"])
     if args.include_ladder:
@@ -121,44 +122,15 @@ def run_stage(args) -> None:
                 len(records), args.source, n_strong, len(records) - n_strong, templates)
 
     thr = Thresholds(args.max_char_delta, args.max_token_delta, args.max_flesch_delta)
-    out_records: List[Dict[str, Any]] = []
-    discards: Dict[str, Any] = {}
-
-    for axis in axes:
-        for enc in encodings:
-            rng = stable_rng(args.seed, axis, enc)
-            combos = [(r, t) for r in records for t in templates]
-            rng.shuffle(combos)
-            kept, n_fail = 0, 0
-            fail_reasons: Dict[str, int] = {}
-            for rec, tid in combos:
-                if kept >= n_per:
-                    break
-                pair = make_pair(rec, tid, axis, enc, rng,
-                                 render_fn=render_essay, content_label="essay_content",
-                                 subject="student")
-                res = validate_pair(pair, thr)
-                if not res.ok:
-                    n_fail += 1
-                    for rsn in res.reasons:
-                        k = rsn.split(" (")[0].split(" >")[0]
-                        fail_reasons[k] = fail_reasons.get(k, 0) + 1
-                    continue
-                item_id = f"edu-{axis}-{enc}-{tid}-{rec.source_record_id}"
-                out_records.append(pair_to_record(pair, item_id, role="probe", seed=args.seed,
-                                                   domain="education"))
-                kept += 1
-            seen = kept + n_fail
-            discards[f"{axis}/{enc}"] = {
-                "kept": kept, "examined": seen,
-                "discard_rate": round(n_fail / max(seen, 1), 4),
-                "failure_reasons": fail_reasons,
-            }
-            logger.info("%s/%s: kept %d (examined %d, discard %.2f)",
-                        axis, enc, kept, seen, n_fail / max(seen, 1))
-            if kept < n_per:
-                logger.warning("%s/%s: only %d/%d clean pairs (need more essays: raise --n-essays)",
-                               axis, enc, kept, n_per)
+    out_records, discards = build_stage_rows(records, axes=axes, encodings=encodings,
+                                             templates=templates, n_per=n_per, seed=args.seed,
+                                             validate=lambda pair: validate_pair(pair, thr))
+    logger.info("Stage sample: %d (essay, template) blocks shared by %d axis/encoding cells; "
+                "dropped %d blocks %s", discards["blocks_kept"], len(axes) * len(encodings),
+                discards["blocks_dropped"], discards["failure_reasons"])
+    if discards["blocks_kept"] < n_per:
+        logger.warning("only %d/%d clean blocks (need more essays: raise --n-essays)",
+                       discards["blocks_kept"], n_per)
 
     paths = write_manifest(
         out_dir, out_records, seed=args.seed,
@@ -170,6 +142,43 @@ def run_stage(args) -> None:
     )
     logger.info("Wrote %d records -> %s", len(out_records), paths["pairs"])
     logger.info("Manifest: %s | spot-check: %s", paths["manifest"], paths["spotcheck"])
+
+
+def build_stage_rows(records, *, axes, encodings, templates, n_per, seed, validate):
+    """Stage pairs for every axis and encoding from ONE shared sample of (essay, template) blocks.
+
+    The ladder's rungs (and the `grade_level`/`stage_doctorate` duplicate that checks them) are only
+    comparable if they are measured on the same essays. They used to draw a separate sample per axis and
+    encoding (duplicate pair shared 139 of 452 essays; strong share 0.47-0.53 across rungs). Now the
+    blocks are shuffled once; each block yields one pair per (axis, encoding), and a block with any pair
+    failing `validate` is dropped for all of them. The first `n_per` clean blocks are kept.
+    """
+    combos = [(r, t) for r in records for t in templates]
+    stable_rng(seed, "stage").shuffle(combos)
+    rows: List[Dict[str, Any]] = []
+    kept, dropped = 0, 0
+    fail_reasons: Dict[str, int] = {}
+    for rec, tid in combos:
+        if kept >= n_per:
+            break
+        block = [(axis, enc, make_pair(rec, tid, axis, enc, stable_rng(seed, rec.source_record_id, tid),
+                                       render_fn=render_essay, content_label="essay_content",
+                                       subject="student"))
+                 for axis in axes for enc in encodings]
+        failures = [res for res in (validate(pair) for _, _, pair in block) if not res.ok]
+        if failures:
+            dropped += 1
+            for res in failures:
+                for rsn in res.reasons:
+                    k = rsn.split(" (")[0].split(" >")[0]
+                    fail_reasons[k] = fail_reasons.get(k, 0) + 1
+            continue
+        kept += 1
+        for axis, enc, pair in block:
+            item_id = f"edu-{axis}-{enc}-{tid}-{rec.source_record_id}"
+            rows.append(pair_to_record(pair, item_id, role="probe", seed=seed, domain="education"))
+    return rows, {"blocks_kept": kept, "blocks_dropped": dropped, "failure_reasons": fail_reasons,
+                  "pairs_per_cell": kept}
 
 
 def run_factorial(args) -> None:

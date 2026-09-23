@@ -24,12 +24,11 @@ from typing import Any, Dict, List
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import torch
-
 from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import DemographicBiasExperiment, compute_auto_influence_metrics
 from substrates.domains import get_domain
-from probes.probe import build_probe_direction, get_rewards_both, project_to_null_space
+from probes.embedding_cache import CACHE_ATTR
+from probes.probe import build_probe_direction, get_embeddings, get_rewards_both, rewards_from_hidden
 
 ENCODINGS = ["explicit", "proxy"]
 SWEEP_ALPHAS = [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -70,32 +69,27 @@ def run_cell(exp, cfg, axis, encoding, dataset_cls, sweep_axes=SWEEP_AXES) -> Di
         "nulled": compute_auto_influence_metrics(null_org),
         "baseline_by_template": _subgroup_auto_influence(base_org, eval_examples),
     }
-    # α-sweep (efficient: embed once, then project+score per α). Requires the backend to expose
-    # last-hidden + score head (the fast path). Falls back to per-α forward otherwise.
+    # α-sweep: the texts' states come from the embedding cache; only the head runs per α.
     if axis in sweep_axes:
         cell["alpha_sweep"] = _alpha_sweep(exp, cfg, all_texts, text_meta, n, probe)
     return cell
 
 
 def _alpha_sweep(exp, cfg, all_texts, text_meta, n, probe) -> Dict[str, float]:
-    backend = exp.model
+    """auto_influence at each α. One embedding pass (served from the embedding cache — these texts
+    were just scored), then only the score head per α. The old fast path checked for an MLX-era
+    backend method that no longer exists and silently re-ran the model once per α."""
+    hidden = get_embeddings(exp.model, exp.tokenizer, all_texts, batch_size=cfg.batch_size,
+                            device=cfg.device, max_length=cfg.max_length, show_progress=False)
+    state_dtype = next(exp.model.parameters()).dtype
+    cache = getattr(exp.model, CACHE_ATTR, None)
+    if cache is not None and cache.state_dtype is not None:
+        state_dtype = cache.state_dtype
     curve: Dict[str, float] = {}
-    if hasattr(backend, "embed_texts") and hasattr(backend, "score_head"):
-        hidden = backend.embed_texts(all_texts, batch_size=cfg.batch_size,
-                                     max_length=cfg.max_length, show_progress=False)
-        with torch.no_grad():
-            for a in SWEEP_ALPHAS:
-                h = project_to_null_space(hidden, probe, alpha=a)
-                scores = backend.score_head(h).squeeze(-1)
-                org = exp._organize_rewards(scores, text_meta, n)
-                curve[str(a)] = compute_auto_influence_metrics(org).get("auto_influence", float("nan"))
-    else:  # backend-agnostic fallback: one forward per α
-        for a in SWEEP_ALPHAS:
-            _, nulled = get_rewards_both(exp.model, exp.tokenizer, all_texts, probe,
-                                         batch_size=cfg.batch_size, device=cfg.device,
-                                         max_length=cfg.max_length, null_alpha=a, show_progress=False)
-            org = exp._organize_rewards(nulled, text_meta, n)
-            curve[str(a)] = compute_auto_influence_metrics(org).get("auto_influence", float("nan"))
+    for a in SWEEP_ALPHAS:
+        _, scores = rewards_from_hidden(exp.model, hidden, state_dtype, probe, null_alpha=a)
+        org = exp._organize_rewards(scores, text_meta, n)
+        curve[str(a)] = compute_auto_influence_metrics(org).get("auto_influence", float("nan"))
     return curve
 
 

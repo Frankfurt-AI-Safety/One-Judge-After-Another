@@ -94,6 +94,11 @@ class ExperimentConfig:
     
     save_probe: bool = True
     """Whether to save the probe direction"""
+
+    embedding_cache_dir: Optional[str] = "artifacts/embedding_cache"
+    """Root of the per-model embedding cache (`probes/embedding_cache.py`): each unique text is
+    embedded once per model and reused by every probe, reward, α-sweep and offline analysis. None
+    disables it; the environment variable ONEJUDGE_EMBED_CACHE overrides (``off`` or a path)."""
     
     # Additional dataset-specific settings
     extra: Dict[str, Any] = field(default_factory=dict)
@@ -143,6 +148,7 @@ class ExperimentConfig:
             "artifacts_dir": self.artifacts_dir,
             "plots_dir": self.plots_dir,
             "save_probe": self.save_probe,
+            "embedding_cache_dir": self.embedding_cache_dir,
             "extra": self.extra,
         }
     
@@ -325,8 +331,11 @@ class BiasExperiment(ABC):
         """
         from scoring.backend import create_backend
 
+        from probes.embedding_cache import attach
+
         logger.info("Loading model from %s", self.config.model_path)
         self.model, self.tokenizer = create_backend(self.config)
+        attach(self.model, self.tokenizer, self.config.embedding_cache_dir)
     
     def load_dataset(self) -> None:
         """Load and split the dataset(s).

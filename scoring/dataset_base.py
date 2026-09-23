@@ -197,7 +197,19 @@ class ProbeDataset(ABC):
         """Whole groups, in hashed order, fill the probe split until it holds at least ``probe_size``
         examples; the remaining groups form the test split (at least ``min_test_size`` examples if
         the data allows). The test split is ordered round-robin across its groups, so a
-        ``max_test_examples`` cap keeps as many distinct groups as possible."""
+        ``max_test_examples`` cap keeps as many distinct groups as possible.
+
+        Each test group's members are **rotated by the group's position** before the round-robin:
+        group *k* starts at member ``k mod len(group)``. The generators write every record's pairs in
+        the same order (first template, pole-A cell first), so without the rotation the first round
+        was always that one member, and a cap no larger than the number of test groups — every config's
+        ``max_test_examples: 200`` — kept a single cell of the other factors and a single template
+        (audit 2026-09-23: credit, hiring and education alike). Every headline number was then a
+        conditional effect at the hypothesised worst-case corner, not the factorial marginal, and the
+        per-template check on eval had one template. Rotating spreads the first round evenly over all
+        member positions (exactly, when groups are equally sized and the cap is a multiple of the
+        group size) and is deterministic; the uncapped test split contains the same examples as
+        before, in a different order."""
         groups: Dict[str, List[int]] = {}
         for idx, example in enumerate(self._raw_data):
             groups.setdefault(self._get_group_key(example), []).append(idx)
@@ -216,6 +228,7 @@ class ProbeDataset(ABC):
                 probe.extend(members)
             else:
                 test_groups.append(members)
+        test_groups = [g[k % len(g):] + g[:k % len(g)] for k, g in enumerate(test_groups)]
         test: List[int] = []
         for rank in range(max((len(g) for g in test_groups), default=0)):
             test.extend(g[rank] for g in test_groups if rank < len(g))

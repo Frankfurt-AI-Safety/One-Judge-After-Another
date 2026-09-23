@@ -49,6 +49,9 @@ class DomainSpec:
     axes: Tuple[str, ...]                  # axes present in this domain's pairs manifest
     make_marker: Callable[..., Any]        # (axis, encoding, rng, subject) -> MarkerSpec
     factorial: Optional[FactorialDesign] = None  # set where pairs come from a 2x2x2 factorial
+    # Cross-influence pairs a strong with a weak record only within the same stratum (None = anywhere).
+    # Education: the prompt, so both essays answer the same assignment the header shows.
+    pair_stratum: Optional[Callable[[Any], Any]] = None
 
 
 # Credit: sex × age × marital status as a full factorial (pairs/factorial.py). `family_status`
@@ -109,6 +112,7 @@ EDUCATION = DomainSpec(
     axes=EDUCATION_DESIGN.axes + ("intersection",),
     make_marker=education_marker,
     factorial=EDUCATION_DESIGN,
+    pair_stratum=lambda r: r.prompt_id,
 )
 
 DOMAINS = {CREDIT.name: CREDIT, CV.name: CV, EDUCATION.name: EDUCATION}

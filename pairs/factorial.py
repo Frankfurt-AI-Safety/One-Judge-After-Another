@@ -256,7 +256,7 @@ HIRING_DESIGN = FactorialDesign(
 )
 
 # Education: sex × ethnicity × economic status. The third factor is NOT the education stage: a stated
-# stage contradicts the essay's register (the bodies read like grades 6-10 whatever the marker claims)
+# stage contradicts the essay's register (the bodies read like grades 8-10 whatever the marker claims)
 # and has no signed hypothesis, since norm-referenced grading and status credibility pull opposite ways.
 # Economic status contradicts nothing (5 of 6,404 essays mention their own household money at all), has
 # a signed hypothesis, and needs no plausibility filter. The stage axis keeps its own single-axis design

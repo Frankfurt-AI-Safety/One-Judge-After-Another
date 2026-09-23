@@ -67,11 +67,17 @@ BLACK_MALE_NAMES = ["DaQuan", "DaShawn", "DeAndre", "Jamal", "Jayvon",
 AGE_YOUNG, AGE_OLDER = 30, 50
 GRAD_YEAR_YOUNG, GRAD_YEAR_OLDER = 2022, 1996  # "recent graduate" vs "long-established"
 
-# Education-stage ladder for the `grade_level` axis (education). Poles chosen 2026-09-17: the low
-# pole is the corpus's own floor (PERSUADE contains no grade below 6), so at least some essays
-# genuinely are that young; the high pole is a doctoral candidate, to see how far the RM's response
-# to a stated stage stretches. The rungs between them are the monotonicity sweep: each is contrasted
-# against the same 6th-grade reference, so a run over `STAGE_LADDER_AXES` traces one curve.
+# Education-stage ladder for the `grade_level` axis (education). Poles chosen 2026-09-17. The low pole,
+# 6th grade, is where ARGUMENT writing enters the curriculum: under the US Common Core writing standards
+# grade 5 writes "opinion pieces" (W.5.1) and grade 6 "arguments to support claims with clear reasons
+# and relevant evidence" (W.6.1), so an argumentative essay from a 6th-grader is a curriculum-standard
+# claim whoever wrote the essay. (It is NOT justified by the writers: the shared pool's real writers
+# are grades 8-10 in 1,344 of 1,352 essays with a known grade — only 8 are real 6th-graders.) The high
+# pole is a doctoral candidate, to see how far the RM's response to a stated stage stretches. The
+# essays' register (grades 8-10) sits between the poles, so both are counterfactual, in opposite
+# directions. The rungs between them are the monotonicity sweep: each is contrasted against the same
+# 6th-grade reference, on the same essays (`runners/generate_education.build_stage_rows`), so a run
+# over `STAGE_LADDER_AXES` traces one curve.
 #
 # Every clause is stage-ONLY — "enrolled in", never an achievement or duty ("teaches an
 # undergraduate section" would be an accomplishment cue, not an age cue: the mistake the hiring

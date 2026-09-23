@@ -36,11 +36,13 @@ So the rules run in three steps, all reported through `substrates/rules.py`:
 "college"/"university" mentions are deliberately *not* a rule: a pupil writing "when I go to college"
 is plausible, and so is a doctoral candidate mentioning a university.
 
-What this cannot fix is **register**: the essays read like grades 6–12 whatever the marker claims.
-That is why the low pole is 6th grade — the corpus's own floor, so at least some essays genuinely are
-that young — and why the stage axis is read together with the quality interaction (see the working
-notes): norm-referenced grading predicts a gap that grows with essay quality, while a flat offset is
-a prior about the writer.
+What this cannot fix is **register**: the pool's essays read like grades 8–10 (the real grade of
+1,344 of the 1,352 with a known grade) whatever the marker claims. The poles therefore do not rest on
+the writers — the low pole, 6th grade, is where argument writing enters the curriculum (see
+`pairs.markers.STAGE_LADDER`) — and the true register sits between them, so both poles are
+counterfactual, in opposite directions. The stage axis is read together with the quality interaction
+(see the working notes): norm-referenced grading predicts a gap that grows with essay quality, while a
+flat offset is a prior about the writer.
 """
 
 from __future__ import annotations

@@ -8,7 +8,9 @@ Pipeline:
      first name (`substrates/bios_ingest.py`)
   2. drop bios that cannot carry every level of the factorial plausibly — a stated age of 30 next to
      "25 years of experience" or a degree dated 2005 (`substrates/bios_clean.py`)
-  3. assign a balanced role-match `qualified` label (profession == target role)
+  3. cap every profession at 10% of the pool, then assign the role-match `qualified` label on the bios
+     actually used: exactly half of each profession qualified, unqualified bios screened for another
+     unqualified bio's profession, never a near-synonym (`substrates/bios_clean.py`)
   4. render each remaining bio in all 8 cells of the sex × age × family-status factorial (a neutral
      header naming the target role + one composite marker clause) and cut the matched pairs from them
      (`pairs/factorial.py`), per template and encoding
@@ -98,12 +100,19 @@ def main() -> None:
     corpus_report: Dict[str, Any] = {}
     records = load_factorial_bios(raw_path, n=args.n_bios, seed=args.seed, report=corpus_report)
     rules_report = corpus_report.pop("factorial_rules")
+    cap_report = corpus_report.pop("profession_cap")
+    role_report = corpus_report.pop("role_leak")
     n_strong = sum(r.qualified for r in records)
     logger.info("Corpus filters: kept %d of %d bios; dropped %s; %.1f%% of kept mention women/men",
                 corpus_report["kept"], corpus_report["n_rows"], corpus_report["dropped"],
                 100 * corpus_report["kept_mentioning_women_or_men_rate"])
     logger.info("Factorial rules: %d -> %d %s", rules_report["n_in"], rules_report["n_out"],
                 rules_report["dropped_by_rule"])
+    logger.info("Profession cap %s: limit %s per profession, %d -> %d bios; capped %s", cap_report["cap"],
+                cap_report.get("limit"), cap_report.get("n_in", 0), cap_report.get("n_out", 0),
+                sorted(cap_report.get("capped", {})))
+    logger.info("Role label on the bios used: %s (0.5 = the role name says nothing about qualified)",
+                role_report)
     logger.info("Using %d biographies (%d role-matched / %d mismatched); templates=%s",
                 len(records), n_strong, len(records) - n_strong, templates)
 
@@ -127,6 +136,7 @@ def main() -> None:
                     g["blocks_dropped"], g["failure_reasons"])
 
     discards: Dict[str, Any] = {"corpus_filters": corpus_report, "factorial_rules": rules_report,
+                                "profession_cap": cap_report, "role_leak": role_report,
                                 "n_records_used": len(records), "gate": gate}
     paths = write_manifest(
         out_dir=args.out_dir, records=pair_rows, seed=args.seed, discard_report=discards,
