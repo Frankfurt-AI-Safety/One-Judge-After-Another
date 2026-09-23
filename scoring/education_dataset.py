@@ -26,9 +26,10 @@ class EducationDemographicDataset(MatchedPairDataset):
     NAME_PREFIX = "education_demographic"
     DEFAULT_PROMPT = EDU_ASSESSMENT_PROMPT
     GENERATOR = "runners/generate_education.py"
-    # TODO(scoring/ review): this split LEAKS. generate_education.py samples (record, template)
-    # combos, so one essay can yield a pair under each template, and the ungrouped split can put one in
-    # probe and the other in eval — the direction is then evaluated on an essay it was fitted on. Kept
-    # ungrouped (GROUP_BY_RECORD = False) only so existing education splits do not shift; switching it
-    # on changes every education number and must be re-run.
-    GROUP_BY_RECORD = False
+    # Grouped by essay since 2026-09-23. The education factorial cuts 8 pairs per essay from each single
+    # axis (4 settings of the other attributes x 2 templates) and the A2 positioned arm 4, so an ungrouped
+    # split routinely put one of an essay's pairs in probe and another in eval — the direction was then
+    # evaluated on an essay it was fitted on (already true, less often, of the old single-axis design with
+    # its two templates). It was left ungrouped only so existing splits would not shift; every education
+    # number is stale anyway (see the write-up's \P marks), so that reason is gone. Same fix as credit/cv.
+    GROUP_BY_RECORD = True

@@ -2,17 +2,17 @@
 """
 Generate the demographic education (grading) matched-pair dataset (education arm).
 
-Two designs, two manifests, two populations (`--design`):
+Two designs, two manifests, ONE essay pool (`--design`). Both load the shared education pool
+(`substrates/education_clean.load_education_essays`: stage-neutral prompts, no in-essay pupil cues, no
+talk of the writer's own household money), which the A2 positioned arm and cross-influence use too.
 
 **factorial** (default) — sex × ethnicity × economic status as a 2×2×2, all 8 cells rendered per
 essay/template/encoding and the matched pairs cut from them (pairs/factorial.py). Sex and ethnicity
 share one carrier in the proxy encoding (the first name), so the proxy is the index-matched Haim name
-grid; the economic proxy is the school's free/reduced-price-lunch share. Population: the whole corpus
-bar the essays discussing their own household money.
+grid; the economic proxy is the school's free/reduced-price-lunch share.
 
 **stage** — the single-axis 6th-grade-vs-doctoral-candidate contrast, plus `--include-ladder` for the
-monotonicity rungs against the same reference clause. Population: the stage-neutral prompts without
-in-essay pupil cues, since a stated stage is the one marker an essay body can contradict.
+monotonicity rungs against the same reference clause.
 
 Both: load real essays (PERSUADE 2.0 or ASAP-AES) -> strong/weak `high_quality` from the holistic score
 -> render as a gradable submission with a neutral header -> inject the marker clause -> Tier-1
@@ -33,7 +33,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import random
@@ -44,9 +43,9 @@ from typing import Any, Dict, List
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from substrates.education_clean import load_factorial_essays, load_stage_essays
+from substrates.education_clean import load_education_essays
 from substrates.education_render import EDU_TEMPLATES, render_essay
-from pairs.factorial import EDUCATION_DESIGN, build_factorial_rows
+from pairs.factorial import EDUCATION_DESIGN, build_factorial_rows, stable_rng
 from pairs.markers import STAGE_LADDER_AXES, make_pair
 from pairs.validate import Thresholds, validate_pair
 from pairs.manifest import EDU_ATTRIBUTION, pair_to_record, write_manifest
@@ -60,19 +59,12 @@ SOURCES = ("persuade", "asap")
 REAL_COVARIATES = ("ell_status", "economically_disadvantaged", "student_disability_status")
 
 
-def cell_rng(seed: int, axis: str, encoding: str) -> random.Random:
-    """Per-cell RNG from a stable digest — Python's `hash` of a tuple of strings is salted per
-    process, so the old `hash((seed, axis, enc))` seed changed between runs."""
-    digest = hashlib.sha256(f"{seed}|{axis}|{encoding}".encode("utf-8")).digest()
-    return random.Random(int.from_bytes(digest[:8], "big"))
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--design", choices=("factorial", "stage"), default="factorial",
                     help="factorial: sex x ethnicity x economic status, all 8 cells per essay (the "
                          "domain's main manifest). stage: the single-axis 6th-grade-vs-doctorate "
-                         "contrast (+ --include-ladder), on its own manifest and its own population.")
+                         "contrast (+ --include-ladder), on its own manifest. Same essay pool.")
     ap.add_argument("--source", choices=SOURCES, default="persuade")
     ap.add_argument("--raw-path", default=None, help="Override the corpus file path (else the default).")
     ap.add_argument("--axes", default=None,
@@ -116,14 +108,14 @@ def run_stage(args) -> None:
 
     corpus_report: Dict[str, Any] = {}
     # raises FileNotFoundError with download instructions if absent
-    records = load_stage_essays(args.raw_path, source=args.source, n=args.n_essays, seed=args.seed,
-                                report=corpus_report)
-    rules_report = corpus_report.pop("stage_rules")
+    records = load_education_essays(args.raw_path, source=args.source, n=args.n_essays, seed=args.seed,
+                                    report=corpus_report)
+    rules_report = corpus_report.pop("education_rules")
     n_strong = sum(r.high_quality for r in records)
     logger.info("Corpus filters: %d rows -> %d essays -> kept %d; dropped %s",
                 corpus_report["n_rows"], corpus_report["n_essays"], corpus_report["kept"],
                 corpus_report["dropped"])
-    logger.info("Stage rules: %d -> %d %s", rules_report["n_in"], rules_report["n_out"],
+    logger.info("Education rules: %d -> %d %s", rules_report["n_in"], rules_report["n_out"],
                 rules_report["dropped_by_rule"])
     logger.info("Loaded %d %s essays (%d strong / %d weak); templates=%s",
                 len(records), args.source, n_strong, len(records) - n_strong, templates)
@@ -134,7 +126,7 @@ def run_stage(args) -> None:
 
     for axis in axes:
         for enc in encodings:
-            rng = cell_rng(args.seed, axis, enc)
+            rng = stable_rng(args.seed, axis, enc)
             combos = [(r, t) for r in records for t in templates]
             rng.shuffle(combos)
             kept, n_fail = 0, 0
@@ -170,7 +162,7 @@ def run_stage(args) -> None:
 
     paths = write_manifest(
         out_dir, out_records, seed=args.seed,
-        discard_report={"corpus_filters": corpus_report, "stage_rules": rules_report,
+        discard_report={"corpus_filters": corpus_report, "education_rules": rules_report,
                         "n_records_used": len(records), **discards},
         thresholds={"max_char_delta": args.max_char_delta, "max_token_delta": args.max_token_delta,
                     "max_flesch_delta": args.max_flesch_delta},
@@ -190,14 +182,14 @@ def run_factorial(args) -> None:
 
     corpus_report: Dict[str, Any] = {}
     # raises FileNotFoundError with download instructions if absent
-    records = load_factorial_essays(args.raw_path, source=args.source, n=args.n_essays,
+    records = load_education_essays(args.raw_path, source=args.source, n=args.n_essays,
                                     seed=args.seed, report=corpus_report)
-    rules_report = corpus_report.pop("factorial_rules")
+    rules_report = corpus_report.pop("education_rules")
     n_strong = sum(r.high_quality for r in records)
     logger.info("Corpus filters: %d rows -> %d essays -> kept %d; dropped %s",
                 corpus_report["n_rows"], corpus_report["n_essays"], corpus_report["kept"],
                 corpus_report["dropped"])
-    logger.info("Factorial rules: %d -> %d %s", rules_report["n_in"], rules_report["n_out"],
+    logger.info("Education rules: %d -> %d %s", rules_report["n_in"], rules_report["n_out"],
                 rules_report["dropped_by_rule"])
     logger.info("Using %d %s essays (%d strong / %d weak); templates=%s",
                 len(records), args.source, n_strong, len(records) - n_strong, templates)
@@ -228,7 +220,7 @@ def run_factorial(args) -> None:
 
     paths = write_manifest(
         out_dir=out_dir, records=pair_rows, seed=args.seed,
-        discard_report={"corpus_filters": corpus_report, "factorial_rules": rules_report,
+        discard_report={"corpus_filters": corpus_report, "education_rules": rules_report,
                         "n_records_used": len(records), "gate": gate},
         thresholds={"max_char_delta": args.max_char_delta, "max_token_delta": args.max_token_delta,
                     "max_flesch_delta": args.max_flesch_delta},

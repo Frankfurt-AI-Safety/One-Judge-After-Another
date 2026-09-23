@@ -219,16 +219,31 @@ class TestGroupedSplit:
         # 10 capped examples come from 10 different records (round-robin), not from 2
         assert len({ds._raw_data[i]["source_record_id"] for i in ds._test_indices}) == 10
 
-    def test_only_credit_is_grouped(self):
+    def test_every_factorial_domain_is_grouped(self):
+        # All three domains cut several pairs per record, so all three split by record (hiring and
+        # education since 2026-09-23; before that their splits leaked records across probe and eval).
         from scoring.bios_dataset import BiosDemographicDataset
         from scoring.education_dataset import EducationDemographicDataset
-        from scoring.pair_dataset import CreditDemographicDataset, MatchedPairDataset
+        from scoring.pair_dataset import CreditDemographicDataset
 
         row = {"id": "x", "source_record_id": "r"}
-        for cls in (BiosDemographicDataset, EducationDemographicDataset):
-            assert issubclass(cls, MatchedPairDataset) and not issubclass(cls, CreditDemographicDataset)
-            assert cls("unused", axis="sex", encoding="explicit")._get_group_key(row) is None
-        assert CreditDemographicDataset("unused", axis="sex", encoding="explicit")._get_group_key(row) == "r"
+        for cls in (CreditDemographicDataset, BiosDemographicDataset, EducationDemographicDataset):
+            assert cls("unused", axis="sex", encoding="explicit")._get_group_key(row) == "r", cls.__name__
+
+    @pytest.mark.parametrize("cls_path", ["scoring.bios_dataset.BiosDemographicDataset",
+                                          "scoring.education_dataset.EducationDemographicDataset"])
+    def test_no_record_in_both_splits_for_hiring_and_education(self, tmp_path, cls_path):
+        import importlib
+
+        module, name = cls_path.rsplit(".", 1)
+        cls = getattr(importlib.import_module(module), name)
+        ds = cls(str(self._manifest(tmp_path)), axis="sex", encoding="explicit", probe_size=40,
+                 split_seed=42)
+        ds._ensure_loaded()
+        raw = ds._raw_data
+        probe = {raw[i]["source_record_id"] for i in ds._probe_indices}
+        test = {raw[i]["source_record_id"] for i in ds._test_indices}
+        assert probe and test and not probe & test
 
     def test_base_class_needs_a_domain(self):
         from scoring.pair_dataset import MatchedPairDataset

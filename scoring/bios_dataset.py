@@ -27,9 +27,9 @@ class BiosDemographicDataset(MatchedPairDataset):
     NAME_PREFIX = "cv_demographic"
     DEFAULT_PROMPT = BIOS_ASSESSMENT_PROMPT
     GENERATOR = "runners/generate_bios.py"
-    # TODO(scoring/ review): this split LEAKS. generate_bios.py samples (record, template) combos, so
-    # one biography can yield a pair under each template, and the ungrouped split can put one in probe
-    # and the other in eval — the direction is then evaluated on a biography it was fitted on. Kept
-    # ungrouped (GROUP_BY_RECORD = False) only so existing hiring splits do not shift; switching it on
-    # changes every hiring number and must be re-run.
-    GROUP_BY_RECORD = False
+    # Grouped by biography since 2026-09-23. The hiring factorial cuts 8 pairs per bio from each single
+    # axis (4 settings of the other attributes x 2 templates), so an ungrouped split routinely evaluated
+    # a direction on a biography it was fitted on. It was left ungrouped only so existing splits would
+    # not shift; every hiring number is stale anyway (the write-up's \S marks). Same fix as credit.
+    # (The 2026-09-17 working notes already claimed this was done; it was not, until now.)
+    GROUP_BY_RECORD = True

@@ -35,12 +35,12 @@ from substrates.domains import get_domain
 from substrates.bios_clean import load_factorial_bios
 from substrates.bios_ingest import DEFAULT_BIOS_PATH
 from substrates.credit_clean import load_factorial_records
-from substrates.education_ingest import DEFAULT_ASAP_PATH, DEFAULT_PERSUADE_PATH, load_asap, load_persuade
+from substrates.education_clean import load_education_essays
 from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import DemographicBiasExperiment, compute_cross_influence
 from probes.probe import build_probe_direction, get_rewards_both
 
-_EDU_LOADERS = {"persuade": (load_persuade, DEFAULT_PERSUADE_PATH), "asap": (load_asap, DEFAULT_ASAP_PATH)}
+EDU_SOURCES = ("persuade", "asap")
 VARIANTS = ["strong_neutral", "weak_neutral", "weak_protected", "weak_reference", "strong_protected"]
 
 
@@ -94,7 +94,7 @@ def main() -> None:
     ap.add_argument("--encoding", default="explicit", choices=["explicit", "proxy"])
     ap.add_argument("--axes", default=None, help="Comma-separated axes; default is domain-appropriate.")
     ap.add_argument("--dataset-source", default=None, help="Override the matched-pair manifest (probe pairs).")
-    ap.add_argument("--source", default="persuade", choices=sorted(_EDU_LOADERS),
+    ap.add_argument("--source", default="persuade", choices=EDU_SOURCES,
                     help="Education only: which corpus to load strong/weak records from.")
     ap.add_argument("--raw-path", default=None,
                     help="Override the corpus file path (credit: german.data; cv/education: the corpus).")
@@ -117,8 +117,8 @@ def main() -> None:
     # Every domain honours --raw-path (and education also --source); the registry loader is zero-arg,
     # so the override has to happen here.
     if dom.name == "education":
-        loader, default_path = _EDU_LOADERS[args.source]
-        records = loader(args.raw_path or default_path)
+        # the shared education pool, the same essays every other education arm uses
+        records = load_education_essays(args.raw_path, source=args.source)
     elif dom.name == "cv":
         records = load_factorial_bios(args.raw_path or DEFAULT_BIOS_PATH)
     elif dom.name == "credit":

@@ -16,7 +16,7 @@ from pairs.markers import (
     STAGE_LADDER, STAGE_LADDER_AXES, STAGE_POLE, STAGE_REFERENCE, make_marker, make_pair,
 )
 from pairs.validate import Thresholds, validate_pair
-from substrates.education_clean import NEUTRAL_PROMPTS, STAGE_RULES, TEXT_RULES, stage_rules
+from substrates.education_clean import EDUCATION_RULES, NEUTRAL_PROMPTS, TEXT_RULES, stage_rules
 from substrates.education_render import EDU_TEMPLATES, render_essay
 from substrates.rules import apply_rules
 from tests.test_education_pipeline import _ESSAY_BODY, _fake_record
@@ -38,22 +38,22 @@ class TestStageRules:
         ("Dear Principal, I am writing to object. " + _ESSAY_BODY, "addresses_a_school_authority"),
     ])
     def test_pupil_cues_are_dropped(self, body, rule):
-        kept, report = apply_rules([_rec(body=body)], STAGE_RULES)
+        kept, report = apply_rules([_rec(body=body)], EDUCATION_RULES)
         assert kept == []
         assert report["dropped_by_rule"][rule] == 1
 
     def test_a_neutral_essay_on_a_neutral_prompt_survives(self):
-        kept, _ = apply_rules([_rec()], STAGE_RULES)
+        kept, _ = apply_rules([_rec()], EDUCATION_RULES)
         assert len(kept) == 1
 
     def test_school_life_prompts_are_dropped_whole(self):
-        kept, report = apply_rules([_rec(prompt="Cell phones at school")], STAGE_RULES)
+        kept, report = apply_rules([_rec(prompt="Cell phones at school")], EDUCATION_RULES)
         assert kept == [] and report["dropped_by_rule"]["prompt_presupposes_a_pupil"] == 1
 
     def test_college_mentions_are_not_a_cue(self):
         # A pupil may write "when I go to college" and a doctoral candidate may mention a university.
         body = "Many students plan to attend college or university afterwards. " + _ESSAY_BODY
-        kept, _ = apply_rules([_rec(body=body)], STAGE_RULES)
+        kept, _ = apply_rules([_rec(body=body)], EDUCATION_RULES)
         assert len(kept) == 1
 
     def test_prompt_selection_is_optional(self):
@@ -126,7 +126,7 @@ def test_neutral_prompts_exclude_the_school_life_prompts():
 
 def test_the_stage_design_is_not_in_the_default_battery():
     # The domain's default axes are the factorial's (tests/test_education_factorial.py); the stage
-    # contrast and its ladder live on their own manifest and population, reached via --axes /
+    # contrast and its ladder live on their own manifest (same essay pool), reached via --axes /
     # --dataset-source, so they never run by accident on factorial pairs.
     from substrates.domains import get_domain
 

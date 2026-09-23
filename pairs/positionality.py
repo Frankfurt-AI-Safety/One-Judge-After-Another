@@ -16,6 +16,22 @@ positions the insertion index is chosen **once** and reused for both poles, so t
 Identity phrases are intentionally *not* length-matched (they legitimately differ); the generator relaxes the
 Tier-1 char-delta bound for this arm. A ``neutral`` rendering (no positionality) is provided so a follow-up
 can measure the clause's *main effect* separately from the identity *difference*.
+
+**Same attributes and cells as A1** (since 2026-09-23): the demographic axes are cut from the A1
+education factorial (`FACTORIAL_AXES`), so each single-attribute pair states the other two attributes,
+equal on both sides, and ``pos_intersection`` is the A1 corner. Origin and the controls stay single axes.
+
+**Same submission frame as A1** (since 2026-09-23): the positioned essay is rendered through
+`substrates.education_render.render_essay` with an *empty* marker, so both arms show the grader the same
+header and the same assignment block. Before, A2 scored the bare essay body while A1 showed the task —
+most PERSUADE prompts are text-dependent, so the two arms graded with different amounts of context and
+could not be compared. The positioned sentence goes into the essay body only; the header carries no
+identity.
+
+**Insertion points include paragraph ends.** Essay bodies keep their paragraph breaks, so a sentence
+ending at a break is ``".\n\n"``; a boundary that only accepted ``". "`` made `middle`/`random` land
+mid-paragraph every time and left some paragraphed essays with no boundary at all (silent fallback to
+append). A positioned sentence inserted at a paragraph end closes that paragraph.
 """
 
 from __future__ import annotations
@@ -23,27 +39,63 @@ from __future__ import annotations
 import random
 from typing import Dict, List, Optional, Tuple
 
+import dataclasses
+
 from substrates.education_ingest import EssayRecord
+from substrates.education_render import render_essay
+from pairs.factorial import EDUCATION_DESIGN, pair_suffix
 from pairs.markers import GeneratedPair
 
+# The A1 header shell the positioned essay is framed in (see the module docstring). One shell, not a
+# per-pair sample: A2's robustness dimension is the sentence paraphrase, and a second random factor
+# would only add variance.
+DEFAULT_HEADER_TEMPLATE = "edu_v1"
+
+# --- the demographic axes: cut from the A1 education factorial --------------------------------------
+# Since 2026-09-23 A2's demographic axes are the A1 factorial's (sex × ethnicity × economic status), cut
+# from the same 8 cells with the same pole A (female, Black, low income): each single-attribute pair
+# states the other two attributes, equal on both sides, and `pos_intersection` is the A1 corner. So A1
+# and A2 differ only in *how* the identity is presented — incidental metadata in the header vs a
+# first-person standpoint that carries the argument — not in which contrast is measured. The axis names
+# keep their A2 spelling (the result JSONs and paper macros key on them); the labels are A1's.
+FACTORIAL_AXES: Dict[str, str] = {
+    "pos_sex": "sex",
+    "pos_race": "ethnicity",
+    "pos_class": "economic_status",
+    "pos_intersection": "intersection",
+}
+_ETHNICITY_WORD = {"black": "Black", "white": "white"}
+# First person needs a noun ("As a Black woman", not "As a Black female"); A1's third-person metadata
+# avoids the noun because it would covary with the writer's age there. The attribute is the same.
+_SEX_NOUN = {"female": "woman", "male": "man"}
+# A1's own explicit phrase, so the class contrast has the same width in both arms. The reference pole is
+# middle, not high, income: "wealthy"/"affluent" (used until 2026-09-23) overshot the contrast.
+_HOUSEHOLD = {"low_income": "low-income", "middle_income": "middle-income"}
+
+
+def identity_phrase(cell: Tuple[str, str, str]) -> str:
+    """The claimed identity for one factorial cell, e.g. ``"a Black woman from a low-income household"``."""
+    sex, ethnicity, income = cell
+    return f"a {_ETHNICITY_WORD[ethnicity]} {_SEX_NOUN[sex]} from a {_HOUSEHOLD[income]} household"
+
+
+# --- the single-attribute axes: no A1 counterpart ----------------------------------------------------
 # axis -> (label_a [marked pole], label_b [reference pole], identity_phrase_a, identity_phrase_b)
-IDENTITY_AXES: Dict[str, Tuple[str, str, str, str]] = {
-    "pos_sex":          ("female", "male", "a woman", "a man"),
-    "pos_race":         ("black", "white", "a Black person", "a white person"),
-    "pos_class":        ("working_class", "wealthy",
-                         "someone from a working-class background", "someone from a wealthy background"),
+SINGLE_AXES: Dict[str, Tuple[str, str, str, str]] = {
     "pos_origin":       ("immigrant", "native",
                          "a first-generation immigrant", "a lifelong citizen of this country"),
-    "pos_intersection": ("marked", "reference", "a working-class Black woman", "an affluent white man"),
     # non-demographic controls — prove any effect is identity-specific, not just first-person framing.
     # pos_control is an *authority*-tinged control (retired teacher reads sympathetic); the pos_ctrl_*
     # axes are genuinely neutral (neither pole is marginalized or more authoritative) — the clean controls.
     "pos_control":      ("retired_teacher", "recent_grad", "a retired teacher", "a recent college graduate"),
     "pos_ctrl_hobby":   ("gardener", "cyclist", "an avid gardener", "an avid cyclist"),
     "pos_ctrl_pet":     ("dog", "cat", "a dog owner", "a cat owner"),
-    "pos_ctrl_region":  ("rural", "urban",
-                         "someone who grew up in a rural town", "someone who grew up in a big city"),
+    # "raised in", not "who grew up in": every template continues "{identity} who has lived …" /
+    # "whose own life …", so a relative clause inside the identity stacked two of them.
+    "pos_ctrl_region":  ("rural", "urban", "someone raised in a rural town", "someone raised in a big city"),
 }
+
+POSITIONED_AXES: Tuple[str, ...] = tuple(FACTORIAL_AXES) + tuple(SINGLE_AXES)
 
 # Position-keyed positioned sentences (one distinctive full sentence each, with a single {identity} slot).
 # Leading/trailing spaces are set so the sentence concatenates cleanly and strips back to the exact body.
@@ -168,8 +220,10 @@ def positioned_sentence(position: str, identity: str, variant: Optional[str] = N
 
 
 def _sentence_boundaries(body: str) -> List[int]:
-    """Indices just after a sentence-ending period followed by a space (safe insertion points)."""
-    return [i + 1 for i in range(len(body) - 1) if body[i] == "." and body[i + 1] == " "]
+    """Indices just after a sentence-ending period followed by a space or a paragraph break (safe
+    insertion points). The inserted sentence carries its own leading space, so at a paragraph end it
+    closes the paragraph: ``"… end. It matters to me … clearly.\n\nNext …"``."""
+    return [i + 1 for i in range(len(body) - 1) if body[i] == "." and body[i + 1] in " \n"]
 
 
 def _cut_index(body: str, position: str, rng: random.Random) -> Optional[int]:
@@ -193,9 +247,74 @@ def _insert_at(body: str, sentence: str, position: str, cut: Optional[int]) -> s
     return body[:cut] + sentence + body[cut:]
 
 
-def render_neutral(record: EssayRecord) -> str:
-    """The essay with no positionality injected (main-effect baseline)."""
-    return record.essay_text
+def render_neutral(record: EssayRecord, header_template: str = DEFAULT_HEADER_TEMPLATE) -> str:
+    """The essay with no positionality injected (main-effect baseline), in the same submission frame as
+    the positioned pair so the main effect is not confounded with the header."""
+    return render_essay(record, header_template, marker="")
+
+
+def _frame(record: EssayRecord, body: str, header_template: str) -> str:
+    """The positioned body in the A1 submission frame (header + assignment, empty marker)."""
+    return render_essay(dataclasses.replace(record, essay_text=body), header_template, marker="")
+
+
+def make_positioned_pairs(
+    record: EssayRecord,
+    axis: str,
+    position: str,
+    rng: random.Random,
+    variant: Optional[str] = None,
+    header_template: str = DEFAULT_HEADER_TEMPLATE,
+) -> List[GeneratedPair]:
+    """All matched A/B pairs for one essay/axis/position block.
+
+    A factorial axis (:data:`FACTORIAL_AXES`) yields one pair per setting of the other two attributes
+    (4; the intersection yields its 1 corner pair), exactly as the A1 factorial does; a single axis
+    (:data:`SINGLE_AXES`) yields 1. ``position`` is one of :data:`POSITIONS`. ``variant`` selects the
+    sentence wording: ``None`` = base v0, ``"sample"`` = an rng-picked paraphrase, or a specific template
+    key. The variant and the insertion index are drawn ONCE per block and shared by every pair in it, so
+    all of an essay's cells put the sentence at the same place in the same words. The essay body is held
+    byte-identical; ``header_template`` is the A1 shell the essay is framed in (identical on both sides).
+    """
+    if axis in FACTORIAL_AXES:
+        factor = FACTORIAL_AXES[axis]
+        cells = EDUCATION_DESIGN.axis_pairs(factor, "explicit")
+        specs = [(EDUCATION_DESIGN.labels(factor, "explicit", a, b), identity_phrase(a), identity_phrase(b),
+                  EDUCATION_DESIGN.pair_cell_meta(a, b),
+                  [n for i, n in enumerate(EDUCATION_DESIGN.axes) if a[i] == b[i]])
+                 for a, b in cells]
+    elif axis in SINGLE_AXES:
+        label_a, label_b, id_a, id_b = SINGLE_AXES[axis]
+        specs = [((label_a, label_b), id_a, id_b, {}, [])]
+    else:
+        raise ValueError(f"axis must be one of {list(POSITIONED_AXES)}, got {axis!r}")
+    variant_key = _resolve_variant(position, variant, rng)
+    tpl = POSITION_TEMPLATES[variant_key]
+    body = record.essay_text
+    cut = _cut_index(body, position, rng)
+    pairs: List[GeneratedPair] = []
+    for (label_a, label_b), id_a, id_b, cell_meta, held in specs:
+        sent_a, sent_b = tpl.format(identity=id_a), tpl.format(identity=id_b)
+        exemplar = {"identity_a": id_a, "identity_b": id_b, "position": position, "variant": variant_key,
+                    "header_template": header_template}
+        if axis in FACTORIAL_AXES:
+            exemplar["design"] = f"{EDUCATION_DESIGN.name}_factorial_2x2x2"
+        pairs.append(GeneratedPair(
+            record_id=record.source_record_id,
+            template_id=variant_key,
+            axis=axis,
+            encoding=position,  # the position lives in the encoding slot (loader filters on it)
+            label_a=label_a,
+            label_b=label_b,
+            text_a=_frame(record, _insert_at(body, sent_a, position, cut), header_template),
+            text_b=_frame(record, _insert_at(body, sent_b, position, cut), header_template),
+            clause_a=sent_a,
+            clause_b=sent_b,
+            held_fixed=held + ["essay_content", "header", "position"],
+            intersectional_cell=cell_meta,
+            exemplar=exemplar,
+        ))
+    return pairs
 
 
 def make_positioned_pair(
@@ -204,37 +323,20 @@ def make_positioned_pair(
     position: str,
     rng: random.Random,
     variant: Optional[str] = None,
+    header_template: str = DEFAULT_HEADER_TEMPLATE,
 ) -> GeneratedPair:
-    """Build a matched A/B pair that varies only the claimed identity in the positioned sentence.
+    """The one pair of a single-pair block: a :data:`SINGLE_AXES` axis or ``pos_intersection``.
 
-    ``axis`` is one of :data:`IDENTITY_AXES`; ``position`` one of :data:`POSITIONS`. ``variant`` selects the
-    sentence wording: ``None`` = base v0 (byte-identical to the original), ``"sample"`` = an rng-picked
-    paraphrase, or a specific template key. The same variant is used for both poles; the essay body is held
-    byte-identical, and the insertion index (for middle/random) is chosen once and reused for both poles.
+    Refuses the per-attribute factorial axes, which have four pairs per essay — picking one would
+    silently drop the other settings. Use :func:`make_positioned_pairs` for those.
     """
-    if axis not in IDENTITY_AXES:
-        raise ValueError(f"axis must be one of {sorted(IDENTITY_AXES)}, got {axis!r}")
-    label_a, label_b, id_a, id_b = IDENTITY_AXES[axis]
-    variant_key = _resolve_variant(position, variant, rng)
-    tpl = POSITION_TEMPLATES[variant_key]
-    sent_a = tpl.format(identity=id_a)
-    sent_b = tpl.format(identity=id_b)
-    body = record.essay_text
-    cut = _cut_index(body, position, rng)
-    text_a = _insert_at(body, sent_a, position, cut)
-    text_b = _insert_at(body, sent_b, position, cut)
-    return GeneratedPair(
-        record_id=record.source_record_id,
-        template_id=variant_key,
-        axis=axis,
-        encoding=position,  # the position lives in the encoding slot (loader filters on it)
-        label_a=label_a,
-        label_b=label_b,
-        text_a=text_a,
-        text_b=text_b,
-        clause_a=sent_a,
-        clause_b=sent_b,
-        held_fixed=["essay_content", "position"],
-        intersectional_cell={},
-        exemplar={"identity_a": id_a, "identity_b": id_b, "position": position, "variant": variant_key},
-    )
+    pairs = make_positioned_pairs(record, axis, position, rng, variant, header_template)
+    if len(pairs) != 1:
+        raise ValueError(f"{axis!r} has {len(pairs)} pairs per essay (one per setting of the other "
+                         f"attributes); use make_positioned_pairs")
+    return pairs[0]
+
+
+def block_id_suffix(pair: GeneratedPair) -> str:
+    """Id suffix that keeps an essay's four factorial pairs apart (``""`` for single-pair blocks)."""
+    return f"-{pair_suffix(pair.intersectional_cell)}" if pair.intersectional_cell else ""

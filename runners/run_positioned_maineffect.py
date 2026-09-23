@@ -19,7 +19,7 @@ large gap, it is generic persona-sensitivity. `main_fx` says whether the RM simp
 personal-experience appeal regardless of who makes it.
 
 Usage:
-    python experiments/run_positioned_maineffect.py --config configs/demographic_edupos_qwen06.yaml \
+    python runners/run_positioned_maineffect.py --config configs/demographic_edupos_qwen06.yaml \
         --source persuade --axes pos_sex,pos_race,pos_class,pos_origin,pos_intersection,\
 pos_control,pos_ctrl_hobby,pos_ctrl_pet,pos_ctrl_region --n-essays 200 --position conclusion
 """
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
 import statistics as st
 import sys
 from pathlib import Path
@@ -39,13 +38,16 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from scoring.dataset_base import ContrastivePair, format_conversation
 from substrates.domains import get_domain
-from substrates.education_ingest import DEFAULT_ASAP_PATH, DEFAULT_PERSUADE_PATH, load_asap, load_persuade
+from substrates.education_clean import load_education_essays
+from substrates.education_render import EDU_TEMPLATES
+from pairs.factorial import pair_suffix, stable_rng
 from pairs.positionality import (
-    IDENTITY_AXES,
+    DEFAULT_HEADER_TEMPLATE,
+    POSITIONED_AXES,
     POSITION_VARIANTS,
     POSITIONS,
     STANCES,
-    make_positioned_pair,
+    make_positioned_pairs,
     render_neutral,
     stance_of,
     variants_for,
@@ -54,56 +56,75 @@ from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import DemographicBiasExperiment
 from probes.probe import build_probe_direction, get_rewards_both
 
-_LOADERS = {"persuade": (load_persuade, DEFAULT_PERSUADE_PATH), "asap": (load_asap, DEFAULT_ASAP_PATH)}
+SOURCES = ("persuade", "asap")
 
 
 def _mean(xs: List[float]) -> float:
     return sum(xs) / max(len(xs), 1)
 
 
-def run_axis(exp, cfg, dom, essays, axis, position, rng, variant=None) -> Dict[str, Any]:
+def run_axis(exp, cfg, dom, essays, axis, position, seed, variant=None,
+             header_template=DEFAULT_HEADER_TEMPLATE) -> Dict[str, Any]:
+    """Score one axis at one position. A per-attribute axis has 4 pairs per essay (one per setting of the
+    other two attributes); each is compared with that essay's single neutral rendering, and the gaps
+    are reported both averaged (``identity_gap``, the marginal, as A1 averages it) and per setting
+    (``by_cell``, for stratified analysis)."""
     tok = exp.tokenizer
     fmt = lambda txt: format_conversation(tok, dom.assessment_prompt, txt)
-    neutral, a, b, pairs = [], [], [], []
-    for rec in essays:
-        pair = make_positioned_pair(rec, axis, position, rng, variant=variant)
-        neutral.append(fmt(render_neutral(rec)))
-        a.append(fmt(pair.text_a))
-        b.append(fmt(pair.text_b))
-        pairs.append(ContrastivePair(positive_text=fmt(pair.text_a), negative_text=fmt(pair.text_b),
-                                     metadata={"axis": axis}))
-    probe, meta = build_probe_direction(exp.model, tok, pairs, batch_size=cfg.batch_size,
+    # Same header as the pairs, so main_fx measures the positioned sentence, not the frame.
+    neutral = [fmt(render_neutral(rec, header_template)) for rec in essays]
+    a, b, owner, cells, probe_pairs, identities = [], [], [], [], [], []
+    for i, rec in enumerate(essays):
+        rng = stable_rng(seed, rec.source_record_id, axis, position, variant)
+        for pair in make_positioned_pairs(rec, axis, position, rng, variant=variant,
+                                          header_template=header_template):
+            a.append(fmt(pair.text_a))
+            b.append(fmt(pair.text_b))
+            owner.append(i)
+            cells.append(pair_suffix(pair.intersectional_cell) if pair.intersectional_cell else "all")
+            identities.append((pair.exemplar["identity_a"], pair.exemplar["identity_b"]))
+            probe_pairs.append(ContrastivePair(positive_text=a[-1], negative_text=b[-1],
+                                               metadata={"axis": axis}))
+    probe, meta = build_probe_direction(exp.model, tok, probe_pairs, batch_size=cfg.batch_size,
                                         device=cfg.device, max_length=cfg.max_length)
-    n = len(essays)
+    n, m = len(essays), len(a)
     base, nulled = get_rewards_both(exp.model, tok, neutral + a + b, probe, batch_size=cfg.batch_size,
                                     device=cfg.device, max_length=cfg.max_length, null_alpha=1.0,
                                     show_progress=False)
     base = base.tolist()
-    r_neu, r_a, r_b = base[:n], base[n:2 * n], base[2 * n:]
-    delta_a = _mean([x - y for x, y in zip(r_a, r_neu)])
-    delta_b = _mean([x - y for x, y in zip(r_b, r_neu)])
+    r_neu, r_a, r_b = base[:n], base[n:n + m], base[n + m:]
+    d_a = [r_a[k] - r_neu[owner[k]] for k in range(m)]
+    d_b = [r_b[k] - r_neu[owner[k]] for k in range(m)]
+    delta_a, delta_b = _mean(d_a), _mean(d_b)
     pref_a = _mean([1.0 if x > y else 0.0 for x, y in zip(r_a, r_b)])
-    la, lb, id_a, id_b = IDENTITY_AXES[axis]
+    by_cell: Dict[str, float] = {}
+    for c in sorted(set(cells)):
+        idx = [k for k in range(m) if cells[k] == c]
+        by_cell[c] = _mean([d_a[k] - d_b[k] for k in idx])
     disp = variant or f"pos_{position}"
     return {
-        "axis": axis, "position": position, "variant": disp, "stance": stance_of(disp), "n": n,
+        "axis": axis, "position": position, "variant": disp, "stance": stance_of(disp),
+        "n": n, "n_pairs": m,
         "probe_accuracy": meta.get("probe_accuracy"),
-        "identity_a": id_a, "identity_b": id_b,
+        # the first pair's identities, plus every distinct pair for the per-attribute axes
+        "identity_a": identities[0][0], "identity_b": identities[0][1],
+        "identities": sorted(set(identities)),
         "mean_neutral": _mean(r_neu), "mean_a": _mean(r_a), "mean_b": _mean(r_b),
         "delta_a": delta_a, "delta_b": delta_b,
         "main_effect": (delta_a + delta_b) / 2, "identity_gap": delta_a - delta_b,
+        "by_cell": by_cell,
         "auto_influence": 2 * abs(pref_a - 0.5), "pref_a": pref_a,
-        "frac_a_above_neutral": _mean([1.0 if x > y else 0.0 for x, y in zip(r_a, r_neu)]),
-        "frac_b_above_neutral": _mean([1.0 if x > y else 0.0 for x, y in zip(r_b, r_neu)]),
+        "frac_a_above_neutral": _mean([1.0 if d > 0 else 0.0 for d in d_a]),
+        "frac_b_above_neutral": _mean([1.0 if d > 0 else 0.0 for d in d_b]),
     }
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, default=Path("configs/demographic_edupos_qwen06.yaml"))
-    ap.add_argument("--source", choices=sorted(_LOADERS), default="persuade")
+    ap.add_argument("--source", choices=SOURCES, default="persuade")
     ap.add_argument("--raw-path", default=None)
-    ap.add_argument("--axes", default=",".join(IDENTITY_AXES))
+    ap.add_argument("--axes", default=",".join(POSITIONED_AXES))
     ap.add_argument("--positions", default="conclusion",
                     help=f"Comma-separated; any of {POSITIONS}.")
     ap.add_argument("--paraphrase", choices=["off", "sample", "per"], default="off",
@@ -111,6 +132,8 @@ def main() -> None:
     ap.add_argument("--stance", choices=list(STANCES), default="endorse",
                     help="endorse=agrees with the essay (default); neutral=non-committal grounding; "
                          "both=base-endorse vs neutral head-to-head. neutral/both ignore --paraphrase.")
+    ap.add_argument("--header-template", choices=sorted(EDU_TEMPLATES), default=DEFAULT_HEADER_TEMPLATE,
+                    help="A1 submission shell for the neutral and positioned texts alike.")
     ap.add_argument("--n-essays", type=int, default=200)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", type=Path, default=None)
@@ -120,13 +143,12 @@ def main() -> None:
     dom = get_domain(cfg.extra.get("domain", "education"))
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
     positions = [p.strip() for p in args.positions.split(",") if p.strip()]
-    loader, default_path = _LOADERS[args.source]
-    essays = loader(args.raw_path or default_path, n=args.n_essays, seed=args.seed)
+    # The shared education pool: the same essays as the A1 factorial and stage designs.
+    essays = load_education_essays(args.raw_path, source=args.source, n=args.n_essays, seed=args.seed)
     out = args.out or Path(f"artifacts/results/demographic/maineffect_edupos_{args.source}_qwen06.json")
 
     exp = DemographicBiasExperiment(cfg)
     exp.load_model()
-    rng = random.Random(args.seed)
 
     results: List[Dict[str, Any]] = []
     for position in positions:
@@ -141,7 +163,8 @@ def main() -> None:
             variants = [None]
         for variant in variants:
             for ax in axes:
-                results.append(run_axis(exp, cfg, dom, essays, ax, position, rng, variant))
+                results.append(run_axis(exp, cfg, dom, essays, ax, position, args.seed, variant,
+                                        args.header_template))
                 print(f"[maineffect] {position}/{variant or 'base'}/{ax} done", flush=True)
 
     print("\n" + "=" * 118)

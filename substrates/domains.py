@@ -28,7 +28,7 @@ from scoring.education_dataset import EDU_ASSESSMENT_PROMPT, EducationDemographi
 from substrates.bios_clean import load_factorial_bios
 from substrates.credit_clean import load_factorial_records
 from substrates.bios_ingest import DEFAULT_BIOS_PATH
-from substrates.education_clean import load_factorial_essays, load_stage_essays
+from substrates.education_clean import load_education_essays
 from substrates.credit_render import TEMPLATES, render_profile
 from substrates.bios_render import BIOS_TEMPLATES, render_bio
 from substrates.education_render import EDU_TEMPLATES, render_essay
@@ -98,22 +98,18 @@ EDUCATION = DomainSpec(
     assessment_prompt=EDU_ASSESSMENT_PROMPT,
     template_ids=tuple(sorted(EDU_TEMPLATES)),
     # Real essays are user-downloaded; load the PERSUADE corpus (raises with instructions if absent).
-    # The factorial population: the whole corpus bar the essays that discuss their own household money
-    # (substrates/education_clean.py).
-    load_records=lambda: load_factorial_essays(source="persuade"),
+    # The shared education pool (substrates/education_clean.py): the same essays for the factorial, the
+    # stage design, the A2 positioned arm and cross-influence, so their results are comparable.
+    load_records=lambda: load_education_essays(source="persuade"),
     is_strong=lambda r: r.high_quality,
     # sex × ethnicity × economic status as a full factorial. The **stage** axis (`grade_level`) and its
-    # monotonicity ladder are a separate single-axis design on a separate manifest and a separate
-    # population (`load_stage_essays`, `runners/generate_education.py --design stage`), so they are not
-    # in the default battery: run them with --dataset-source <stage dir>/pairs.jsonl --axes grade_level.
+    # monotonicity ladder are a separate single-axis design on a separate manifest (same essays;
+    # `runners/generate_education.py --design stage`), so they are not in the default battery: run them
+    # with --dataset-source <stage dir>/pairs.jsonl --axes grade_level.
     axes=EDUCATION_DESIGN.axes + ("intersection",),
     make_marker=education_marker,
     factorial=EDUCATION_DESIGN,
 )
-
-def load_education_stage_records():
-    """The stage design's record population (a subset of EDUCATION's; see `education_clean`)."""
-    return load_stage_essays(source="persuade")
 
 DOMAINS = {CREDIT.name: CREDIT, CV.name: CV, EDUCATION.name: EDUCATION}
 

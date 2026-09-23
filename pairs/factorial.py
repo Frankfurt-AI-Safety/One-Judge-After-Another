@@ -383,13 +383,21 @@ def factorial_pairs(
 
 
 # --- dataset builder shared by runners/generate_credit.py and runners/generate_bios.py ------------
-def block_rng(seed: int, record_id: str, template_id: str, encoding: str) -> random.Random:
-    """Per-block RNG from a stable digest (Python's built-in `hash` of strings is salted per process)."""
-    digest = hashlib.sha256(f"{seed}|{record_id}|{template_id}|{encoding}".encode("utf-8")).digest()
+def stable_rng(*parts: object) -> random.Random:
+    """RNG seeded from a stable digest of `parts`. Python's built-in `hash` of a string (or of a tuple
+    containing one) is salted per process, so ``random.Random(hash((seed, axis, enc)))`` draws a
+    different sample on every run. Shared by every generator that needs a per-cell or per-block RNG."""
+    digest = hashlib.sha256("|".join(str(p) for p in parts).encode("utf-8")).digest()
     return random.Random(int.from_bytes(digest[:8], "big"))
 
 
-def _pair_suffix(cell: Dict[str, object]) -> str:
+def block_rng(seed: int, record_id: str, template_id: str, encoding: str) -> random.Random:
+    """Per-block RNG for the factorial builders (same digest as before `stable_rng` was factored out,
+    so credit and hiring outputs are unchanged)."""
+    return stable_rng(seed, record_id, template_id, encoding)
+
+
+def pair_suffix(cell: Dict[str, object]) -> str:
     """Id suffix from the held-fixed levels, e.g. ``30-married``; ``corner`` for the intersection."""
     held = [str(v) for v in cell.values() if "-vs-" not in str(v)]
     return "-".join(held) or "corner"
@@ -442,7 +450,7 @@ def build_factorial_rows(
                 gate[enc]["blocks_kept"] += 1
                 for p in pairs:
                     item_id = (f"{id_prefix}-{p.axis}-{enc}-{tid}-{rec.source_record_id}-"
-                               f"{_pair_suffix(p.intersectional_cell)}")
+                               f"{pair_suffix(p.intersectional_cell)}")
                     pair_rows.append(pair_to_record(p, item_id, role="probe", seed=seed, domain=domain))
                 names = ProxyNames.from_exemplar(exemplar) if enc == "proxy" else None
                 cell_rows.append({

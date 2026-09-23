@@ -15,7 +15,7 @@ import pytest
 from pairs.factorial import EDUCATION_DESIGN, ProxyNames, education_marker, factorial_pairs
 from pairs.markers import BLACK_FEMALE_NAMES, BLACK_MALE_NAMES, FEMALE_NAMES, MALE_NAMES
 from pairs.validate import Thresholds, validate_pair
-from substrates.education_clean import FACTORIAL_RULES, NEUTRAL_PROMPTS, stage_rules
+from substrates.education_clean import ECONOMIC_RULES, EDUCATION_RULES, NEUTRAL_PROMPTS
 from substrates.education_render import render_essay
 from substrates.rules import apply_rules
 from tests.test_education_pipeline import _ESSAY_BODY, _fake_record
@@ -129,16 +129,22 @@ class TestNameGrid:
 class TestSubstrateRules:
     def test_essays_discussing_their_own_household_money_are_dropped(self):
         body = "My family cannot afford a second car. " + _ESSAY_BODY
-        kept, report = apply_rules([_rec(body=body)], FACTORIAL_RULES)
+        kept, report = apply_rules([_rec(body=body)], ECONOMIC_RULES)
         assert kept == [] and report["dropped_by_rule"]["mentions_own_household_money"] == 1
 
-    def test_the_factorial_keeps_the_school_life_prompts(self):
-        # Unlike the stage design: an injected income level contradicts no argumentative essay, so the
-        # factorial uses the whole corpus and the two designs run on different populations.
+    def test_one_shared_pool_for_every_education_design(self):
+        # Since 2026-09-23 the factorial, the stage design, A2 and cross-influence all read the same
+        # essays, so the factorial also loses the school-life prompts — the price of an A1-vs-A2
+        # comparison that is not confounded with population.
+        rule_names = [name for name, _ in EDUCATION_RULES]
+        assert rule_names[0] == "prompt_presupposes_a_pupil"
+        assert "mentions_own_household_money" in rule_names
+        assert "addresses_a_school_authority" in rule_names
         rec = _rec(prompt="Cell phones at school")
-        assert apply_rules([rec], FACTORIAL_RULES)[0] == [rec]
-        assert apply_rules([rec], stage_rules())[0] == []
         assert "Cell phones at school" not in NEUTRAL_PROMPTS
+        assert apply_rules([rec], EDUCATION_RULES)[0] == []
+        money = _rec(body="My family cannot afford a second car. " + _ESSAY_BODY)
+        assert apply_rules([money], EDUCATION_RULES)[0] == []
 
 
 class TestDomainWiring:
@@ -162,3 +168,50 @@ class TestDomainWiring:
             "23 years old.")
         with pytest.raises(ValueError):
             education_marker("marital_status", "explicit", random.Random(1))
+
+
+class TestClassBalance:
+    """`load_education_essays` balances strong/weak essays WITHIN each prompt (default on)."""
+
+    def _corpus(self, tmp_path, rows):
+        import csv
+
+        path = tmp_path / "persuade.csv"
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["essay_id_comp", "full_text", "holistic_essay_score", "prompt_name"])
+            for i, (prompt, score) in enumerate(rows):
+                w.writerow([f"e{i}", f"{_ESSAY_BODY} Essay number {i}.", score, prompt])
+        return path
+
+    # Mars: 3 strong / 1 weak; Cars: 1 strong / 3 weak. Globally balanced (4/4), but the prompt alone
+    # would predict the label 75% of the time — the leak the within-prompt balance removes.
+    _ROWS = ([("The Face on Mars", 6)] * 3 + [("The Face on Mars", 1)]
+             + [("Driverless cars", 6)] + [("Driverless cars", 1)] * 3)
+
+    def test_label_is_balanced_within_every_prompt(self, tmp_path):
+        from substrates.education_clean import load_education_essays
+
+        report = {}
+        recs = load_education_essays(self._corpus(tmp_path, self._ROWS), min_chars=0, report=report)
+        by = {}
+        for r in recs:
+            by.setdefault(r.prompt_id, []).append(r.high_quality)
+        assert {p: sorted(v) for p, v in by.items()} == {
+            "The Face on Mars": [False, True], "Driverless cars": [False, True]}
+        assert report["balance"]["per_class"] == 2 and report["balance"]["n_out"] == 4
+        assert report["balance"]["strong_in"] == 4 and report["balance"]["weak_in"] == 4
+
+    def test_a_capped_sample_stays_balanced(self, tmp_path):
+        from substrates.education_clean import load_education_essays
+
+        rows = [("The Face on Mars", 6)] * 5 + [("The Face on Mars", 1)] * 5
+        recs = load_education_essays(self._corpus(tmp_path, rows), min_chars=0, n=5)
+        assert len(recs) == 4  # an odd n rounds down to whole strong/weak couples
+        assert sum(r.high_quality for r in recs) == 2
+
+    def test_balance_can_be_switched_off(self, tmp_path):
+        from substrates.education_clean import load_education_essays
+
+        recs = load_education_essays(self._corpus(tmp_path, self._ROWS), min_chars=0, balance=False)
+        assert len(recs) == 8

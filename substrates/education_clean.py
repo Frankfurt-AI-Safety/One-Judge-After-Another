@@ -1,13 +1,18 @@
 """
-Plausibility filters for the education arm's two designs.
+Plausibility filters for the education arm — **one shared essay pool** for every education design.
 
-`load_factorial_essays` serves the **sex × ethnicity × economic-status factorial**
-(`pairs/factorial.py`): its factors fit any argumentative essay, so it keeps the whole corpus bar one
-rule. `load_stage_essays` serves the single-axis **stage** contrast below. They are different
-populations by design; every education result must say which.
+Four consumers read essays: the A1 sex × ethnicity × economic-status factorial (`pairs/factorial.py`),
+the A1 single-axis stage contrast and its ladder (``grade_level`` / ``stage_<rung>``), the A2
+positioned-argument arm (`pairs/positionality.py`) and cross-influence. They all go through
+`load_education_essays`, so every education result is on the same essays. That matters most for the
+A1-vs-A2 comparison: the two arms test the same attributes and differ only in whether the identity is
+incidental metadata or load-bearing for the argument, and different pools would confound that with
+population. (Until 2026-09-23 the factorial kept the whole corpus and the stage design a filtered
+subset; the factorial costs its 40% strong rate for 25%, but 900+ strong essays remain.)
 
-The rest of this module is the stage filter (``grade_level`` in `pairs/markers.py`, poles: 6th grade vs
-doctoral candidate).
+The pool must fit the most demanding claim any design makes about the writer: a 6th-grade pupil and a
+doctoral candidate (stage), an adult standpoint such as "a retired teacher" (A2), and a household
+income level (factorial).
 
 Every essay is rendered at both poles, so the body must not contradict either. PERSUADE essays are
 written by pupils in grades 6–12, and the cues that pin a writer to school age come overwhelmingly
@@ -16,13 +21,17 @@ school life draw first-person pupil talk in 46–67% of essays, while the source
 ("The Face on Mars", "Exploring Venus", "Driverless cars", …) are essentially free of it (0–10%).
 Nothing about arguing over the electoral college presupposes a child wrote it.
 
-So there are two steps, both reported through `substrates/rules.py`:
+So the rules run in three steps, all reported through `substrates/rules.py`:
 
 1. **Prompt selection** (``prompt_presupposes_a_pupil``) — keep only the stage-neutral prompts. This
    is selection, not plausibility: those essays are fine, they just cannot carry a doctoral pole.
 2. **Cue rules** on the remaining bodies, as a safety net for the residual few percent: first-person
    school life, a named school stage, the writer's own grade, pupil self-reference, school routine,
    and letters addressed to a school authority (PERSUADE contains many "Dear Principal" letters).
+   These matter for A2 as much as for stage: "As a retired teacher who has lived these realities
+   firsthand" is incoherent on an essay that says "my teacher won't let us", and that is the
+   `pos_control` pole, the axis whose job is to prove an effect is identity-specific.
+3. **The household-money rule** for the economic factor (``mentions_own_household_money``).
 
 "college"/"university" mentions are deliberately *not* a rule: a pupil writing "when I go to college"
 is plausible, and so is a doctoral candidate mentioning a university.
@@ -86,16 +95,15 @@ TEXT_RULES: Tuple[Rule, ...] = (
     ("addresses_a_school_authority", lambda r: bool(_SCHOOL_LETTER_RE.search(r.essay_text))),
 )
 
-# --- factorial (sex x ethnicity x economic status) -------------------------------------------------
-# The factorial's third factor is economic status, not stage, so it needs neither the prompt selection
-# nor the pupil-cue rules above: an injected income level contradicts nothing in an argumentative essay.
-# The one rule is for the handful of essays that talk about their own family's money (5 of 6,404) — kept
-# as a named rule so the drop is counted rather than assumed away.
+# --- economic status (the factorial's third factor; also A2's pos_class) ------------------------------
+# An injected income level contradicts almost nothing in an argumentative essay; the one rule is for the
+# handful that talk about their own family's money (5 of 6,397) — kept as a named rule so the drop is
+# counted rather than assumed away.
 _OWN_MONEY_RE = re.compile(
     r"\b(?:my|our)\s+(?:family|parents|mom|dad|household)\b[^.]{0,40}"
     r"\b(?:poor|rich|wealthy|afford|money|income|broke|struggl)\w*", re.IGNORECASE)
 
-FACTORIAL_RULES: Tuple[Rule, ...] = (
+ECONOMIC_RULES: Tuple[Rule, ...] = (
     ("mentions_own_household_money", lambda r: bool(_OWN_MONEY_RE.search(r.essay_text))),
 )
 
@@ -107,7 +115,7 @@ _PER_SOURCE = object()
 
 
 def stage_rules(prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS) -> Tuple[Rule, ...]:
-    """The stage rules, with prompt selection first when `prompts` is given (None = cue rules only,
+    """The pupil-cue rules, with prompt selection first when `prompts` is given (None = cue rules only,
     which is all ASAP can do: its `prompt_id` is an essay-set number, not a prompt name)."""
     if not prompts:
         return TEXT_RULES
@@ -115,25 +123,39 @@ def stage_rules(prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS) -> Tuple[R
     return (("prompt_presupposes_a_pupil", lambda r: r.prompt_id not in keep),) + TEXT_RULES
 
 
-STAGE_RULES: Tuple[Rule, ...] = stage_rules()
+def education_rules(prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS) -> Tuple[Rule, ...]:
+    """Every rule the shared pool applies: prompt selection, pupil cues, household money."""
+    return stage_rules(prompts) + ECONOMIC_RULES
 
 
-def load_stage_essays(
+EDUCATION_RULES: Tuple[Rule, ...] = education_rules()
+
+
+def load_education_essays(
     path: str | Path | None = None,
     *,
     source: str = "persuade",
     n: Optional[int] = None,
     report: Optional[Dict[str, object]] = None,
     prompts: Optional[Collection[str]] = _PER_SOURCE,  # type: ignore[assignment]
+    balance: bool = True,
     **kwargs,
 ) -> List[EssayRecord]:
-    """Essays that can carry either pole of the stage axis.
+    """The shared education pool: essays that fit every claim any education design makes.
 
     `source` picks the corpus ("persuade" | "asap"); `path` overrides its default location; `kwargs`
-    go to that loader. `prompts` defaults to `NEUTRAL_PROMPTS` for PERSUADE and to None for ASAP
-    (which has no prompt names); pass an explicit collection or None to override. The `n` cap is
-    applied after the rules, so it counts usable essays. If `report` is a dict it is filled with the
-    loader's own counts plus ``stage_rules``.
+    go to that loader (including its `seed`). `prompts` defaults to `NEUTRAL_PROMPTS` for PERSUADE and
+    to None for ASAP (which has no prompt names); pass an explicit collection or None to override.
+
+    `balance` (default on) equalises strong and weak essays **within each prompt**, so the quality label
+    is independent of the prompt. Balancing the pool as a whole is not enough: after the pupil-voice rules
+    the label is so uneven across prompts ("Seeking multiple opinions" and "Phones and driving" 88% strong,
+    "A Cowboy Who Rode the Waves" 3%) that the prompt alone would predict it 67% of the time, and the
+    rendered header names the assignment — the same leak the hiring role name had (76.5%). Per prompt
+    (per essay set for ASAP) the first ``min(strong, weak)`` essays of each class are kept, in the
+    loader's seeded order, as matched strong/weak couples; `n` then keeps the first ``n // 2`` couples
+    (an odd `n` rounds down), so a capped sample is balanced overall and within every prompt. If `report`
+    is a dict it is filled with the loader's own counts plus ``education_rules`` and ``balance``.
     """
     if source not in _SOURCES:
         raise ValueError(f"source must be one of {sorted(_SOURCES)}, got {source!r}")
@@ -141,31 +163,34 @@ def load_stage_essays(
     if prompts is _PER_SOURCE:
         prompts = NEUTRAL_PROMPTS if source == "persuade" else None
     records = loader(path or default_path, report=report, **kwargs)
-    kept, rules_report = apply_rules(records, stage_rules(prompts))
+    kept, rules_report = apply_rules(records, education_rules(prompts))
     if report is not None:
-        report["stage_rules"] = rules_report
-    return kept[:n] if n else kept
-
-
-def load_factorial_essays(
-    path: str | Path | None = None,
-    *,
-    source: str = "persuade",
-    n: Optional[int] = None,
-    report: Optional[Dict[str, object]] = None,
-    **kwargs,
-) -> List[EssayRecord]:
-    """Essays that can carry every cell of the sex × ethnicity × economic-status factorial.
-
-    Same shape as `load_stage_essays`, but with `FACTORIAL_RULES` and no prompt selection: the
-    factorial's factors are compatible with any argumentative essay, so the full corpus is usable. The
-    two loaders therefore return **different populations** — state which one a result came from.
-    """
-    if source not in _SOURCES:
-        raise ValueError(f"source must be one of {sorted(_SOURCES)}, got {source!r}")
-    loader, default_path = _SOURCES[source]
-    records = loader(path or default_path, report=report, **kwargs)
-    kept, rules_report = apply_rules(records, FACTORIAL_RULES)
+        report["education_rules"] = rules_report
+    if not balance:
+        return kept[:n] if n else kept
+    out, balance_report = _balance_classes(kept, n)
     if report is not None:
-        report["factorial_rules"] = rules_report
-    return kept[:n] if n else kept
+        report["balance"] = balance_report
+    return out
+
+
+def _balance_classes(records: List[EssayRecord],
+                     n: Optional[int]) -> Tuple[List[EssayRecord], Dict[str, object]]:
+    """Equal strong/weak counts within each prompt, kept in the input order (see `load_education_essays`)."""
+    order = {id(r): i for i, r in enumerate(records)}
+    by_prompt: Dict[object, Tuple[List[EssayRecord], List[EssayRecord]]] = {}
+    for r in records:
+        by_prompt.setdefault(r.prompt_id, ([], []))[0 if r.high_quality else 1].append(r)
+    # zip() cuts each prompt to min(strong, weak) couples; order couples by their earlier member
+    couples = [c for strong, weak in by_prompt.values() for c in zip(strong, weak)]
+    couples.sort(key=lambda c: min(order[id(c[0])], order[id(c[1])]))
+    if n:
+        couples = couples[: n // 2]
+    chosen = {id(r) for c in couples for r in c}
+    out = [r for r in records if id(r) in chosen]
+    per_prompt: Dict[str, int] = {}
+    for strong, _ in couples:
+        per_prompt[str(strong.prompt_id)] = per_prompt.get(str(strong.prompt_id), 0) + 1
+    return out, {"strong_in": sum(r.high_quality for r in records),
+                 "weak_in": sum(not r.high_quality for r in records),
+                 "per_class": len(couples), "n_out": len(out), "per_prompt": per_prompt}
