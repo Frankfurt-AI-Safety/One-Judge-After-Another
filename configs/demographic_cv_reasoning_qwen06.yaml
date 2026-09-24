@@ -4,9 +4,9 @@
 # {conclusion} over a parental-leave / intersection premise + a non-demographic commute control.
 # NOTE: this arm still uses the LEGACY synthetic CV substrate (generate_cv_data.py); it has not yet
 # been ported to the real Bias-in-Bios substrate that domain=cv now loads.
-# Generate it with: python experiments/generate_cv_data.py
+# Generate it with: python runners/generate_bios.py
 #
-#   python experiments/run_reasoning_flip.py --config configs/demographic_cv_reasoning_qwen06.yaml
+#   python runners/run_reasoning_flip.py --config configs/demographic_cv_reasoning_qwen06.yaml
 
 name: demographic_cv_reasoning_qwen06
 bias_type: demographic

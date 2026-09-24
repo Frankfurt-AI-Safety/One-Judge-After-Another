@@ -4,7 +4,7 @@ Unit tests for the hiring (CV-screening) demographic pipeline on the real Bias-i
 Cover the offline stages (scrub -> render -> inject -> validate -> loader) on tiny inline fixtures
 (no corpus download, no model). The scrub tests matter most: the Tier-1 gate *cannot* catch a bad
 scrub, because it only compares the two poles to each other, so a leaked "she" is present on both
-sides and passes. Empirical leakage is measured separately by experiments/validate_bios_scrub.py.
+sides and passes. Empirical leakage is measured separately by runners/validate_bios_scrub.py.
 """
 
 from __future__ import annotations

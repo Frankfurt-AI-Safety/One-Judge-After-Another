@@ -15,7 +15,7 @@ applicants in a biased way. The harm evidence is `runners/run_cross_marker.py`, 
 scores these same cells with the marker in the prompt.
 
 Usage:
-    python experiments/run_demographic_battery.py --config configs/demographic_credit_sex_qwen06.yaml
+    python runners/run_battery.py --config configs/demographic_credit_sex_qwen06.yaml
 """
 
 from __future__ import annotations

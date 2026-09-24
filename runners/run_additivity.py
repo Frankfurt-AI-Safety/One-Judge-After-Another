@@ -63,7 +63,7 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--max-length", type=int, default=2048)
     ap.add_argument("--out", type=Path, default=None,
-                    help="Optional JSON output (feeds experiments/export_paper_numbers.py)")
+                    help="Optional JSON output (feeds runners/export_paper_numbers.py)")
     args = ap.parse_args()
 
     spec = get_domain(args.domain)

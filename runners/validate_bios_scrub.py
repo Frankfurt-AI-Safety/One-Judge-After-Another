@@ -23,7 +23,7 @@ This reuses `probe_recoverability` from probes/erasure.py (the same discriminato
 LEACE/TaCo arm uses) rather than introducing a second probe implementation.
 
 Usage:
-    python experiments/validate_bios_scrub.py --config configs/demographic_cv_sex_qwen06.yaml \
+    python runners/validate_bios_scrub.py --config configs/demographic_cv_sex_qwen06.yaml \
         --probe-items 400 --eval-items 400
 """
 

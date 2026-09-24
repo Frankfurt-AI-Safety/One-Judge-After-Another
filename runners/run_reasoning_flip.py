@@ -14,7 +14,7 @@ If the **correctness effect** matches on the non-demographic commute control, th
 causal-reasoning checking; if it's larger on the demographic premises, it's demographic-specific.
 
 Usage:
-    python experiments/run_reasoning_flip.py --config configs/demographic_cv_reasoning_qwen06.yaml \
+    python runners/run_reasoning_flip.py --config configs/demographic_cv_reasoning_qwen06.yaml \
         --n-items 200
 """
 

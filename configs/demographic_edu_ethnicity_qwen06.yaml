@@ -2,9 +2,9 @@
 #
 # A1 header-proxy arm over real essays (ASAP-AES). Same essay body, swap only the name in the header
 # (white- vs Black-coded first name, holding sex fixed). A name-proxy effect, not pure ethnicity.
-#   python experiments/generate_edu_data.py --source asap --axes sex,ethnicity,grade_level
+#   python runners/generate_education.py --source asap
 #
-#   python experiments/run_experiment.py --config configs/demographic_edu_ethnicity_qwen06.yaml
+#   python runners/run_experiment.py --config configs/demographic_edu_ethnicity_qwen06.yaml
 #
 # NOTE: this config reproduces the committed results/demographic_edu_ethnicity_qwen06_results.json,
 # which were run on ASAP. The PERSUADE variant is configs/demographic_edu_ethnicity_persuade_qwen06.yaml.

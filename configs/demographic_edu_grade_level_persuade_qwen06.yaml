@@ -6,7 +6,7 @@
 # separate from the sex x ethnicity x economic-status factorial in <source>/.
 #   python runners/generate_education.py --design stage --source persuade --include-ladder
 #
-#   python experiments/run_experiment.py --config configs/demographic_edu_grade_level_persuade_qwen06.yaml
+#   python runners/run_experiment.py --config configs/demographic_edu_grade_level_persuade_qwen06.yaml
 #
 # NOTE: PERSUADE variant. Not yet run through run_experiment.py; the committed single-axis results
 # are the ASAP ones (configs/demographic_edu_grade_level_qwen06.yaml).

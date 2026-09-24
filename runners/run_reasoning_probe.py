@@ -16,7 +16,7 @@ collapse. (3) **cross-premise transfer** — null parental-leave eval items with
 direction (and vice versa): breaks the shared-wording shortcut, testing one general direction (cos≈0.94).
 
 Usage:
-    python experiments/run_reasoning_probe.py --config configs/demographic_cv_reasoning_qwen06.yaml \
+    python runners/run_reasoning_probe.py --config configs/demographic_cv_reasoning_qwen06.yaml \
         --probe-items 200 --eval-items 200
 """
 

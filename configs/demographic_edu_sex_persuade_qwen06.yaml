@@ -2,9 +2,9 @@
 #
 # A1 header-proxy arm over real essays (PERSUADE 2.0). Same essay body, swap only the name in the header.
 # Generate the data first (corpus is user-downloaded — see substrates/education_ingest.py):
-#   python experiments/generate_edu_data.py --source persuade --axes sex,ethnicity,grade_level
+#   python runners/generate_education.py --source persuade
 #
-#   python experiments/run_experiment.py --config configs/demographic_edu_sex_persuade_qwen06.yaml
+#   python runners/run_experiment.py --config configs/demographic_edu_sex_persuade_qwen06.yaml
 #
 # NOTE: PERSUADE variant. Not yet run through run_experiment.py; the committed single-axis results
 # are the ASAP ones (configs/demographic_edu_sex_qwen06.yaml).

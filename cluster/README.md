@@ -148,16 +148,17 @@ numbers, so this is a real regression check rather than a vibe check:
 ```bash
 det shell start -w IL_rm_bias --config-file cluster/config.yaml     # slots: 1
 # then, inside:
-python experiments/run_experiment.py --config configs/demographic_credit_sex_qwen06.yaml
+python runners/run_experiment.py --config configs/demographic_credit_sex_qwen06.yaml
 ```
 
 **Expected: auto-influence 1.00 baseline → 0.06 nulled.** A mismatch means the CUDA path
 diverges, and every scaled number would inherit the fault. This single run catches padding
 side, dtype, and chat-template differences at once.
 
-Note the config wants 500 pairs per cell (probe 300 / eval 200). Since 2026-09-16 the credit
-generator emits the full sex × age × marital-status factorial (~6.4k pairs per single-axis cell), so
-the split is always filled; `--n-records` is the only cap, and a small value under-fills it.
+Note the config's split: the probe is 150 records (`probe_records`, stratified by quality, the same
+records for every axis) and the evaluation 200 pairs. Since 2026-09-16 the credit generator emits the
+full sex × age × marital-status factorial (~6.4k pairs per single-axis cell), so the split is always
+filled; `--n-records` is the only cap, and a small value under-fills it.
 The expected numbers above predate the corrected German Credit codebook and the factorial design;
 re-establish them after regenerating the credit data.
 

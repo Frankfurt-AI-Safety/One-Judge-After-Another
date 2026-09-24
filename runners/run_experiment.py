@@ -4,10 +4,10 @@ Run bias evaluation experiments.
 
 Usage:
     # From config file:
-    python experiments/run_experiment.py --config configs/length_skywork.yaml
+    python runners/run_experiment.py --config configs/length_skywork.yaml
     
     # From command line args:
-    python experiments/run_experiment.py \\
+    python runners/run_experiment.py \\
         --bias-type length \\
         --name length_skywork_gsm8k \\
         --model Skywork/Skywork-Reward-V2-Llama-3.1-8B \\
@@ -16,7 +16,7 @@ Usage:
         --plots-dir plots
     
     # Cross-dataset generalization (train probe on one, eval on another):
-    python experiments/run_experiment.py \\
+    python runners/run_experiment.py \\
         --bias-type position \\
         --name position_skywork_gsm8k_to_mmlu \\
         --model Skywork/Skywork-Reward-V2-Llama-3.1-8B \\

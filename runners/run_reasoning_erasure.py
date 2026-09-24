@@ -16,7 +16,7 @@ Linear→chance after LEACE is guaranteed; **MLP accuracy after LEACE is the ans
 ≫chance ⇒ non-linearly recoverable / entangled.
 
 Usage:
-    python experiments/run_reasoning_erasure.py --config configs/demographic_cv_reasoning_qwen06.yaml \
+    python runners/run_reasoning_erasure.py --config configs/demographic_cv_reasoning_qwen06.yaml \
         --probe-items 200 --eval-items 200
 """
 
