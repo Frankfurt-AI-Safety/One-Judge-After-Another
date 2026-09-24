@@ -19,15 +19,21 @@ order; each depends only on the ones above it.
 
 Review in the following order: substrates -> pairs -> probes -> scoring -> runners
 
-| # | folder | stage | size |
-|---|---|---|---|
-| 1 | `substrates/` | real corpora → records, and how a record becomes text | 923 lines |
-| 2 | `pairs/` | single-axis marker injection, the validation gate, the manifest | 1,069 lines |
-| 3 | `probes/` | **the mechanistic core**: difference-of-means, null-space projection, LEACE | 798 lines |
-| 4 | `scoring/` | model loading, dataset plumbing, experiment orchestration, metrics | 2,217 lines |
-| 5 | `runners/` | CLI entry points — one per experiment arm | 2,432 lines |
-| 6 | `cluster/` | hessian.AI 42 cluster deployment | 309 lines |
-| — | `tests/` `configs/` | read alongside the stage they cover | 1,756 lines |
+| # | folder | stage | size | line-by-line review |
+|---|---|---|---|---|
+| 1 | `substrates/` | real corpora → records, and how a record becomes text | 3,855 lines | **done** (2026-09-24) |
+| 2 | `pairs/` | single-axis marker injection, the validation gate, the manifest | 2,264 lines | not yet |
+| 3 | `probes/` | **the mechanistic core**: difference-of-means, null-space projection, LEACE | 1,275 lines | not yet |
+| 4 | `scoring/` | model loading, dataset plumbing, experiment orchestration, metrics | 3,037 lines | not yet |
+| 5 | `runners/` | CLI entry points — one per experiment arm | 3,420 lines | not yet |
+| 6 | `cluster/` | hessian.AI 42 cluster deployment | 591 lines | not yet |
+| — | `tests/` `configs/` | read alongside the stage they cover | 5,219 lines | with their stage |
+
+**Review status.** Only `substrates/` has been reviewed line by line (finished 2026-09-24, including the
+class-imbalance audit's substrate items). The other folders have changed a lot since the prototype —
+the factorial designs, the cross-marker decision design and its mechanism layer, the audit fixes, the
+embedding cache — and every change came with tests, but none of them has had its own review session yet.
+Treat their code as unverified.
 
 `probes/` is small and load-bearing: it is where the actual intervention lives, and where a
 subtle error would be least visible in the results. Worth the most attention per line.
