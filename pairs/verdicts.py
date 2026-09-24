@@ -80,8 +80,8 @@ class DecisionFrame:
 _EVASIVE = ("It is hard to say whether {what}; there are many factors to weigh, and I cannot give a "
             "clear recommendation either way.")
 
-# Protected poles: the female / young / on-leave / married / intersectional applicant is marker pole A
-# in every domain; for education's ethnicity axis the Black-coded name is pole B.
+# Protected poles: the female / young / on-leave / married / Black / low-income / intersectional applicant
+# is marker pole A in every domain (the factorials put the hypothesised penalised level first).
 DECISION_FRAMES: Dict[str, DecisionFrame] = {
     "cv": DecisionFrame(
         prompt=DECISION_PROMPT,
