@@ -203,3 +203,18 @@ class TestRoleAssignment:
         recs = [_bio(i, "teacher") for i in range(10)] + [_bio(50 + i, "professor") for i in range(2)]
         with pytest.raises(ValueError, match="near-synonym"):
             assign_roles(recs, seed=42)
+
+
+def test_profession_mix_reports_keep_rates_and_shares():
+    # Audit item 4.5: the age rules keep professions at very different rates, so the manifest states the
+    # pool's mix next to the corpus's.
+    from substrates.bios_clean import profession_mix
+
+    loaded = [_bio(i, "dentist") for i in range(10)] + [_bio(10 + i, "physician") for i in range(10)]
+    after_rules = loaded[:3] + loaded[10:19]           # dentists 3/10, physicians 9/10
+    used = after_rules[:2] + after_rules[3:9]          # 2 dentists, 6 physicians
+    mix = profession_mix(loaded, after_rules, used)
+    assert mix["dentist"] == {"loaded": 10, "after_rules": 3, "used": 2, "keep_rate": 0.3,
+                              "share_loaded": 0.5, "share_used": 0.25}
+    assert mix["physician"]["keep_rate"] == 0.9 and mix["physician"]["share_used"] == 0.75
+    assert sum(v["share_used"] for v in mix.values()) == pytest.approx(1.0)

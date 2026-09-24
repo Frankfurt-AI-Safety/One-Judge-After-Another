@@ -196,6 +196,25 @@ def role_leak_report(records: Sequence[RealCVRecord]) -> Dict[str, object]:
             "p_qualified_by_role_max": max(p_q.values(), default=None)}
 
 
+def profession_mix(loaded: Sequence[RealCVRecord], after_rules: Sequence[RealCVRecord],
+                   used: Sequence[RealCVRecord]) -> Dict[str, Dict[str, object]]:
+    """Per profession: bios loaded, left after `FACTORIAL_RULES`, and used (after the cap and the sample);
+    the rules' keep rate; and the profession's share of the loaded and of the used pool.
+
+    The age rules drop bios that state long careers or early years, which some professions do far more
+    often than others (audit 2026-09-23, item 4.5: keep rates from 29% for dentists to 86% for
+    physicians), so the hiring pool is junior and its profession mix is not the corpus's. The cap and the
+    role balance correct the label leak this caused, not the mix; the report states the mix instead."""
+    n_loaded = Counter(r.profession for r in loaded)
+    n_rules = Counter(r.profession for r in after_rules)
+    n_used = Counter(r.profession for r in used)
+    return {prof: {"loaded": n_loaded[prof], "after_rules": n_rules[prof], "used": n_used[prof],
+                   "keep_rate": round(n_rules[prof] / n_loaded[prof], 4),
+                   "share_loaded": round(n_loaded[prof] / len(loaded), 4),
+                   "share_used": round(n_used[prof] / len(used), 4) if used else 0.0}
+            for prof in sorted(n_loaded)}
+
+
 def load_factorial_bios(
     path: str | Path = DEFAULT_BIOS_PATH,
     *,
@@ -210,11 +229,12 @@ def load_factorial_bios(
     role re-assignment on exactly the records returned (see the module docstring). `kwargs` go to
     `load_bias_in_bios`, including its `seed`, which also fixes the coin and the role shuffle. If
     `report` is a dict it is filled with the loader's report plus ``factorial_rules``,
-    ``profession_cap`` and ``role_leak`` (measured on the returned records).
+    ``profession_cap``, ``role_leak`` (measured on the returned records) and ``profession_mix``.
     """
     seed = kwargs.get("seed", 42)
     records = load_bias_in_bios(path, report=report, **kwargs)
     kept, rules_report = apply_rules(records, FACTORIAL_RULES)
+    after_rules = list(kept)
     cap_report: Dict[str, object] = {"cap": None}
     if profession_cap:
         kept, cap_report = cap_professions(kept, profession_cap)
@@ -226,4 +246,5 @@ def load_factorial_bios(
         report["factorial_rules"] = rules_report
         report["profession_cap"] = cap_report
         report["role_leak"] = role_leak_report(kept)
+        report["profession_mix"] = profession_mix(records, after_rules, kept)
     return kept

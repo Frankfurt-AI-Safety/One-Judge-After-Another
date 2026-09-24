@@ -139,6 +139,32 @@ ENDING_RULES: Tuple[Rule, ...] = (
     ("ends_with_a_signoff", lambda r: ends_with_a_signoff(r.essay_text)),
 )
 
+# --- anonymisation placeholders (reported, not dropped) -----------------------------------------------------
+# PERSUADE's own anonymisation replaced names and places with tokens ("Generic_Name", "Generic_School",
+# "PROPER_NAME", "LOCATION_NAME", ...), unevenly by class (audit 2026-09-23, item 5.3: Generic_Name 21 strong /
+# 5 weak, PROPER_NAME 13 / 24 of 1,422 essays). Most PROPER_NAMEs were signatures, which the ending rule now
+# drops; in the 1,364-essay pool 31 essays keep a token (21 strong / 10 weak, 20 / 5 of them Generic_Name in
+# the text). They are kept: every contrast is within an essay, so a token cancels in it, and at 2% of essays
+# it cannot carry a between-essay comparison such as the AUC of the decision margin. `placeholder_report`
+# states the counts in every manifest.
+_PLACEHOLDER_RE = re.compile(r"\b(?:Generic_[A-Za-z]+|[A-Z]+_NAME)\b")
+
+
+def placeholder_report(records: List[EssayRecord]) -> Dict[str, object]:
+    """Essays containing each anonymisation token, and any token, by class (strong/weak)."""
+    by_token: Dict[str, Dict[str, int]] = {}
+    any_token = {"strong": 0, "weak": 0}
+    for r in records:
+        cls = "strong" if r.high_quality else "weak"
+        tokens = set(_PLACEHOLDER_RE.findall(r.essay_text))
+        for tok in tokens:
+            by_token.setdefault(tok, {"strong": 0, "weak": 0})[cls] += 1
+        any_token[cls] += bool(tokens)
+    return {"essays_with_any": any_token, "by_token": dict(sorted(by_token.items())),
+            "essays": {"strong": sum(r.high_quality for r in records),
+                       "weak": sum(not r.high_quality for r in records)}}
+
+
 _SOURCES = {"persuade": (load_persuade, DEFAULT_PERSUADE_PATH),
             "asap": (load_asap, DEFAULT_ASAP_PATH)}
 
@@ -187,7 +213,8 @@ def load_education_essays(
     (per essay set for ASAP) the first ``min(strong, weak)`` essays of each class are kept, in the
     loader's seeded order, as matched strong/weak couples; `n` then keeps the first ``n // 2`` couples
     (an odd `n` rounds down), so a capped sample is balanced overall and within every prompt. If `report`
-    is a dict it is filled with the loader's own counts plus ``education_rules`` and ``balance``.
+    is a dict it is filled with the loader's own counts plus ``education_rules``, ``balance`` and
+    ``placeholders`` (on the returned essays; see `placeholder_report`).
     """
     if source not in _SOURCES:
         raise ValueError(f"source must be one of {sorted(_SOURCES)}, got {source!r}")
@@ -199,10 +226,13 @@ def load_education_essays(
     if report is not None:
         report["education_rules"] = rules_report
     if not balance:
-        return kept[:n] if n else kept
-    out, balance_report = _balance_classes(kept, n)
+        out = kept[:n] if n else kept
+    else:
+        out, balance_report = _balance_classes(kept, n)
+        if report is not None:
+            report["balance"] = balance_report
     if report is not None:
-        report["balance"] = balance_report
+        report["placeholders"] = placeholder_report(out)
     return out
 
 

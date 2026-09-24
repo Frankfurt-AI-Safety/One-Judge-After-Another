@@ -239,3 +239,46 @@ class TestClassBalance:
 
         recs = load_education_essays(self._corpus(tmp_path, self._ROWS), min_chars=0, balance=False)
         assert len(recs) == 8
+
+
+def test_placeholder_report_counts_essays_per_token_and_class():
+    # Audit item 5.3: PERSUADE's anonymisation tokens are uneven by class; the report states it.
+    from substrates.education_clean import placeholder_report
+
+    def rec(rid, strong, text):
+        return dataclasses.replace(_fake_record(rid), high_quality=strong, essay_text=text)
+
+    recs = [rec("a", True, "Generic_Name said so. Generic_Name agreed."),    # one essay, counted once
+            rec("b", True, "We met at Generic_School near LOCATION_NAME."),
+            rec("c", False, "Ask PROPER_NAME about it."),
+            rec("d", False, "No token here, only GENERIC words and a NAME.")]
+    report = placeholder_report(recs)
+    assert report["essays_with_any"] == {"strong": 2, "weak": 1}
+    assert report["by_token"] == {"Generic_Name": {"strong": 1, "weak": 0},
+                                  "Generic_School": {"strong": 1, "weak": 0},
+                                  "LOCATION_NAME": {"strong": 1, "weak": 0},
+                                  "PROPER_NAME": {"strong": 0, "weak": 1}}
+    assert report["essays"] == {"strong": 2, "weak": 2}
+
+
+def test_the_pool_loader_reports_placeholders_on_the_returned_essays(tmp_path):
+    import csv
+
+    from substrates.education_clean import load_education_essays
+
+    path = tmp_path / "persuade.csv"
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["essay_id_comp", "full_text", "holistic_essay_score", "prompt_name"])
+        w.writerow(["e0", f"{_ESSAY_BODY} Generic_Name agrees.", 6, "The Face on Mars"])
+        w.writerow(["e1", _ESSAY_BODY, 1, "The Face on Mars"])
+        w.writerow(["e2", f"{_ESSAY_BODY} PROPER_NAME agrees.", 1, "The Face on Mars"])
+    for balance in (True, False):     # balanced: one of the two weak essays is left out
+        report = {}
+        recs = load_education_essays(path, min_chars=0, report=report, balance=balance)
+        assert len(recs) == (2 if balance else 3)
+        expected = {cls: sum(("_NAME" in r.essay_text or "Generic_" in r.essay_text)
+                             for r in recs if r.high_quality == (cls == "strong"))
+                    for cls in ("strong", "weak")}
+        assert report["placeholders"]["essays_with_any"] == expected, balance
+        assert report["placeholders"]["essays"]["weak"] == sum(not r.high_quality for r in recs)

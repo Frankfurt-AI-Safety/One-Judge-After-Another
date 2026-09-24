@@ -102,6 +102,7 @@ def main() -> None:
     rules_report = corpus_report.pop("factorial_rules")
     cap_report = corpus_report.pop("profession_cap")
     role_report = corpus_report.pop("role_leak")
+    mix = corpus_report.pop("profession_mix")
     n_strong = sum(r.qualified for r in records)
     logger.info("Corpus filters: kept %d of %d bios; dropped %s; %.1f%% of kept mention women/men",
                 corpus_report["kept"], corpus_report["n_rows"], corpus_report["dropped"],
@@ -113,6 +114,12 @@ def main() -> None:
                 sorted(cap_report.get("capped", {})))
     logger.info("Role label on the bios used: %s (0.5 = the role name says nothing about qualified)",
                 role_report)
+    by_keep = sorted(mix, key=lambda p: mix[p]["keep_rate"])
+    by_shift = sorted(mix, key=lambda p: mix[p]["share_used"] - mix[p]["share_loaded"])
+    logger.info("Age rules keep %s of bios by profession (lowest %s, highest %s); largest share shifts: %s",
+                "/".join(f"{mix[p]['keep_rate']:.0%}" for p in (by_keep[0], by_keep[-1])), by_keep[0],
+                by_keep[-1], ", ".join(f"{p} {mix[p]['share_loaded']:.1%}->{mix[p]['share_used']:.1%}"
+                                       for p in (by_shift[0], by_shift[1], by_shift[-2], by_shift[-1])))
     logger.info("Using %d biographies (%d role-matched / %d mismatched); templates=%s",
                 len(records), n_strong, len(records) - n_strong, templates)
 
@@ -139,6 +146,7 @@ def main() -> None:
 
     discards: Dict[str, Any] = {"corpus_filters": corpus_report, "factorial_rules": rules_report,
                                 "profession_cap": cap_report, "role_leak": role_report,
+                                "profession_mix": mix,
                                 "n_records_used": len(records), "gate": gate}
     paths = write_manifest(
         out_dir=args.out_dir, records=pair_rows, seed=args.seed, discard_report=discards,
