@@ -65,3 +65,13 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
         model.config.pad_token_id = tokenizer.pad_token_id
 
     return model, tokenizer
+
+
+def create_backend(config: Any) -> Tuple[Any, Any]:
+    """``(model, tokenizer)`` for ``config`` — the entry point ``BiasExperiment.load_model`` calls.
+
+    Restored 2026-09-23: removing the MLX backend also removed this dispatcher, while
+    ``scoring/experiment.py`` still imported it, so every runner failed at ``load_model()`` with an
+    ImportError. No test loaded a model, so it went unnoticed; ``tests/test_backend.py`` now does.
+    """
+    return _load_transformers(config)

@@ -332,9 +332,14 @@ class BiasExperiment(ABC):
         from scoring.backend import create_backend
 
         from probes.embedding_cache import attach
+        from probes.probe import verify_score_path
 
         logger.info("Loading model from %s", self.config.model_path)
         self.model, self.tokenizer = create_backend(self.config)
+        # Refuse, loudly, a model whose score the pipeline's reward path does not reproduce (before
+        # any state is cached for it).
+        gap = verify_score_path(self.model, self.tokenizer, self.config.max_length)
+        logger.info("Score path verified: pipeline reward == model score (max |diff| %.4f)", gap)
         attach(self.model, self.tokenizer, self.config.embedding_cache_dir)
     
     def load_dataset(self) -> None:

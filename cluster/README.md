@@ -107,6 +107,25 @@ python cluster/prefetch_models.py --tier small
 have outbound internet.** If they do not, fetch the checkpoints on a machine that does and
 rsync the cache across.
 
+**Embedding cache (since 2026-09-24).** Every runner embeds each unique text once per model and
+stores the pooled state (`probes/embedding_cache.py`); probes, nulling, the α-sweep and all
+offline analyses reuse it. Put it on PFSS, next to the results rather than inside the code tree:
+
+```bash
+export ONEJUDGE_EMBED_CACHE=/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/embedding_cache
+```
+
+Size is about `unique texts × hidden size × 2 bytes` per model: roughly 0.1 GB for Qwen3-0.6B
+and 0.4 GB for an 8B model over the whole education pool, 0.8 GB for a 70B. Files: one shard per call
+that embedded something new, a few dozen per run, far below the inode budget. Concurrent jobs on the
+same model are safe (each writes its own shards). `ONEJUDGE_EMBED_CACHE=off` disables it.
+
+**Every model is checked at load** (`verify_score_path`): the pipeline's reward, which is the score
+head on the pooled last-token state, must reproduce the model's own score on two texts. A model that
+pools differently is refused rather than silently mis-scored. As of 2026-09-24 that is **the
+OpenAssistant DeBERTa RM** (first-token `ContextPooler`), and the QRM-Gemma quantile head is untested.
+Neither can run until it has its own pooling and projection site.
+
 ## 3. Parity smoke test — do this before spending the allocation
 
 Everything so far ran on the MLX (Apple Silicon) backend. The cluster uses the

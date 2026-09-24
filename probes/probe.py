@@ -15,6 +15,7 @@ from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from scoring.dataset_base import ContrastivePair
+from probes.embedding_cache import CACHE_ATTR, text_key
 
 logger = logging.getLogger(__name__)
 
@@ -334,64 +335,74 @@ def clean_probe_basis_with_correctness(
     return basis, metadata, correctness_probe
 
 
-def get_embeddings(
+class ScorePathMismatch(RuntimeError):
+    """The pipeline's reward (linear head on the pooled last-token state) is not the model's score."""
+
+
+_CHECK_TEXTS = ("The applicant has a stable income and repaid every earlier loan on time.",
+                "A short essay.")
+
+
+def verify_score_path(model: AutoModelForSequenceClassification, tokenizer: AutoTokenizer,
+                      max_length: int = 2048) -> float:
+    """Refuse a model whose score the pipeline cannot reproduce. Every reward here is the score head
+    applied to the pooled LAST-token state of ``hidden_states[-1]`` (so that the probe subspace can be
+    projected out right before the head). That is how Llama/Qwen/Gemma sequence-classification RMs
+    score, but not every RM: DeBERTa scores the FIRST token through a ``ContextPooler`` (dense +
+    activation) before its classifier, so the pipeline's "rewards" for it were unrelated to the model's
+    scores — silently. This compares the pipeline path with the model's own ``logits`` on two texts of
+    different length (bf16 tolerance) and raises `ScorePathMismatch` if they disagree. Returns the
+    largest absolute difference."""
+    model.eval()
+    base, _ = get_rewards_both(model, tokenizer, list(_CHECK_TEXTS), None, batch_size=2,
+                               max_length=max_length, show_progress=False)
+    base_model = get_base_model(model)
+    inputs = tokenize_inputs(tokenizer, list(_CHECK_TEXTS), max_length=max_length)
+    inputs = {k: v.to(next(base_model.parameters()).device) for k, v in inputs.items()}
+    with torch.no_grad():
+        logits = model(**inputs).logits
+    if logits.dim() > 1 and logits.shape[-1] != 1:
+        raise ScorePathMismatch(f"{type(model).__name__} outputs {logits.shape[-1]} scores per text; "
+                                f"the pipeline assumes one scalar reward")
+    logits = logits.reshape(-1).float().cpu()
+    diff = (base.float() - logits).abs()
+    if bool((diff > 0.02 + 0.02 * logits.abs()).any()):
+        raise ScorePathMismatch(
+            f"{type(model).__name__}: the pipeline's reward (score head on the pooled last-token state) "
+            f"does not reproduce the model's own score (pipeline {base.float().tolist()}, model "
+            f"{logits.tolist()}). This model pools differently (e.g. DeBERTa's first-token ContextPooler) "
+            f"or has a custom head; its baseline and nulled rewards would be wrong. It needs its own "
+            f"pooling and projection site before it can be run.")
+    return float(diff.max())
+
+
+def _forward_pooled(
     model: AutoModelForSequenceClassification,
     tokenizer: AutoTokenizer,
     texts: List[str],
-    batch_size: int = 8,
-    device: str = "cuda",
-    max_length: int = 2048,
-    show_progress: bool = True,
-) -> torch.Tensor:
-    """Extract last-token hidden state embeddings from reward model.
-    
-    Tokenizes on-the-fly per batch to avoid OOM on large datasets.
-    
-    Args:
-        model: Reward model
-        tokenizer: Tokenizer
-        texts: List of formatted conversation texts
-        batch_size: Batch size for inference
-        device: Device to use
-        max_length: Maximum sequence length
-        show_progress: Whether to show progress bar
-        
-    Returns:
-        [n_texts, hidden_dim] tensor of embeddings
-        
-    Raises:
-        ValueError: If texts is empty (no embeddings to extract)
-    """
-    if not texts:
-        raise ValueError(
-            "Cannot extract embeddings: no texts provided. "
-            "This usually means a dataset position/category has no examples after filtering. "
-            "Check that your dataset has enough examples and the parser is working correctly."
-        )
-
-    # NOTE: a ModelBackend dispatch used to sit here so the MLX (Apple Silicon) backend
-    # could intercept this call. MLX was removed once CUDA was validated on the cluster,
-    # and it was the only implementation, so the abstraction went with it. This function
-    # now always takes the raw Hugging Face model.
-
+    batch_size: int,
+    max_length: int,
+    show_progress: bool,
+) -> Tuple[torch.Tensor, torch.dtype]:
+    """The one forward pass of the pipeline: float32 [n, d] pooled last-token states of
+    ``hidden_states[-1]`` (right padding; see `scoring/backend.py`), plus the dtype the model computed
+    them in. Tokenizes on the fly per batch to avoid OOM on large datasets."""
     model.eval()
     all_embeddings = []
+    state_dtype = next(model.parameters()).dtype
     base_model = get_base_model(model)
-    
     n_batches = (len(texts) + batch_size - 1) // batch_size
-    
     logger.info("Processing %d texts in %d batches (tokenizing on-the-fly)...", len(texts), n_batches)
-    
     iterator = range(n_batches)
     if show_progress:
         iterator = tqdm(iterator, desc="Extracting embeddings", total=n_batches)
-    
+
     with torch.no_grad():
         for batch_idx in iterator:
             start = batch_idx * batch_size
             end = min(start + batch_size, len(texts))
             batch_texts = texts[start:end]
-            
+
             # Tokenize just this batch (handles both strings and pairs)
             inputs = tokenize_inputs(
                 tokenizer,
@@ -408,6 +419,7 @@ def get_embeddings(
 
             outputs = base_model(**inputs, output_hidden_states=True)
             hidden_states = outputs.hidden_states[-1]  # [batch, seq_len, hidden_dim]
+            state_dtype = hidden_states.dtype
 
             # Get last non-padding token for each example.
             # hidden_states may be on a different GPU than inputs (device_map="auto"),
@@ -420,8 +432,109 @@ def get_embeddings(
                 last_token_indices.to(hs_device),
             ]
             all_embeddings.append(batch_embeddings.float().cpu())
-    
-    return torch.cat(all_embeddings, dim=0)
+
+    return torch.cat(all_embeddings, dim=0), state_dtype
+
+
+def _embed(
+    model: AutoModelForSequenceClassification,
+    tokenizer: AutoTokenizer,
+    texts: List[str],
+    batch_size: int,
+    max_length: int,
+    show_progress: bool,
+) -> Tuple[torch.Tensor, torch.dtype]:
+    """`get_embeddings` plus the state dtype, served from the model's embedding cache when one is
+    attached (`probes/embedding_cache.py`): only texts never embedded under this `max_length` go
+    through the model, each unique text once even if it repeats within the call."""
+    cache = getattr(model, CACHE_ATTR, None)
+    if cache is None:
+        return _forward_pooled(model, tokenizer, texts, batch_size, max_length, show_progress)
+    keys = [text_key(t, max_length) for t in texts]
+    todo: Dict[str, Any] = {}
+    for key, text in zip(keys, texts):
+        if key not in cache and key not in todo:
+            todo[key] = text
+    cache.hits += len(texts) - len(todo)
+    cache.misses += len(todo)
+    if todo:
+        states, dtype = _forward_pooled(model, tokenizer, list(todo.values()), batch_size,
+                                        max_length, show_progress)
+        cache.put(list(todo), states.to(dtype))  # float32 -> native dtype: exact
+        cache.flush()
+    logger.info("Embedding cache: %d of %d texts served from cache", len(texts) - len(todo), len(texts))
+    return torch.stack([cache.get(k) for k in keys]).float(), cache.state_dtype
+
+
+def get_embeddings(
+    model: AutoModelForSequenceClassification,
+    tokenizer: AutoTokenizer,
+    texts: List[str],
+    batch_size: int = 8,
+    device: str = "cuda",
+    max_length: int = 2048,
+    show_progress: bool = True,
+) -> torch.Tensor:
+    """Extract last-token hidden state embeddings from reward model.
+
+    Served from the model's embedding cache when one is attached (see `_embed`).
+
+    Args:
+        model: Reward model
+        tokenizer: Tokenizer
+        texts: List of formatted conversation texts
+        batch_size: Batch size for inference
+        device: Device to use
+        max_length: Maximum sequence length
+        show_progress: Whether to show progress bar
+
+    Returns:
+        [n_texts, hidden_dim] tensor of embeddings
+
+    Raises:
+        ValueError: If texts is empty (no embeddings to extract)
+    """
+    if not texts:
+        raise ValueError(
+            "Cannot extract embeddings: no texts provided. "
+            "This usually means a dataset position/category has no examples after filtering. "
+            "Check that your dataset has enough examples and the parser is working correctly."
+        )
+
+    # NOTE: a ModelBackend dispatch used to sit here so the MLX (Apple Silicon) backend
+    # could intercept this call. MLX was removed once CUDA was validated on the cluster,
+    # and it was the only implementation, so the abstraction went with it. This function
+    # now always takes the raw Hugging Face model.
+    return _embed(model, tokenizer, texts, batch_size, max_length, show_progress)[0]
+
+
+def rewards_from_hidden(
+    model: AutoModelForSequenceClassification,
+    hidden: torch.Tensor,
+    state_dtype: torch.dtype,
+    probe: Optional[torch.Tensor] = None,
+    null_alpha: float = 1.0,
+    batch_size: int = 256,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """(baseline, nulled) rewards from float32 pooled states: the score head applied to the state, and
+    to the state with the probe subspace projected out (scaled by ``null_alpha``). Same arithmetic, in
+    the same order, as the reward code has always used: project in float32 on the head's device, cast
+    to the model's dtype, apply the head. Cheap — call it once per α instead of re-running the model."""
+    score_head = get_score_head(model)
+    score_device = score_head.weight.device
+    base_out, null_out = [], []
+    with torch.no_grad():
+        for start in range(0, hidden.shape[0], batch_size):
+            h = hidden[start:start + batch_size].to(score_device)
+            base = score_head(h.to(state_dtype)).squeeze(-1)
+            base_out.append(base.cpu())
+            if probe is not None:
+                nulled = score_head(project_to_null_space(h, probe, alpha=null_alpha)
+                                    .to(state_dtype)).squeeze(-1)
+                null_out.append(nulled.cpu())
+            else:
+                null_out.append(base.cpu())
+    return torch.cat(base_out, dim=0), torch.cat(null_out, dim=0)
 
 
 def build_probe_direction(
@@ -540,72 +653,29 @@ def get_rewards_with_nulling(
     # and it was the only implementation, so the abstraction went with it. This function
     # now always takes the raw Hugging Face model.
 
+    if probe is not None:
+        # The nulled branch is exactly get_rewards_both's nulled reward (and shares its cache).
+        return get_rewards_both(model, tokenizer, texts, probe, batch_size, device, max_length,
+                                show_progress, null_alpha)[1]
+
+    # Without a probe: the model's own forward (HF pooling + head), uncached as before.
     model.eval()
     base_model = get_base_model(model)
-    score_head = get_score_head(model)
-
-    # Prepare probe for nulling
-    do_nulling = probe is not None
-
     all_scores = []
     n_batches = (len(texts) + batch_size - 1) // batch_size
-    
     logger.info("Processing %d texts in %d batches (tokenizing on-the-fly)...", len(texts), n_batches)
-    
     iterator = range(n_batches)
     if show_progress:
         iterator = tqdm(iterator, desc="Computing rewards", total=n_batches)
-    
     with torch.no_grad():
         for batch_idx in iterator:
             start = batch_idx * batch_size
             end = min(start + batch_size, len(texts))
-            batch_texts = texts[start:end]
-            
-            # Tokenize just this batch (handles both strings and pairs)
-            inputs = tokenize_inputs(
-                tokenizer,
-                batch_texts,
-                padding=True,
-                truncation=True,
-                max_length=max_length,
-                return_tensors="pt",
-            )
+            inputs = tokenize_inputs(tokenizer, texts[start:end], padding=True, truncation=True,
+                                     max_length=max_length, return_tensors="pt")
             input_device = next(base_model.parameters()).device
             inputs = {k: v.to(input_device) for k, v in inputs.items()}
-
-            if do_nulling:
-                # Get hidden states and null out probe direction
-                outputs = base_model(**inputs, output_hidden_states=True)
-                hidden_states = outputs.hidden_states[-1]
-
-                # Get last token hidden states.
-                # With device_map="auto", hidden_states may be on a different
-                # GPU than inputs, so index on hidden_states' own device.
-                attention_mask = inputs["attention_mask"]
-                last_token_indices = attention_mask.sum(dim=1) - 1
-                hs_device = hidden_states.device
-                last_hidden = hidden_states[
-                    torch.arange(hidden_states.size(0), device=hs_device),
-                    last_token_indices.to(hs_device),
-                ].float()
-
-                # Null out probe subspace
-                nulled_hidden = project_to_null_space(last_hidden, probe, alpha=null_alpha)
-
-                # score_head may be on a different GPU (device_map="auto"),
-                # so move the hidden state to match it.
-                score_device = score_head.weight.device
-                scores = score_head(
-                    nulled_hidden.to(score_device).to(hidden_states.dtype)
-                ).squeeze(-1)
-            else:
-                # Standard forward pass
-                outputs = model(**inputs)
-                scores = outputs.logits.squeeze(-1)
-            
-            all_scores.append(scores.cpu())
-    
+            all_scores.append(model(**inputs).logits.squeeze(-1).cpu())
     return torch.cat(all_scores, dim=0)
 
 
@@ -643,74 +713,11 @@ def get_rewards_both(
     # could intercept this call. MLX was removed once CUDA was validated on the cluster,
     # and it was the only implementation, so the abstraction went with it. This function
     # now always takes the raw Hugging Face model.
-
-    model.eval()
-    base_model = get_base_model(model)
-    score_head = get_score_head(model)
-
-    # Prepare probe for nulling
-    do_nulling = probe is not None
-
-    all_baseline_scores = []
-    all_nulled_scores = []
-    n_batches = (len(texts) + batch_size - 1) // batch_size
-    
-    logger.info("Processing %d texts in %d batches (tokenizing on-the-fly)...", len(texts), n_batches)
-    
-    iterator = range(n_batches)
-    if show_progress:
-        iterator = tqdm(iterator, desc="Computing rewards (baseline+nulled)", total=n_batches)
-    
-    with torch.no_grad():
-        for batch_idx in iterator:
-            start = batch_idx * batch_size
-            end = min(start + batch_size, len(texts))
-            batch_texts = texts[start:end]
-            
-            # Tokenize just this batch (handles both strings and pairs)
-            inputs = tokenize_inputs(
-                tokenizer,
-                batch_texts,
-                padding=True,
-                truncation=True,
-                max_length=max_length,
-                return_tensors="pt",
-            )
-            input_device = next(base_model.parameters()).device
-            inputs = {k: v.to(input_device) for k, v in inputs.items()}
-
-            # Always get hidden states so we can compute both scores
-            outputs = base_model(**inputs, output_hidden_states=True)
-            hidden_states = outputs.hidden_states[-1]
-
-            # Get last token hidden states.
-            # With device_map="auto", hidden_states may be on a different
-            # GPU than inputs, so index on hidden_states' own device.
-            attention_mask = inputs["attention_mask"]
-            last_token_indices = attention_mask.sum(dim=1) - 1
-            hs_device = hidden_states.device
-            last_hidden = hidden_states[
-                torch.arange(hidden_states.size(0), device=hs_device),
-                last_token_indices.to(hs_device),
-            ].float()
-
-            # score_head may be on a different GPU (device_map="auto")
-            score_device = score_head.weight.device
-
-            # Baseline score (no nulling)
-            baseline_scores = score_head(
-                last_hidden.to(score_device).to(hidden_states.dtype)
-            ).squeeze(-1)
-            all_baseline_scores.append(baseline_scores.cpu())
-
-            # Nulled score
-            if do_nulling:
-                nulled_hidden = project_to_null_space(last_hidden, probe, alpha=null_alpha)
-                nulled_scores = score_head(
-                    nulled_hidden.to(score_device).to(hidden_states.dtype)
-                ).squeeze(-1)
-            else:
-                nulled_scores = baseline_scores
-            all_nulled_scores.append(nulled_scores.cpu())
-    
-    return torch.cat(all_baseline_scores, dim=0), torch.cat(all_nulled_scores, dim=0)
+    #
+    # One forward pass per text (served from the embedding cache when attached), then the score head
+    # twice: the pooled state as-is, and with the probe subspace projected out.
+    if not texts:
+        empty = torch.zeros(0)
+        return empty, empty
+    hidden, state_dtype = _embed(model, tokenizer, texts, batch_size, max_length, show_progress)
+    return rewards_from_hidden(model, hidden, state_dtype, probe, null_alpha)
