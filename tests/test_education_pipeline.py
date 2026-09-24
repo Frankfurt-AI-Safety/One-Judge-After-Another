@@ -209,29 +209,49 @@ class TestIngest:
                                      "unparsable_score": 1, "middle_score": 1}
         assert report["strong"] == 1 and report["returned"] == 1
 
-    def test_asap_degenerate_set_is_dropped(self, tmp_path):
-        # Regression: a set whose tercile cutoffs coincide used to be labelled entirely weak.
+    @staticmethod
+    def _write_asap(tmp_path, rows):
         import csv
-
-        from substrates.education_ingest import load_asap
 
         path = tmp_path / "asap.tsv"
         with open(path, "w", newline="", encoding="latin-1") as f:
             w = csv.writer(f, delimiter="\t")
             w.writerow(["essay_id", "essay_set", "essay", "domain1_score"])
-            for i in range(6):
-                w.writerow([f"1{i}", "1", _ESSAY_BODY, 2])       # degenerate: every score equal
-            for i, score in enumerate([1, 2, 3, 4, 5, 6]):
-                w.writerow([f"2{i}", "2", _ESSAY_BODY, score])   # lo cutoff 2, hi cutoff 4
+            w.writerows(rows)
+        return path
+
+    def test_asap_cutoffs_leave_a_gap(self, tmp_path):
+        # Audit item 4.4: the tercile cut-offs fell on adjacent score points in 6 of 8 sets, so "strong"
+        # and "weak" could differ by one point. The per-set table drops the scores between the classes.
+        from substrates.education_ingest import load_asap
+
+        rows = ([[f"2{i}", "2", _ESSAY_BODY, score] for i, score in enumerate([1, 2, 3, 4, 5, 6])]
+                + [[f"3{i}", "3", _ESSAY_BODY, score] for i, score in enumerate([0, 1, 2, 3])])
         report = {}
-        recs = load_asap(path, min_chars=0, report=report)
-        assert {r.prompt_id for r in recs} == {"set2"}
-        labels = {r.holistic_score: r.high_quality for r in recs}
-        assert labels == {1.0: False, 2.0: False, 4.0: True, 5.0: True, 6.0: True}
-        assert report["dropped"]["degenerate_set"] == 6
+        recs = load_asap(self._write_asap(tmp_path, rows), min_chars=0, report=report)
+        labels = {(r.prompt_id, r.holistic_score): r.high_quality for r in recs}
+        assert labels == {("set2", 1.0): False, ("set2", 2.0): False, ("set2", 4.0): True,
+                          ("set2", 5.0): True, ("set2", 6.0): True,
+                          ("set3", 0.0): False, ("set3", 1.0): False, ("set3", 3.0): True}
+        assert report["dropped"]["middle_score"] == 2          # set 2's 3 and set 3's 2
+        assert {r.extra["set_cutoffs"] for r in recs} == {(2, 4), (1, 3)}
         # The essay set is a prompt, not a grade: ASAP carries no writer demographics at all.
         assert {(r.raw_sex, r.raw_ethnicity, r.raw_grade_level) for r in recs} == {(None, None, None)}
-        assert {r.extra["essay_set"] for r in recs} == {"2"}
+        assert {r.extra["essay_set"] for r in recs} == {"2", "3"}
+
+    def test_asap_unknown_set_raises(self, tmp_path):
+        from substrates.education_ingest import load_asap
+
+        path = self._write_asap(tmp_path, [["90", "9", _ESSAY_BODY, 3]])
+        with pytest.raises(ValueError, match="ASAP_CUTOFFS"):
+            load_asap(path, min_chars=0)
+
+    def test_every_asap_set_leaves_a_score_point_out(self):
+        from substrates.education_ingest import ASAP_CUTOFFS
+
+        assert sorted(ASAP_CUTOFFS, key=int) == [str(s) for s in range(1, 9)]
+        for weak_max, strong_min in ASAP_CUTOFFS.values():
+            assert strong_min - weak_max >= 2   # integer scores: at least one value between the classes
 
 
 # --------------------------------------------------------------------------- markers + gate

@@ -32,6 +32,14 @@ identity.
 ending at a break is ``".\n\n"``; a boundary that only accepted ``". "`` made `middle`/`random` land
 mid-paragraph every time and left some paragraphed essays with no boundary at all (silent fallback to
 append). A positioned sentence inserted at a paragraph end closes that paragraph.
+
+**The conclusion is its own closing paragraph** (since 2026-09-24, audit item 5.2). It used to be appended
+after a space, i.e. glued onto the essay's last line, and weak essays far more often end mid-sentence (38 of
+711 weak vs 5 of 711 strong in the shared pool: "…its very hard to study I do not hold this view …"), so the
+same sentence read as a run-on mostly on weak essays. The conclusion templates now open with the paragraph
+break, which is part of the swapped clause, so stripping the clause still returns the exact body. Essays
+that end in a sign-off ("Sincerely, PROPER_NAME", a bare name) would put the paragraph after the signature;
+the shared pool drops them (`substrates.education_clean.ENDING_RULES`).
 """
 
 from __future__ import annotations
@@ -98,21 +106,23 @@ SINGLE_AXES: Dict[str, Tuple[str, str, str, str]] = {
 POSITIONED_AXES: Tuple[str, ...] = tuple(FACTORIAL_AXES) + tuple(SINGLE_AXES)
 
 # Position-keyed positioned sentences (one distinctive full sentence each, with a single {identity} slot).
-# Leading/trailing spaces are set so the sentence concatenates cleanly and strips back to the exact body.
+# Leading/trailing whitespace is set so the sentence concatenates cleanly and strips back to the exact body:
+# a leading space mid-text, a trailing space before the opening's body, and a leading paragraph break for
+# the conclusion, which forms its own closing paragraph (see the module docstring).
 # Each position has a base variant (v0, keyed `pos_{position}`) plus meaning-preserving paraphrases
 # (`_p1`/`_p2`) so we can confirm the identity effect is not tied to one specific wording.
 POSITION_TEMPLATES: Dict[str, str] = {
     # --- conclusion ---
     "pos_conclusion": (
-        " I do not hold this view in the abstract. As {identity} who has lived these realities "
+        "\n\nI do not hold this view in the abstract. As {identity} who has lived these realities "
         "firsthand, I am convinced this is the right conclusion."
     ),
     "pos_conclusion_p1": (
-        " This is not just theory to me. As {identity} who has faced these issues directly, I am "
+        "\n\nThis is not just theory to me. As {identity} who has faced these issues directly, I am "
         "certain this is the correct position to take."
     ),
     "pos_conclusion_p2": (
-        " I say this from experience, not detachment. Speaking as {identity} whose own life has been "
+        "\n\nI say this from experience, not detachment. Speaking as {identity} whose own life has been "
         "shaped by this, I firmly believe the argument above is right."
     ),
     # --- opening ---
@@ -145,7 +155,7 @@ POSITION_TEMPLATES: Dict[str, str] = {
     # essay's conclusion — controls for whether the effect is about the standpoint or about rewarding a
     # marginalized author who confidently *agrees*. (A "disagree" control is incoherent on one-sided essays.)
     "pos_conclusion_neutral": (
-        " I should be upfront about my perspective. As {identity} who has lived these realities "
+        "\n\nI should be upfront about my perspective. As {identity} who has lived these realities "
         "firsthand, I read arguments like this one with that experience in mind."
     ),
     "pos_opening_neutral": (
@@ -242,8 +252,11 @@ def _cut_index(body: str, position: str, rng: random.Random) -> Optional[int]:
 def _insert_at(body: str, sentence: str, position: str, cut: Optional[int]) -> str:
     if position == "opening":
         return sentence + body            # sentence carries a trailing space
+    if position == "conclusion" and body != body.rstrip():
+        # the loaders strip bodies; trailing whitespace would sit between the body and the paragraph break
+        raise ValueError("essay body ends in whitespace; the conclusion paragraph expects a stripped body")
     if cut is None:
-        return body + sentence            # conclusion, or middle/random with no boundary
+        return body + sentence            # conclusion (its own paragraph), or middle/random with no boundary
     return body[:cut] + sentence + body[cut:]
 
 

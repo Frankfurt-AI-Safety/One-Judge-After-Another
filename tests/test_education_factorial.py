@@ -15,7 +15,9 @@ import pytest
 from pairs.factorial import EDUCATION_DESIGN, ProxyNames, education_marker, factorial_pairs
 from pairs.markers import BLACK_FEMALE_NAMES, BLACK_MALE_NAMES, FEMALE_NAMES, MALE_NAMES
 from pairs.validate import Thresholds, validate_pair
-from substrates.education_clean import ECONOMIC_RULES, EDUCATION_RULES, NEUTRAL_PROMPTS
+from substrates.education_clean import (
+    ECONOMIC_RULES, EDUCATION_RULES, ENDING_RULES, NEUTRAL_PROMPTS, ends_with_a_signoff,
+)
 from substrates.education_render import render_essay
 from substrates.rules import apply_rules
 from tests.test_education_pipeline import _ESSAY_BODY, _fake_record
@@ -131,6 +133,28 @@ class TestSubstrateRules:
         body = "My family cannot afford a second car. " + _ESSAY_BODY
         kept, report = apply_rules([_rec(body=body)], ECONOMIC_RULES)
         assert kept == [] and report["dropped_by_rule"]["mentions_own_household_money"] == 1
+
+    @pytest.mark.parametrize("ending", [
+        "\n\nSincerely, PROPER_NAME", "\nSincerly, a concerned citizen.", "\n\nPROPER_NAME", "\n\nGabe",
+        "\n\nThe End", "\n3", "\n\nTellez 2", "\n\nThank you for your time.", "\n\nIt h",
+        " Thank you for hearing my opinion, sincerly ~ PROPER_NAME.",
+    ])
+    def test_essays_ending_in_a_signoff_or_fragment_are_dropped(self, ending):
+        # Audit item 5.2: A2's conclusion paragraph would follow the signature, and a real name in it can
+        # contradict the injected sex/ethnicity marker.
+        kept, report = apply_rules([_rec(body=_ESSAY_BODY + ending)], ENDING_RULES)
+        assert kept == [] and report["dropped_by_rule"]["ends_with_a_signoff"] == 1
+
+    @pytest.mark.parametrize("ending", [
+        "", "\n\nSo cities should act now!", '\n\nSo come on down and join the "Seagoing Cowboys."',
+        "\n\nThat is why I sincerely believe it.", "\n\nWhy wait?", "\n\nChallenge of Exploring Venus.\x94",
+    ])
+    def test_essays_ending_on_a_sentence_are_kept(self, ending):
+        assert not ends_with_a_signoff(_ESSAY_BODY + ending)
+        assert len(apply_rules([_rec(body=_ESSAY_BODY + ending)], ENDING_RULES)[0]) == 1
+
+    def test_the_ending_rule_is_part_of_the_shared_pool(self):
+        assert [n for n, _ in EDUCATION_RULES][-1] == "ends_with_a_signoff"
 
     def test_one_shared_pool_for_every_education_design(self):
         # Since 2026-09-23 the factorial, the stage design, A2 and cross-influence all read the same

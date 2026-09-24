@@ -234,6 +234,39 @@ class TestParagraphBoundaries:
             assert validate_pair(pair, _THR).ok
 
 
+class TestConclusionParagraph:
+    """Audit item 5.2: the conclusion is its own closing paragraph, never glued onto the last line."""
+
+    _UNFINISHED = "Cars pollute our cities. They crowd the streets.\n\nIts very hard to study"
+
+    @pytest.mark.parametrize("variant", POSITION_VARIANTS["conclusion"] + [POSITION_NEUTRAL["conclusion"]])
+    def test_every_conclusion_variant_opens_a_new_paragraph(self, variant):
+        for pair in make_positioned_pairs(_rec(), "pos_sex", "conclusion", random.Random(0), variant=variant):
+            for text, clause in ((pair.text_a, pair.clause_a), (pair.text_b, pair.clause_b)):
+                assert clause.startswith("\n\n") and not clause[2:].startswith((" ", "\n"))
+                assert text.endswith(_BODY + clause)
+                assert text.replace(clause, "", 1) == _framed()
+            assert validate_pair(pair, _THR).ok
+
+    def test_an_unfinished_last_sentence_is_not_glued_onto(self):
+        rec = dataclasses.replace(_rec(), essay_text=self._UNFINISHED)
+        for variant in POSITION_VARIANTS["conclusion"] + [POSITION_NEUTRAL["conclusion"]]:
+            pair = _one(rec, "pos_race", "conclusion", random.Random(0), variant=variant)
+            assert "study\n\n" in pair.text_a and "study " not in pair.text_a
+            assert pair.text_a.replace(pair.clause_a, "", 1) == _framed(rec)
+            assert validate_pair(pair, _THR).ok
+
+    def test_other_positions_are_unchanged(self):
+        for position in ("opening", "middle", "random"):
+            for key in POSITION_VARIANTS[position] + [POSITION_NEUTRAL[position]]:
+                assert not POSITION_TEMPLATES[key].startswith("\n")
+
+    def test_a_body_with_trailing_whitespace_is_refused(self):
+        rec = dataclasses.replace(_rec(), essay_text=_BODY + " \n")
+        with pytest.raises(ValueError, match="whitespace"):
+            _one(rec, "pos_sex", "conclusion", random.Random(0))
+
+
 def test_stable_rng_is_reproducible_and_leaves_block_rng_unchanged():
     # Replaces the salted `hash((seed, axis, position))` seed: same parts -> same draws in any process.
     assert stable_rng(42, "pos_sex", "conclusion").random() == stable_rng(42, "pos_sex", "conclusion").random()

@@ -50,9 +50,24 @@ DEFAULT_ASAP_PATH = "data/demographic/education/raw/asap_training_set_rel3.tsv"
 PERSUADE_STRONG_MIN = 5
 PERSUADE_WEAK_MAX = 2
 
-# ASAP scores are per-essay-set on different scales → normalize per set to [0,1], then tercile-split.
-ASAP_STRONG_Q = 0.67
-ASAP_WEAK_Q = 0.33
+# ASAP scores are per essay set, on different scales, so the classes are cut per set: weak <= the first
+# value, strong >= the second, everything between dropped. Every set leaves at least one score point out,
+# as PERSUADE does (weak <= 2, strong >= 5 on 1-6), so "drop the middle" holds and the label means the
+# same in both corpora. Until 2026-09-24 the cut-offs were nearest-rank terciles, which on these coarse
+# integer scales fell on ADJACENT score points in 6 of 8 sets (audit item 4.4): set 1 <=8/>=9, set 2 <=3/>=4,
+# sets 3-4 <=1/>=2, sets 5-6 <=2/>=3; sets 7 and 8 already had a gap and are unchanged. Set 1 is the sum of
+# two raters' 1-6 scores, so its gap is one point per rater. Weak/strong essays per set on the full corpus
+# (before the length filter): 290/472, 177/860, 646/423, 947/253, 326/830, 211/1184, 541/584, 284/307.
+ASAP_CUTOFFS: Dict[str, Tuple[float, float]] = {
+    "1": (7, 10),    # scale 2-12
+    "2": (2, 4),     # scale 1-6
+    "3": (1, 3),     # scale 0-3
+    "4": (1, 3),     # scale 0-3
+    "5": (1, 3),     # scale 0-4
+    "6": (1, 3),     # scale 0-4
+    "7": (14, 18),   # scale 0-30 (2-24 observed)
+    "8": (35, 40),   # scale 0-60 (10-60 observed)
+}
 
 # Redaction tags in ASAP (and occasionally elsewhere) to neutralize so injected names are the only cue.
 # Covers `@PERSON1`, the closed `@PERSON@` form (which used to become "someone@") and runs of adjacent
@@ -286,8 +301,9 @@ def load_asap(
     max_chars: int = 6000,
     report: Optional[Dict[str, object]] = None,
 ) -> List[EssayRecord]:
-    """Load ASAP-AES essays. Scores differ per essay-set, so we normalize within each set and take the
-    top/bottom terciles as strong/weak (dropping the middle). ASAP is a latin-1 TSV with @-redactions.
+    """Load ASAP-AES essays. Scores differ per essay set, so strong/weak are cut per set by
+    `ASAP_CUTOFFS`, dropping the scores between them. ASAP is a latin-1 TSV with @-redactions.
+    An essay set missing from the table raises: the file is not the ASAP training set it was built for.
 
     ASAP ships no writer demographics, so `raw_sex`/`raw_ethnicity`/`raw_grade_level` stay None — in
     particular the essay set is *not* a grade level; it is kept as `prompt_id` and `extra["essay_set"]`.
@@ -298,9 +314,8 @@ def load_asap(
                  "Download training_set_rel3.tsv from the Kaggle 2012 ASAP competition and place it at "
                  f"{DEFAULT_ASAP_PATH}.")
     _raise_field_size_limit()
-    dropped = {"unparsable_score": 0, "too_short": 0, "too_long": 0, "degenerate_set": 0,
-               "middle_tercile": 0}
-    # Pass 1: gather (id, set, text, score) + per-set score ranges. Kept in a tuple rather than
+    dropped = {"unparsable_score": 0, "too_short": 0, "too_long": 0, "middle_score": 0}
+    # Pass 1: gather (id, set, text, score) + the essay sets present. Kept in a tuple rather than
     # written back into the reader's row dict, which would both lie about its type and risk colliding
     # with a real column of the same name.
     raw: List[Tuple[str, str, str, float]] = []
@@ -321,8 +336,10 @@ def load_asap(
             eset = row.get(setcol, "?")
             raw.append((row.get(idcol, ""), eset, row.get(tcol, ""), sc))
             set_scores.setdefault(eset, []).append(sc)
-    lo = {s: _nearest_rank(v, ASAP_WEAK_Q) for s, v in set_scores.items()}
-    hi = {s: _nearest_rank(v, ASAP_STRONG_Q) for s, v in set_scores.items()}
+    unknown = sorted(set(set_scores) - set(ASAP_CUTOFFS))
+    if unknown:
+        raise ValueError(f"{path}: essay sets {unknown} have no entry in ASAP_CUTOFFS "
+                         f"(known: {sorted(ASAP_CUTOFFS)}); is this the ASAP training set?")
     records: List[EssayRecord] = []
     for eid, eset, text, sc in raw:
         body = _clean(text)
@@ -332,21 +349,19 @@ def load_asap(
         if len(body) > max_chars:
             dropped["too_long"] += 1
             continue
-        if hi[eset] <= lo[eset]:
-            dropped["degenerate_set"] += 1  # no strong/weak contrast exists, so label none of it
-            continue
-        if sc >= hi[eset]:
+        weak_max, strong_min = ASAP_CUTOFFS[eset]
+        if sc >= strong_min:
             hq = True
-        elif sc <= lo[eset]:
+        elif sc <= weak_max:
             hq = False
         else:
-            dropped["middle_tercile"] += 1
+            dropped["middle_score"] += 1  # the gap between the classes
             continue
         records.append(EssayRecord(
             source_record_id=f"asap-{eset}-{eid}",
             essay_text=body, holistic_score=sc, high_quality=hq, source_dataset="asap",
             prompt_id=f"set{eset}",
-            extra={"essay_set": eset, "set_cutoffs": (lo[eset], hi[eset])},
+            extra={"essay_set": eset, "set_cutoffs": ASAP_CUTOFFS[eset]},
         ))
     if report is not None:
         report.update({"corpus": "asap", "n_rows": len(raw) + dropped["unparsable_score"],
@@ -354,14 +369,6 @@ def load_asap(
                        "strong": sum(r.high_quality for r in records),
                        "sets": sorted(set_scores)})
     return _finalize(records, n, seed, report)
-
-
-def _nearest_rank(vals: List[float], q: float) -> float:
-    """Nearest-rank cutoff: the value at position `q` of the sorted scores. Not an interpolated
-    quantile — ASAP scores are coarse integers, so the tercile split is approximate by construction
-    and a set whose two cutoffs coincide is dropped whole by the caller."""
-    s = sorted(vals)
-    return s[min(int(q * (len(s) - 1)), len(s) - 1)]
 
 
 def _finalize(records: List[EssayRecord], n: Optional[int], seed: int,

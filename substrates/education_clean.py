@@ -22,7 +22,7 @@ school life draw first-person pupil talk in 46–67% of essays, while the source
 ("The Face on Mars", "Exploring Venus", "Driverless cars", …) are essentially free of it (0–10%).
 Nothing about arguing over the electoral college presupposes a child wrote it.
 
-So the rules run in three steps, all reported through `substrates/rules.py`:
+So the rules run in four steps, all reported through `substrates/rules.py`:
 
 1. **Prompt selection** (``prompt_presupposes_a_pupil``) — keep only the stage-neutral prompts. This
    is selection, not plausibility: those essays are fine, they just cannot carry a doctoral pole.
@@ -33,6 +33,8 @@ So the rules run in three steps, all reported through `substrates/rules.py`:
    firsthand" is incoherent on an essay that says "my teacher won't let us", and that is the
    `pos_control` pole, the axis whose job is to prove an effect is identity-specific.
 3. **The household-money rule** for the economic factor (``mentions_own_household_money``).
+4. **The ending rule** (``ends_with_a_signoff``, since 2026-09-24): the essay must end on a sentence, not a
+   sign-off or a fragment (see `ENDING_RULES`).
 
 "college"/"university" mentions are deliberately *not* a rule: a pupil writing "when I go to college"
 is plausible, and so is a doctoral candidate mentioning a university.
@@ -110,6 +112,33 @@ ECONOMIC_RULES: Tuple[Rule, ...] = (
     ("mentions_own_household_money", lambda r: bool(_OWN_MONEY_RE.search(r.essay_text))),
 )
 
+# --- how the essay ends --------------------------------------------------------------------------------
+# About 4% of essays end in a sign-off or a fragment instead of a sentence of the argument: "Sincerely,
+# PROPER_NAME", a bare "PROPER_NAME", a real first name or surname with a page number ("Gabe", "Tellez 2"),
+# "The End", a stray title, a cut-off line ("It h"). A2's conclusion paragraph would follow the signature,
+# and a real name in a signature can contradict the sex or ethnicity marker A1 injects. The rate is about the
+# same in both classes (4.1% of weak, 4.5% of strong essays before balancing).
+_CLOSING_RE = re.compile(
+    r"^\W*(?:sincerely|sincerly|regards|best regards|kind regards|respectfully|yours truly|"
+    r"yours sincerely|thank you|thanks|signed)\b|,\s*sincere?ly\b", re.IGNORECASE)
+_CLOSING_QUOTES = "\"')\u201d\u2019\x94"   # incl. a closing quote mis-decoded from cp1252
+
+
+def ends_with_a_signoff(text: str) -> bool:
+    """True if the last non-empty line opens with a closing formula ("Sincerely", "Thank you", …) or is a
+    fragment: at most four words without terminal punctuation (closing quotes ignored)."""
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    if not lines:
+        return False
+    last = lines[-1]
+    return bool(_CLOSING_RE.search(last)) or (
+        len(last.split()) <= 4 and not last.rstrip(_CLOSING_QUOTES).endswith((".", "!", "?")))
+
+
+ENDING_RULES: Tuple[Rule, ...] = (
+    ("ends_with_a_signoff", lambda r: ends_with_a_signoff(r.essay_text)),
+)
+
 _SOURCES = {"persuade": (load_persuade, DEFAULT_PERSUADE_PATH),
             "asap": (load_asap, DEFAULT_ASAP_PATH)}
 
@@ -127,8 +156,8 @@ def stage_rules(prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS) -> Tuple[R
 
 
 def education_rules(prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS) -> Tuple[Rule, ...]:
-    """Every rule the shared pool applies: prompt selection, pupil cues, household money."""
-    return stage_rules(prompts) + ECONOMIC_RULES
+    """Every rule the shared pool applies: prompt selection, pupil cues, household money, the ending."""
+    return stage_rules(prompts) + ECONOMIC_RULES + ENDING_RULES
 
 
 EDUCATION_RULES: Tuple[Rule, ...] = education_rules()
