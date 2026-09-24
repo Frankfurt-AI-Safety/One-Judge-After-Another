@@ -21,7 +21,7 @@ trust_remote_code: true
 # excluded from evaluation; cells.jsonl is read from the same directory.
 dataset_source: data/demographic/credit/pairs.jsonl
 dataset_name: credit_crossmarker
-probe_size: 300  # TODO(pilot): counts pairs, not records (audit item 4.1)
+probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
 split_seed: 42
 
 batch_size: 8

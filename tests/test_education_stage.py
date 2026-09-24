@@ -159,6 +159,14 @@ class TestSharedStageSample:
         assert len({frozenset(s) for s in samples.values()}) == 1  # identical sample in every cell
         assert rep["blocks_kept"] == rep["pairs_per_cell"] == 15
 
+    def test_pair_rows_carry_real_fields(self):
+        # The probe_records split stratifies on real_fields["high_quality"] (audit item 4.1).
+        from substrates.education_ingest import real_fields
+
+        rows, _ = self._rows()
+        assert rows and all(r["real_fields"] == real_fields(_rec(r["source_record_id"])) for r in rows)
+        assert "high_quality" in rows[0]["real_fields"]
+
     def test_the_duplicate_consistency_check_is_on_identical_items(self):
         rows, _ = self._rows()
         head = {(r["source_record_id"], r["template_id"]): r["text_b"] for r in rows

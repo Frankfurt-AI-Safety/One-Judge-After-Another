@@ -156,6 +156,7 @@ class DemographicBiasExperiment(BiasExperiment):
             split_seed=self.config.split_seed,
             max_test_examples=self.config.max_test_examples,
             prompt=extra.get("prompt", spec.assessment_prompt),
+            probe_records=self.config.probe_records,
         )
 
     def _compute_metrics(

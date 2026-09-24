@@ -256,6 +256,16 @@ def _get(row: Dict[str, str], col: Optional[str]) -> Optional[str]:
 _PERSUADE_EXTRA_COLS = ("ell_status", "economically_disadvantaged", "student_disability_status")
 
 
+def real_fields(record: EssayRecord) -> Dict[str, object]:
+    """The writer's REAL attributes and the quality label, as the generators write them into
+    cells.jsonl and onto every pair row. Never rendered: covariates for the validity checks (does an
+    injected marker move the score differently on essays actually written by that group?) and the
+    stratum of the probe_records split. One definition for the A1 factorial, the stage design and A2."""
+    return {"sex": record.raw_sex, "ethnicity": record.raw_ethnicity,
+            "grade_level": record.raw_grade_level, "high_quality": record.high_quality,
+            **{k: record.extra.get(k) for k in _PERSUADE_EXTRA_COLS}}
+
+
 def _persuade_extra(row: Dict[str, str], fieldnames: List[str]) -> Dict[str, object]:
     """The remaining real writer attributes. Same rule as the `raw_*` fields: never rendered."""
     lut = {c.lower(): c for c in fieldnames}

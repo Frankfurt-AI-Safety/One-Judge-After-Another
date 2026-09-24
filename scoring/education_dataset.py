@@ -33,3 +33,4 @@ class EducationDemographicDataset(MatchedPairDataset):
     # its two templates). It was left ungrouped only so existing splits would not shift; every education
     # number is stale anyway (see the write-up's \P marks), so that reason is gone. Same fix as credit/cv.
     GROUP_BY_RECORD = True
+    QUALITY_FIELD = "high_quality"

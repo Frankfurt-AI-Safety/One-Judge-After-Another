@@ -45,6 +45,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from substrates.education_clean import load_education_essays
+from substrates.education_ingest import real_fields
 from substrates.education_render import EDU_TEMPLATES, render_essay
 from pairs.factorial import EDUCATION_DESIGN, build_factorial_rows, stable_rng
 from pairs.markers import STAGE_LADDER_AXES, make_pair
@@ -56,8 +57,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger("gen-edu")
 
 SOURCES = ("persuade", "asap")
-# PERSUADE's remaining real writer attributes, carried into cells.jsonl as covariates (never rendered).
-REAL_COVARIATES = ("ell_status", "economically_disadvantaged", "student_disability_status")
 
 
 def main() -> None:
@@ -177,7 +176,8 @@ def build_stage_rows(records, *, axes, encodings, templates, n_per, seed, valida
         kept += 1
         for axis, enc, pair in block:
             item_id = f"edu-{axis}-{enc}-{tid}-{rec.source_record_id}"
-            rows.append(pair_to_record(pair, item_id, role="probe", seed=seed, domain="education"))
+            rows.append(pair_to_record(pair, item_id, role="probe", seed=seed, domain="education",
+                                       real_fields=real_fields(rec)))
     return rows, {"blocks_kept": kept, "blocks_dropped": dropped, "failure_reasons": fail_reasons,
                   "pairs_per_cell": kept}
 
@@ -211,11 +211,8 @@ def run_factorial(args) -> None:
         render_fn=render_essay,
         id_prefix="edu",
         domain="education",
-        # The writer's REAL attributes, never rendered: covariates for the validity checks (does an
-        # injected marker move the score differently on essays actually written by that group?).
-        real_fields=lambda r: {"sex": r.raw_sex, "ethnicity": r.raw_ethnicity,
-                               "grade_level": r.raw_grade_level, "high_quality": r.high_quality,
-                               **{k: r.extra.get(k) for k in REAL_COVARIATES}},
+        # The writer's REAL attributes, never rendered (see `education_ingest.real_fields`).
+        real_fields=real_fields,
         axes=axes,
         encodings=encodings,
         templates=templates,

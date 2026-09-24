@@ -227,11 +227,14 @@ def block_fits(domain: str, settings: Dict[str, Any], format_fn: Callable[[str, 
 # --------------------------------------------------------------------------- directions --------------
 def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodings: Sequence[str], *,
                       probe_size: int, split_seed: int, batch_size: int, device: str, max_length: int,
-                      reliability_seed: int = 0
+                      reliability_seed: int = 0, probe_records: Optional[int] = None
                       ) -> Tuple[Dict[str, Dict[str, Any]], Set[str], Dict[str, Any]]:
     """The direct arm's difference-of-means direction for every (encoding, axis) the factorial has pairs
-    for, the union of their probe records, and per-direction metadata (incl. a split-half reliability
-    over the probe records, from the same states — embedding-cache hits)."""
+    for, the union of their probe records, and per-direction metadata (incl. the split report and a
+    split-half reliability over the probe records, from the same states — embedding-cache hits).
+
+    With ``probe_records`` every direction rests on that many records, stratified by quality and the
+    same for every axis (the split ignores the axis), so the union is those records."""
     import torch
 
     from probes.cross_marker_directions import split_half_cosine
@@ -245,7 +248,7 @@ def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodin
             if not dom.factorial.axis_pairs(axis, encoding):
                 continue
             ds = dom.dataset_cls(source, axis=axis, encoding=encoding, probe_size=probe_size,
-                                 split_seed=split_seed)
+                                 split_seed=split_seed, probe_records=probe_records)
             pairs = ds.get_probe_pairs(tokenizer)
             if not pairs:
                 raise ValueError(f"{dom.name}/{axis}/{encoding}: no probe pairs in {source}")
@@ -263,6 +266,7 @@ def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodin
             directions.setdefault(encoding, {})[axis] = probe
             probe_ids |= ids
             meta[f"{encoding}/{axis}"] = {"n_pairs": len(pairs), "n_records": len(ids),
+                                          "split": ds.split_report(),
                                           "probe_accuracy": m.get("probe_accuracy"),
                                           "separation": m.get("separation"),
                                           "split_half_cosine": split_half_cosine(contrasts, reliability_seed)}
@@ -493,6 +497,13 @@ def print_report(summary: Dict[str, Any]) -> None:
     ref = summary.get("credit_reference")
     if ref:
         print(f"credit common-sense reference AUC {ref['common_sense_auc']:.3f} (read AUC(D) against it)")
+    probes = summary.get("probe_directions", {})
+    if probes:
+        records = sorted({v["n_records"] for v in probes.values()})
+        strata = {k: v["split"].get("probe_strata") for k, v in probes.items()}
+        print(f"direct directions: {'/'.join(map(str, records))} probe records per direction "
+              f"({summary['selection']['excluded_probe_records']} excluded from evaluation); "
+              f"strata (strong=True) {next(iter(strata.values()))}")
     print("=" * 118)
 
 
@@ -516,6 +527,8 @@ def main() -> None:
     ap.add_argument("--no-placement-check", action="store_true", help="Skip the marker-in-response side")
     ap.add_argument("--directions", default=None,
                     help=f"Comma-separated subset of {','.join(DIRECTION_SOURCES)}, or 'none'")
+    ap.add_argument("--probe-records", type=int, default=None,
+                    help="Overrides the config's probe_records (records per direct direction)")
     ap.add_argument("--n-folds", type=int, default=None)
     ap.add_argument("--n-boot", type=int, default=None)
     ap.add_argument("--seed", type=int, default=None)
@@ -528,6 +541,8 @@ def main() -> None:
     cfg = ExperimentConfig.from_yaml(args.config)
     if args.device:
         cfg.device = args.device
+    if args.probe_records is not None:
+        cfg.probe_records = args.probe_records
     dom = get_domain(cfg.extra.get("domain", "credit"))
     design = dom.factorial
     split = lambda s: [x.strip() for x in s.split(",") if x.strip()] if s else None
@@ -558,7 +573,7 @@ def main() -> None:
         direct_dirs, probe_ids, probe_meta = direct_directions(
             model, tok, dom, source, settings["encodings"], probe_size=cfg.probe_size,
             split_seed=cfg.split_seed, batch_size=cfg.batch_size, device=cfg.device,
-            max_length=cfg.max_length, reliability_seed=settings["seed"])
+            max_length=cfg.max_length, reliability_seed=settings["seed"], probe_records=cfg.probe_records)
 
     format_fn = lambda prompt, response: format_conversation(tok, prompt, response)
     fits = block_fits(dom.name, settings, format_fn, token_counter(tok), cfg.max_length)
@@ -602,7 +617,8 @@ def main() -> None:
     cache = getattr(model, "_onejudge_embedding_cache", None)
     summary = {
         "model": cfg.model_path, "domain": dom.name, "settings": {**settings, "templates": templates},
-        "max_length": cfg.max_length, "cells_path": str(path), "cells_report": cells_report,
+        "max_length": cfg.max_length, "probe_records": cfg.probe_records,
+        "cells_path": str(path), "cells_report": cells_report,
         "direct_manifest": source, "probe_directions": probe_meta,
         "selection": selection,
         "records": {"strong": [r for r, b in selected.items() if b[0].is_strong(dom.quality_field)],
@@ -616,8 +632,9 @@ def main() -> None:
         "alpha_sweep": sweeps,
         "credit_reference": credit_reference(dom, selected),
         "caveats": [
-            "Direct probe directions are fitted on probe_size PAIRS (~38 records per single axis at 300); "
-            "audit item 4.1 (probe size in records) is still open.",
+            "Direct probe directions are fitted on probe_records records per direction, stratified by "
+            "quality and shared by every axis (probe_directions[*].split); none of them is evaluated. "
+            "If probe_records is None they are counted in PAIRS (probe_size), ~38 records per single axis.",
             "Last-token projection only: an RM that also reads the prompt elsewhere (QRM's gate) keeps a "
             "second pathway.",
             "Directions fitted on this design (prompt, interaction, unfair) are cross-fitted for nulling; "

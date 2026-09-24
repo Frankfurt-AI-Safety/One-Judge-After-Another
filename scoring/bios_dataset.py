@@ -33,3 +33,4 @@ class BiosDemographicDataset(MatchedPairDataset):
     # not shift; every hiring number is stale anyway (the write-up's \S marks). Same fix as credit.
     # (The 2026-09-17 working notes already claimed this was done; it was not, until now.)
     GROUP_BY_RECORD = True
+    QUALITY_FIELD = "qualified"

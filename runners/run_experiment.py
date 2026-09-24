@@ -87,6 +87,7 @@ def build_config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         dataset_name=args.dataset,
         dataset_class=dataset_class,
         probe_size=args.probe_size,
+        probe_records=args.probe_records,
         max_test_examples=args.max_examples,
         split_seed=args.split_seed,
         null_alpha=args.null_alpha,
@@ -126,6 +127,8 @@ def main():
                         help="Device: auto|cuda|cuda:N|cpu (default: auto — CUDA if present, else CPU)")
     parser.add_argument("--null-alpha", type=float, default=1.0, help="Nullification strength")
     parser.add_argument("--probe-size", type=int, default=500, help="Probe training size")
+    parser.add_argument("--probe-records", type=int, default=None,
+                        help="Probe records (record-grouped datasets); overrides the config's probe_records")
     parser.add_argument("--max-examples", type=int, default=None, help="Max test examples")
     parser.add_argument("--split-seed", type=int, default=42, help="Random seed")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
@@ -171,6 +174,8 @@ def main():
             config.null_alpha = args.null_alpha
         if args.probe_size != 500:
             config.probe_size = args.probe_size
+        if args.probe_records is not None:
+            config.probe_records = args.probe_records
         if args.max_examples is not None:
             config.max_test_examples = args.max_examples
     else:

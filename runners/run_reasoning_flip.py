@@ -43,7 +43,8 @@ PREMISES = {"parental_leave": "family_status", "intersection": "intersection", "
 
 def _probe(exp, cfg, dom, axis):
     ds = dom.dataset_cls(cfg.dataset_source, axis=axis, encoding="explicit",
-                         probe_size=cfg.probe_size, split_seed=cfg.split_seed)
+                         probe_size=cfg.probe_size, split_seed=cfg.split_seed,
+                         probe_records=cfg.probe_records)
     probe, _ = build_probe_direction(exp.model, exp.tokenizer, ds.get_probe_pairs(exp.tokenizer),
                                      batch_size=cfg.batch_size, device=cfg.device, max_length=cfg.max_length)
     return probe

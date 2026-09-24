@@ -30,6 +30,23 @@ class TestRegistry:
     def test_quality_field_names_the_is_strong_label(self):
         for name, field in (("credit", "credit_good"), ("cv", "qualified"), ("education", "high_quality")):
             assert get_domain(name).quality_field == field
+            # the probe_records split stratifies on the same label
+            assert get_domain(name).dataset_cls.QUALITY_FIELD == field
+
+    def test_every_demographic_config_sizes_its_probe_in_records(self):
+        # Audit item 4.1: every demographic config reads a record-grouped manifest, so its probe split
+        # is counted in records; probe_size (pairs) would leave the record count to the design.
+        from pathlib import Path
+
+        import yaml
+
+        from scoring.experiment import ExperimentConfig
+        paths = sorted(Path("configs").glob("demographic_*.yaml"))
+        assert paths
+        for path in paths:
+            assert "probe_size" not in yaml.safe_load(path.read_text()), path.name
+            n = ExperimentConfig.from_yaml(path).probe_records
+            assert isinstance(n, int) and n > 0, path.name
 
     def test_is_strong_reads_right_field(self):
         cv = get_domain("cv")

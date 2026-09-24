@@ -21,11 +21,15 @@ formatted with the target RM's own chat template (and falls back to pair-format 
 text is presented as the assistant response to the domain's fixed neutral assessment prompt; the
 demographic marker lives inside that response, so swapping A↔B changes only the marker.
 
-A subclass sets three things: `NAME_PREFIX`, `DEFAULT_PROMPT` and `GROUP_BY_RECORD`. The
-deterministic hash split (inherited from `ProbeDataset`) puts ~`probe_size` pairs in the probe split
-and the rest in the eval split. With `GROUP_BY_RECORD` it is grouped by `source_record_id`, so a
-record whose pairs would straddle probe and eval cannot leak its content into the evaluation of its
-own direction. Credit needs this: the factorial design cuts several pairs from each record.
+A subclass sets `NAME_PREFIX`, `DEFAULT_PROMPT`, `GROUP_BY_RECORD` and `QUALITY_FIELD`. The
+deterministic hash split (inherited from `ProbeDataset`) is grouped by `source_record_id` under
+`GROUP_BY_RECORD`, so a record whose pairs would straddle probe and eval cannot leak its content into
+the evaluation of its own direction; every factorial domain needs this, since the design cuts several
+pairs from each record. The probe split is sized in **records** (`probe_records`), stratified by the
+record's quality label (`real_fields[QUALITY_FIELD]`, written onto every pair row by the generators),
+so the directions rest on a known number of records with the pool's strong/weak mix. `probe_size`
+(pairs) remains for ungrouped use; on a grouped split it fixes the number of records only through the
+pairs each record contributes (8 per single axis, 2 for the intersection: 300 pairs were ~38 records).
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ class MatchedPairDataset(ProbeDataset):
     NAME_PREFIX: str = ""       # e.g. "credit_demographic"
     DEFAULT_PROMPT: str = ""    # the domain's assessment prompt
     GROUP_BY_RECORD: bool = False
+    QUALITY_FIELD: Optional[str] = None   # the `real_fields` key the probe_records split stratifies on
     GENERATOR: str = "the domain's runners/generate_*.py"
 
     def __init__(
@@ -60,11 +65,12 @@ class MatchedPairDataset(ProbeDataset):
         split_seed: int = 42,
         max_test_examples: Optional[int] = None,
         prompt: Optional[str] = None,
+        probe_records: Optional[int] = None,
     ):
         if not self.NAME_PREFIX or not self.DEFAULT_PROMPT:
             raise TypeError(f"{type(self).__name__} must set NAME_PREFIX and DEFAULT_PROMPT")
         super().__init__(source=source, probe_size=probe_size, split_seed=split_seed,
-                         max_test_examples=max_test_examples)
+                         max_test_examples=max_test_examples, probe_records=probe_records)
         self.axis = axis
         self.encoding = encoding
         self.prompt = self.DEFAULT_PROMPT if prompt is None else prompt
@@ -100,6 +106,18 @@ class MatchedPairDataset(ProbeDataset):
 
     def _get_group_key(self, example: Any) -> Optional[str]:
         return example["source_record_id"] if self.GROUP_BY_RECORD else None
+
+    def _get_stratum_key(self, example: Any) -> Optional[bool]:
+        """The record's quality label (strong/weak), which the probe_records split stratifies on."""
+        if self.QUALITY_FIELD is None:
+            return None
+        fields = example.get("real_fields") or {}
+        if self.QUALITY_FIELD not in fields:
+            raise ValueError(
+                f"{self.source}: pair rows carry no real_fields[{self.QUALITY_FIELD!r}], which the "
+                f"probe_records split stratifies on; the manifest predates it. Regenerate it:\n"
+                f"  python {self.GENERATOR}")
+        return bool(fields[self.QUALITY_FIELD])
 
     def probe_record_ids(self) -> Set[str]:
         """The records whose pairs sit in the probe split, i.e. the records a direction built from this
@@ -140,7 +158,5 @@ class CreditDemographicDataset(MatchedPairDataset):
     NAME_PREFIX = "credit_demographic"
     DEFAULT_PROMPT = ASSESSMENT_PROMPT
     GROUP_BY_RECORD = True
+    QUALITY_FIELD = "credit_good"
     GENERATOR = "runners/generate_credit.py"
-    # TODO(cluster): `probe_size` counts pairs, and each record contributes 8 pairs per single axis, so
-    # the configs' 300 pairs are only ~38 records. Raise it once cluster runtimes are measured (see the
-    # note in configs/demographic_credit_*.yaml).

@@ -294,6 +294,120 @@ class TestGroupedSplit:
         assert BiosDemographicDataset("unused", axis="sex", encoding="explicit").prompt == BIOS_ASSESSMENT_PROMPT
 
 
+# --------------------------------------------------------------------------- probe split in records
+class TestProbeRecords:
+    """Audit item 4.1: the probe split is sized in records, stratified by quality, shared by every axis."""
+
+    N_RECORDS = 50   # 35 strong (credit_good) / 15 weak
+
+    def _manifest(self, tmp_path, n_records=N_RECORDS, encodings=("explicit",)):
+        from runners.generate_credit import build_dataset
+
+        recs = [_rec(f"german-{i:04d}", credit_amount_dm=1000 + i, credit_good=i % 10 < 7)
+                for i in range(n_records)]
+        rows, _, _ = build_dataset(recs, encodings=encodings)
+        path = tmp_path / "pairs.jsonl"
+        path.write_text("\n".join(json.dumps(r) for r in rows))
+        return path
+
+    def _ds(self, path, axis="sex", encoding="explicit", n=20, **kw):
+        from scoring.pair_dataset import CreditDemographicDataset
+
+        ds = CreditDemographicDataset(str(path), axis=axis, encoding=encoding, probe_records=n,
+                                      split_seed=kw.pop("split_seed", 42), **kw)
+        ds._ensure_loaded()
+        return ds
+
+    @staticmethod
+    def _records(ds, indices):
+        return {ds._raw_data[i]["source_record_id"] for i in indices}
+
+    def test_exactly_n_records_stratified_by_quality(self, tmp_path):
+        ds = self._ds(self._manifest(tmp_path), n=20)
+        probe, test = self._records(ds, ds._probe_indices), self._records(ds, ds._test_indices)
+        assert len(probe) == 20 and not probe & test and len(probe | test) == self.N_RECORDS
+        strong = {r["source_record_id"] for r in ds._raw_data if r["real_fields"]["credit_good"]}
+        assert len(probe & strong) == 14            # 20 x 0.7, exactly
+        rep = ds.split_report()
+        assert rep["mode"] == "records" and rep["probe_records"] == 20 and rep["test_records"] == 30
+        assert rep["probe_strata"] == {"False": 6, "True": 14}
+        assert rep["probe_pairs"] == 20 * 8           # every pair of a probe record goes to probe
+
+    def test_every_axis_and_encoding_gets_the_same_records(self, tmp_path):
+        path = self._manifest(tmp_path, encodings=("explicit", "proxy"))
+        sets = [self._records(ds, ds._probe_indices)
+                for ds in (self._ds(path, axis=a, encoding=e) for a, e in (
+                    ("sex", "explicit"), ("age", "explicit"), ("marital_status", "explicit"),
+                    ("intersection", "explicit"), ("sex", "proxy"), ("intersection", "proxy")))]
+        assert all(s == sets[0] for s in sets)
+        # the intersection contributes 2 pairs per record, a single axis 8 — the records are still equal
+        inter = self._ds(path, axis="intersection")
+        assert len(inter._probe_indices) == 20 * 2
+
+    def test_probe_sets_are_nested_in_n(self, tmp_path):
+        path = self._manifest(tmp_path)
+        sets = [self._records(ds, ds._probe_indices) for ds in (self._ds(path, n=n) for n in range(1, 41))]
+        assert all(a < b for a, b in zip(sets, sets[1:]))
+
+    def test_deterministic_and_seeded(self, tmp_path):
+        path = self._manifest(tmp_path)
+        a, b = self._ds(path), self._ds(path)
+        assert a._probe_indices == b._probe_indices and a._test_indices == b._test_indices
+        assert self._records(a, a._probe_indices) != self._records(
+            self._ds(path, split_seed=7), self._ds(path, split_seed=7)._probe_indices)
+
+    def test_test_split_keeps_the_rotation_and_a_minimum(self, tmp_path):
+        path = self._manifest(tmp_path)
+        capped = self._ds(path, n=20, max_test_examples=30)
+        assert len(self._records(capped, capped._test_indices)) == 30   # round-robin: one pair per record
+        greedy = self._ds(path, n=500)                                   # 20% (10 records) stay for test
+        assert greedy.split_report()["probe_records"] == 40
+
+    def test_needs_a_grouped_split(self, tmp_path):
+        from scoring.pair_dataset import CreditDemographicDataset
+
+        class Ungrouped(CreditDemographicDataset):
+            GROUP_BY_RECORD = False
+
+        with pytest.raises(ValueError, match="grouped"):
+            Ungrouped(str(self._manifest(tmp_path)), axis="sex", encoding="explicit",
+                      probe_records=10)._ensure_loaded()
+
+    def test_a_manifest_without_real_fields_asks_to_regenerate(self, tmp_path):
+        path = self._manifest(tmp_path)
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        for r in rows:
+            del r["real_fields"]
+        path.write_text("\n".join(json.dumps(r) for r in rows))
+        with pytest.raises(ValueError, match="generate_credit"):
+            self._ds(path)
+        # counting pairs does not need the label
+        from scoring.pair_dataset import CreditDemographicDataset
+        ds = CreditDemographicDataset(str(path), axis="sex", encoding="explicit", probe_size=40)
+        assert ds.split_report()["mode"] == "pairs" and ds.split_report()["probe_records"] == 5
+
+    def test_pair_rows_carry_the_cells_real_fields(self):
+        from runners.generate_credit import build_dataset
+
+        recs = [_rec("german-0001", credit_good=False), _rec("german-0002")]
+        rows, cells, _ = build_dataset(recs, encodings=("explicit",))
+        by_record = {c["source_record_id"]: c["real_fields"] for c in cells}
+        assert rows and all(r["real_fields"] == by_record[r["source_record_id"]] for r in rows)
+        assert {r["real_fields"]["credit_good"] for r in rows} == {False, True}
+
+
+def test_largest_remainder():
+    from scoring.dataset_base import _largest_remainder
+
+    assert _largest_remainder(20, {True: 35, False: 15}) == {True: 14, False: 6}
+    assert _largest_remainder(3, {"a": 1, "b": 1, "c": 1}) == {"a": 1, "b": 1, "c": 1}
+    assert _largest_remainder(1, {"b": 1, "a": 1}) == {"a": 1, "b": 0}      # tie: by name
+    assert _largest_remainder(5, {None: 9}) == {None: 5}                     # unstratified
+    for n in range(0, 51):
+        q = _largest_remainder(n, {True: 35, False: 15})
+        assert sum(q.values()) == n and q[True] <= 35 and q[False] <= 15
+
+
 # --------------------------------------------------------------------------- registry / markers
 def test_credit_domain_uses_marital_status():
     from substrates.domains import get_domain

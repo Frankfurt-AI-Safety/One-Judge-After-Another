@@ -173,6 +173,19 @@ def manifest(tmp_path):
     return path
 
 
+def test_direct_directions_share_the_probe_records(manifest, monkeypatch):
+    # Audit item 4.1: with probe_records every direction rests on the same N records, stratified by
+    # quality, so the records excluded from the cross-marker evaluation are exactly those N.
+    monkeypatch.setenv("ONEJUDGE_EMBED_CACHE", "off")
+    model, tok = _model(), _tokenizer()
+    _, probe_ids, meta = direct_directions(
+        model, tok, DOM, str(manifest), ["explicit", "proxy"], probe_size=8, split_seed=42,
+        batch_size=16, device="cpu", max_length=1024, probe_records=6)
+    assert len(probe_ids) == 6 and sum(r.startswith("s") for r in probe_ids) == 3
+    assert {m["n_records"] for m in meta.values()} == {6}
+    assert all(m["split"]["probe_strata"] == {"False": 3, "True": 3} for m in meta.values())
+
+
 def test_end_to_end_on_a_tiny_model(manifest, monkeypatch):
     monkeypatch.setenv("ONEJUDGE_EMBED_CACHE", "off")
     from pairs.cross_marker import load_cell_blocks

@@ -93,9 +93,13 @@ def pair_to_record(
     role: str = "probe",
     seed: int,
     domain: str = "credit",
+    real_fields: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Serialize a :class:`GeneratedPair` to a manifest JSONL record."""
-    return {
+    """Serialize a :class:`GeneratedPair` to a manifest JSONL record.
+
+    ``real_fields`` (the record's real, never-rendered attributes incl. its quality label, as in
+    cells.jsonl) is written when given: the probe_records split stratifies on the quality label."""
+    row = {
         "id": item_id,
         "domain": domain,
         "role": role,
@@ -118,6 +122,9 @@ def pair_to_record(
             "template_hash": _template_hash(pair.template_id),
         },
     }
+    if real_fields is not None:
+        row["real_fields"] = real_fields
+    return row
 
 
 def write_manifest(

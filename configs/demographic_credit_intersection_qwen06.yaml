@@ -13,12 +13,12 @@ trust_remote_code: true
 
 dataset_source: data/demographic/credit/pairs.jsonl
 dataset_name: credit_intersection
-# probe_size counts PAIRS, not records. Credit pairs come from the sex × age × marital-status factorial:
-# 8 pairs per record per single axis (4 backgrounds × 2 templates), 2 per record for the intersection. So
-# 300 pairs = ~38 records for sex/age/marital (~150 for the intersection) — too few for a reliable
-# direction. Plan (2026-09-16): time runs on the cluster at a few sizes (e.g. 300 / 1000 / 3000) and
-# pick the largest affordable value; ~803 records x 8 = ~6.4k pairs per axis are available.
-probe_size: 300  # TODO(cluster): too few records for credit, raise once runtimes are measured (see above)
+# probe_records counts RECORDS (stratified by credit_good, the same records for every axis). It replaced
+# probe_size (PAIRS) on 2026-09-24: a record gives 8 pairs per single axis but 2 to the intersection, so
+# 300 pairs were ~38 records for sex/age/marital and 150 for the intersection. 150 keeps the records the
+# cross-marker design must exclude where they were; of 803 records the pilot fixes the final value from
+# the probe-size curve (split-half cosine, nulled metric vs records).
+probe_records: 150  # TODO(pilot)
 max_test_examples: 200
 split_seed: 42
 

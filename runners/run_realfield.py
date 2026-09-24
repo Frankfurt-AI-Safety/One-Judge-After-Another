@@ -56,7 +56,8 @@ def _cos(a: torch.Tensor, b: torch.Tensor) -> float:
 
 def _synthetic_dir(exp, cfg, axis):
     ds = CreditDemographicDataset(cfg.dataset_source, axis=axis, encoding="explicit",
-                                  probe_size=cfg.probe_size, split_seed=cfg.split_seed)
+                                  probe_size=cfg.probe_size, split_seed=cfg.split_seed,
+                                  probe_records=cfg.probe_records)
     probe, _ = build_probe_direction(exp.model, exp.tokenizer, ds.get_probe_pairs(exp.tokenizer),
                                      batch_size=cfg.batch_size, device=cfg.device, max_length=cfg.max_length)
     return probe

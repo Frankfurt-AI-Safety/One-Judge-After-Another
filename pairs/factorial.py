@@ -423,7 +423,9 @@ def build_factorial_rows(
     """Render, gate and serialise every record/template/encoding block.
 
     A block with any pair failing ``validate`` (returns an object with ``.ok`` and ``.reasons``) is
-    dropped whole, so the factorial stays balanced. Returns ``(pair_rows, cell_rows, gate_report)``.
+    dropped whole, so the factorial stays balanced. ``real_fields(rec)`` (the record's real attributes,
+    never rendered, incl. its quality label) goes onto the block's cells row and onto every pair row.
+    Returns ``(pair_rows, cell_rows, gate_report)``.
     """
     from pairs.manifest import pair_to_record  # local: manifest imports this package's markers
 
@@ -433,6 +435,7 @@ def build_factorial_rows(
         enc: {"blocks_kept": 0, "blocks_dropped": 0, "failure_reasons": {}} for enc in encodings
     }
     for rec in records:
+        fields = real_fields(rec)
         for tid in templates:
             for enc in encodings:
                 rng = block_rng(seed, rec.source_record_id, tid, enc)
@@ -452,14 +455,15 @@ def build_factorial_rows(
                 for p in pairs:
                     item_id = (f"{id_prefix}-{p.axis}-{enc}-{tid}-{rec.source_record_id}-"
                                f"{pair_suffix(p.intersectional_cell)}")
-                    pair_rows.append(pair_to_record(p, item_id, role="probe", seed=seed, domain=domain))
+                    pair_rows.append(pair_to_record(p, item_id, role="probe", seed=seed, domain=domain,
+                                                    real_fields=fields))
                 names = ProxyNames.from_exemplar(exemplar) if enc == "proxy" else None
                 cell_rows.append({
                     "id": f"{id_prefix}-cells-{enc}-{tid}-{rec.source_record_id}",
                     "source_record_id": rec.source_record_id,
                     "template_id": tid,
                     "encoding": enc,
-                    "real_fields": real_fields(rec),
+                    "real_fields": fields,
                     "exemplar": exemplar,
                     "cells": [{**design.cell_label(cell),
                                "clause": design.clause(cell, enc, names, subject),

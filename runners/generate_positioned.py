@@ -30,6 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from substrates.education_clean import load_education_essays
+from substrates.education_ingest import real_fields
 from substrates.education_render import EDU_TEMPLATES
 from pairs.factorial import stable_rng
 from pairs.positionality import (
@@ -115,7 +116,7 @@ def main() -> None:
                 for pair in pairs:
                     item_id = f"pos-{axis}-{position}-{rec.source_record_id}{block_id_suffix(pair)}"
                     out_records.append(pair_to_record(pair, item_id, role="probe", seed=args.seed,
-                                                       domain="education"))
+                                                       domain="education", real_fields=real_fields(rec)))
                     n_pairs += 1
             seen = kept_blocks + dropped_blocks
             discards[f"{axis}/{position}"] = {

@@ -59,6 +59,11 @@ class ExperimentConfig:
     
     probe_size: int = 500
     """Number of examples for probe training"""
+
+    probe_records: Optional[int] = None
+    """Number of RECORDS for probe training, stratified by quality, for datasets split by record (every
+    demographic matched-pair domain). Replaces ``probe_size`` there: a record contributes several pairs
+    (8 per single axis, 2 for the intersection), so counting pairs fixed the records only indirectly."""
     
     max_test_examples: Optional[int] = None
     """Maximum number of test examples (None = use all)"""
@@ -138,6 +143,7 @@ class ExperimentConfig:
             "dataset_source": self.dataset_source,
             "dataset_class": self.dataset_class,
             "probe_size": self.probe_size,
+            "probe_records": self.probe_records,
             "max_test_examples": self.max_test_examples,
             "split_seed": self.split_seed,
             "null_alpha": self.null_alpha,
@@ -397,8 +403,12 @@ class BiasExperiment(ABC):
         
         # Use probe_dataset for building probe
         dataset_for_probe = self.probe_dataset
-        logger.info("Building probe from %d examples (dataset: %s)...", 
-                   self.config.probe_size, dataset_for_probe.name)
+        if self.config.probe_records is not None:
+            logger.info("Building probe from %d records (dataset: %s)...",
+                        self.config.probe_records, dataset_for_probe.name)
+        else:
+            logger.info("Building probe from %d examples (dataset: %s)...",
+                        self.config.probe_size, dataset_for_probe.name)
         
         contrastive_pairs = dataset_for_probe.get_probe_pairs(self.tokenizer)
 
