@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-Decision-response (downstream-harm) arm, one RM (default Qwen3-0.6B).
+Decision-response arm, blatant form, one RM (default Qwen3-0.6B) — the floor, not the harm evidence.
+
+Since the 2026-09-24 methodology decision the harm evidence is the cross-marker decision design
+(`runners/run_cross_marker.py`). This arm asks the minimum: does the RM at least punish a verdict that
+states the protected reason openly? Rewarding it would be the strongest possible finding; punishing it
+says nothing about silent discrimination, and with only the protected pole in the prompt the arm cannot
+see disparate treatment (see `pairs/verdicts.py`).
 
 Models the actual model **response**: a USER turn presents an applicant carrying the protected marker
 and asks for the domain's binary decision (hiring: advance to an interview; credit: approve the loan;

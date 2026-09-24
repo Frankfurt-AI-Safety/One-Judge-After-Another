@@ -37,7 +37,7 @@ PFSS=/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias
 # cannot resolve, so every package otherwise burns 5 retries before falling back to PyPI.
 # A CLI flag cannot unset an extra-index-url, so make the failure fast instead.
 python -m pip install --target "$PFSS/pylibs" --retries 1 --timeout 10 \
-  "transformers>=4.51,<5" accelerate datasets textstat scikit-learn concept-erasure markdown-it-py \
+  "transformers>=4.51,<5" accelerate datasets textstat scikit-learn concept-erasure \
   hf_transfer
 
 # MANDATORY cleanup -- see below.
@@ -119,6 +119,19 @@ Size is about `unique texts × hidden size × 2 bytes` per model: roughly 0.1 GB
 and 0.4 GB for an 8B model over the whole education pool, 0.8 GB for a 70B. Files: one shard per call
 that embedded something new, a few dozen per run, far below the inode budget. Concurrent jobs on the
 same model are safe (each writes its own shards). `ONEJUDGE_EMBED_CACHE=off` disables it.
+
+The fingerprint does not include the device. Local (Mac) runs are smoke tests only — publishable numbers
+come from the cluster — and the local `artifacts/embedding_cache` is cleared before the cluster phase; it
+is gitignored, so `stage.sh` never copies it.
+
+**Cross-marker decision design** (`runners/run_cross_marker.py`, the harm evidence since 2026-09-24). Per
+record, template and encoding: 9 prompts (8 factorial cells + unmarked) x 5 responses = 45 decision texts,
+plus the same 8 cells in the direct format for the placement check (usually cache hits after a battery run).
+At 300 strong + 300 weak records, 2 templates and 2 encodings that is ~108k decision texts per domain and
+model; the pilot fixes n (pilot-then-freeze). Every nulling variant, the cross-fitting, the geometry and the
+alpha-sweep reuse the one embedding pass. It reads `cells.jsonl` next to the config's `dataset_source`,
+which `stage.sh` stages together with `pairs.jsonl` (they must come from the same generator run).
+Education essays are long: expect roughly 3x the credit runtime per record.
 
 **Every model is checked at load** (`verify_score_path`): the pipeline's reward, which is the score
 head on the pooled last-token state, must reproduce the model's own score on two texts. A model that

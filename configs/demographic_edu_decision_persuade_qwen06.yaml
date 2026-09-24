@@ -1,4 +1,6 @@
-# Demographic bias — DECISION-RESPONSE arm, education (PERSUADE 2.0), Skywork-Reward-V2-Qwen3-0.6B.
+# Demographic bias — DECISION-RESPONSE arm (blatant verdict: the floor), education (PERSUADE 2.0), Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Not the harm evidence: that is the cross-marker decision design (configs/*_crossmarker_*.yaml).
 #
 # USER presents a student's essay (header marker: sex / ethnicity / grade level) and asks whether it
 # should pass (pass/fail keeps the decision binary like hiring and credit); the RM scores fair vs

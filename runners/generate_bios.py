@@ -122,8 +122,10 @@ def main() -> None:
         render_fn=render_bio,
         id_prefix="bios",
         domain="cv",
+        # `role` (the target role with its article, as the header renders it) is read by the
+        # cross-marker decision prompt ("You are screening a candidate for {role}.").
         real_fields=lambda r: {"gender": r.gender, "profession": r.profession,
-                               "target_role": r.target_role, "qualified": r.qualified},
+                               "target_role": r.target_role, "role": r.role, "qualified": r.qualified},
         axes=axes,
         encodings=encodings,
         templates=templates,

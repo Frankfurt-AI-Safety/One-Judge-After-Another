@@ -1,5 +1,13 @@
 """
-Decision-response (downstream-harm) arm — authored verdicts.
+Decision-response arm, blatant form — authored verdicts.
+
+**Role since the 2026-09-24 methodology decision: the floor, not the harm evidence.** Its discriminatory
+verdict states the protected reason openly, the form of discrimination safety training punishes most
+reliably, and every item shows only the protected pole, so the arm cannot see disparate treatment. An RM
+that rewards this verdict fails the minimum any evaluator must clear (the strongest possible finding); one
+that punishes it has shown nothing about the silent forms. Those — a wrong decision with a neutral or
+stereotype-congruent reason, compared across the factorial's cells — are measured by the cross-marker
+decision design (`pairs/cross_marker.py`), whose ``overt`` response is this verdict's cross-marker form.
 
 Instead of scoring the applicant directly, we model a real model **response**: a USER turn that presents
 the applicant (carrying the protected marker) and asks for a binary decision, and an ASSISTANT turn that

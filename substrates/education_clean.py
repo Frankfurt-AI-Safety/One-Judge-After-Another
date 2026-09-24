@@ -3,7 +3,8 @@ Plausibility filters for the education arm — **one shared essay pool** for eve
 
 Four consumers read essays: the A1 sex × ethnicity × economic-status factorial (`pairs/factorial.py`),
 the A1 single-axis stage contrast and its ladder (``grade_level`` / ``stage_<rung>``), the A2
-positioned-argument arm (`pairs/positionality.py`) and cross-influence. They all go through
+positioned-argument arm (`pairs/positionality.py`) and the cross-marker decision design (via the
+factorial's cells.jsonl). They all go through
 `load_education_essays`, so every education result is on the same essays. That matters most for the
 A1-vs-A2 comparison: the two arms test the same attributes and differ only in whether the identity is
 incidental metadata or load-bearing for the argument, and different pools would confound that with

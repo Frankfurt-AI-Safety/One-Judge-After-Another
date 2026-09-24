@@ -22,8 +22,7 @@ ENV PIP_NO_CACHE_DIR=1
 WORKDIR /opt/app
 
 # requirements-analysis.txt pulls in requirements.txt via `-r`, so this covers the base stack
-# (transformers, accelerate, datasets, textstat) plus scikit-learn, concept-erasure (LEACE)
-# and markdown-it-py.
+# (transformers, accelerate, datasets, textstat) plus scikit-learn and concept-erasure (LEACE).
 #
 # torch is deliberately left to the base image: the NGC build is tuned for this hardware and
 # reinstalling it from PyPI would replace a matched CUDA build with a generic one.

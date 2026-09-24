@@ -466,6 +466,19 @@ def _embed(
     return torch.stack([cache.get(k) for k in keys]).float(), cache.state_dtype
 
 
+def embed_states(
+    model: AutoModelForSequenceClassification,
+    tokenizer: AutoTokenizer,
+    texts: List[str],
+    batch_size: int = 8,
+    max_length: int = 2048,
+    show_progress: bool = True,
+) -> Tuple[torch.Tensor, torch.dtype]:
+    """Float32 pooled states plus the dtype the score head expects: the input of `rewards_from_hidden`,
+    for scoring one embedding pass under several probes or α values (cache-aware, see `_embed`)."""
+    return _embed(model, tokenizer, texts, batch_size, max_length, show_progress)
+
+
 def get_embeddings(
     model: AutoModelForSequenceClassification,
     tokenizer: AutoTokenizer,

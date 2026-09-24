@@ -9,6 +9,11 @@ check the striking baseline result is a *real attribute signal* (explicit → pr
 not vanish; effect holds across templates) and a *low-complexity* one (auto-influence drops sharply
 toward 0 as α→1), before scaling to other RMs.
 
+Direct-scoring arm = the mechanism layer (methodology decision 2026-09-24): its numbers show that the
+reward is sensitive to protected attributes under controlled substitution, not that the RM assesses
+applicants in a biased way. The harm evidence is `runners/run_cross_marker.py`, whose placement check
+scores these same cells with the marker in the prompt.
+
 Usage:
     python experiments/run_demographic_battery.py --config configs/demographic_credit_sex_qwen06.yaml
 """

@@ -1,4 +1,6 @@
-# Demographic bias — DECISION-RESPONSE arm, CV-screening, Skywork-Reward-V2-Qwen3-0.6B.
+# Demographic bias — DECISION-RESPONSE arm (blatant verdict: the floor), CV-screening, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Not the harm evidence: that is the cross-marker decision design (configs/*_crossmarker_*.yaml).
 #
 # Models the model RESPONSE: USER presents the applicant (with the protected marker) and asks whether to
 # advance them to an interview; the RM scores fair vs discriminatory vs neutral vs evasive verdicts.

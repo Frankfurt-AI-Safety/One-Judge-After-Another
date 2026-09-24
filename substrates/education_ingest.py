@@ -17,9 +17,10 @@ header names the target role: most PERSUADE prompts are text-dependent, so witho
 answer to a question it cannot see. It is constant per prompt and identical across an A/B pair.
 
 `high_quality` is the education analog of CV `qualified` / credit `credit_good` — the quality ground
-truth the deferred/`crossinf` arm needs. Because essay quality is *what reward models natively score*,
-this is the domain where cross-influence may finally be interpretable on a small RM. We threshold the
-holistic score into a clean strong/weak contrast and **drop the middle** so the label is unambiguous.
+truth the cross-marker design's decision accuracy needs (a strong essay should pass, a weak one fail).
+Essay quality is *what reward models natively score*, so this is the domain where that accuracy is most
+likely to be interpretable on a small RM. We threshold the holistic score into a clean strong/weak
+contrast and **drop the middle** so the label is unambiguous.
 
 **Real demographics are kept on the record but never rendered.** PERSUADE 2.0 ships the writer's
 `gender`, `race_ethnicity` and `grade_level` (and ELL / economic / disability status, in `extra`);

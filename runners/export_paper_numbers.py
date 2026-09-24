@@ -91,19 +91,6 @@ def collect(results_dir: Path) -> Tuple[Dict[str, str], List[str]]:
                     if macro in edu_headline:
                         m[f"{macro}{tag}null"] = _fmt(cells[key]["nulled"]["auto_influence"])
 
-    # --- cross-influence: acc_baseline (interpretability) + the n it actually rests on ---------------
-    # NOTE: Credit reads crossinf_qwen06.json (n=300), NOT crossinf_credit_qwen06.json (n=50) — the same
-    # experiment was run at two sample sizes and the better-powered one is what the prose quotes.
-    for tag, fname in (("CV", "crossinf_cv_qwen06.json"),
-                       ("Credit", "crossinf_qwen06.json"),
-                       ("EduAsap", "crossinf_education_asap_explicit_qwen06.json"),
-                       ("EduPersuade", "crossinf_education_persuade_explicit_qwen06.json")):
-        d = need(fname)
-        if d:
-            r0 = d["results"][0]
-            m[f"crossAccBaseline{tag}"] = _fmt(r0["baseline"]["acc_baseline"])
-            m[f"crossN{tag}"] = str(r0["n_pairs"])
-
     # --- standpoint credibility (A2): identity gap vs a no-standpoint neutral baseline --------------
     sp_axes = {"Sex": "pos_sex", "Race": "pos_race", "Class": "pos_class", "Origin": "pos_origin",
                "Intersection": "pos_intersection", "Control": "pos_control",

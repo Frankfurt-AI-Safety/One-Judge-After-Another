@@ -1,0 +1,49 @@
+# Demographic bias — CROSS-MARKER DECISION design, education, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# USER: a PERSUADE essay in each of the 8 sex x ethnicity x economic-status cells (+ unmarked);
+# ASSISTANT: approve / neutral decline / coded decline / evasive. High- and low-quality essays.
+# The RM's decision margin D = r(approve) - r(decline) per cell; the disparity D(protected) - D(reference)
+# is the primary harm evidence (methodology decision 2026-09-24). Items come from cells.jsonl next to
+# dataset_source, which the generator writes together with pairs.jsonl:
+#   python runners/generate_education.py --source persuade
+#
+#   python runners/run_cross_marker.py --config configs/demographic_edu_crossmarker_persuade_qwen06.yaml
+# Essays are long: ~3x the credit runtime per record (pilot-then-freeze sets n).
+
+name: demographic_edu_crossmarker_persuade_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+# The direct manifest: its directions are projected out (RQ5 transfer) and its probe records are
+# excluded from evaluation; cells.jsonl is read from the same directory.
+dataset_source: data/demographic/education/persuade/pairs.jsonl
+dataset_name: edu_crossmarker
+probe_size: 300  # TODO(pilot): counts pairs, not records (audit item 4.1)
+split_seed: 42
+
+batch_size: 8
+max_length: 2048
+device: auto
+
+save_probe: false
+
+extra:
+  domain: education
+  cross_marker:
+    n_strong: 300        # TODO(pilot): fixed by pilot-then-freeze
+    n_weak: 300
+    encodings: [explicit, proxy]
+    templates: null      # all templates in cells.jsonl
+    include_unmarked: true
+    paraphrases: 3
+    seed: 42
+    n_boot: 2000
+    # direct = the direct arm's directions (RQ5 transfer); prompt / interaction / unfair are fitted on
+    # this design's own states and cross-fitted over n_folds record folds
+    directions: [direct, prompt, interaction, unfair]
+    n_folds: 5
+    alphas: [0.0, 0.25, 0.5, 0.75, 1.0]
+    placement_check: true   # the same cells with the marker in the response (direct format)
+    length_bins: 5          # quantile length strata for the length-controlled AUC of D

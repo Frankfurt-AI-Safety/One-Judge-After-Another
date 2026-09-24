@@ -4,8 +4,9 @@ Domain registry for the demographic-bias arms.
 A single source of truth for everything that differs between the **credit**, **hiring (CV-screening)**
 and **education (grading)** domains: the matched-pair dataset class + default manifest, the neutral
 renderer + framing prompt + template ids, how to load the underlying records, and which records count
-as the "stronger" applicant (the quality ground truth for cross-influence). All three now sit on real
-substrates. The runners (`run_battery`, `run_crossinfluence`, the reasoning/decision-response arms, …)
+as the "stronger" applicant (the quality ground truth for the cross-marker design's decision accuracy).
+All three sit on real substrates. The runners (`run_battery`, `run_cross_marker`, the reasoning and
+blatant decision-response arms, …)
 and `DemographicBiasExperiment._create_dataset` all resolve a `DomainSpec` from
 `cfg.extra["domain"]` (or a `--domain` flag) so adding a domain is one entry here.
 
@@ -49,9 +50,9 @@ class DomainSpec:
     axes: Tuple[str, ...]                  # axes present in this domain's pairs manifest
     make_marker: Callable[..., Any]        # (axis, encoding, rng, subject) -> MarkerSpec
     factorial: Optional[FactorialDesign] = None  # set where pairs come from a 2x2x2 factorial
-    # Cross-influence pairs a strong with a weak record only within the same stratum (None = anywhere).
-    # Education: the prompt, so both essays answer the same assignment the header shows.
-    pair_stratum: Optional[Callable[[Any], Any]] = None
+    # The `real_fields` key in the generator's cells.jsonl holding the same label as `is_strong` (the
+    # cross-marker decision design reads records from cells.jsonl, not from the corpus).
+    quality_field: Optional[str] = None
 
 
 # Credit: sex × age × marital status as a full factorial (pairs/factorial.py). `family_status`
@@ -70,6 +71,7 @@ CREDIT = DomainSpec(
     axes=CREDIT_FACTORIAL_AXES + ("intersection",),
     make_marker=credit_marker,
     factorial=CREDIT_DESIGN,
+    quality_field="credit_good",
 )
 
 # Hiring: sex × age × family status as a full factorial (pairs/factorial.py), the pregnancy-window
@@ -91,6 +93,7 @@ CV = DomainSpec(
     axes=HIRING_DESIGN.axes + ("intersection",),
     make_marker=hiring_marker,
     factorial=HIRING_DESIGN,
+    quality_field="qualified",
 )
 
 EDUCATION = DomainSpec(
@@ -102,7 +105,7 @@ EDUCATION = DomainSpec(
     template_ids=tuple(sorted(EDU_TEMPLATES)),
     # Real essays are user-downloaded; load the PERSUADE corpus (raises with instructions if absent).
     # The shared education pool (substrates/education_clean.py): the same essays for the factorial, the
-    # stage design, the A2 positioned arm and cross-influence, so their results are comparable.
+    # stage design, the A2 positioned arm and the cross-marker design, so their results are comparable.
     load_records=lambda: load_education_essays(source="persuade"),
     is_strong=lambda r: r.high_quality,
     # sex × ethnicity × economic status as a full factorial. The **stage** axis (`grade_level`) and its
@@ -112,7 +115,7 @@ EDUCATION = DomainSpec(
     axes=EDUCATION_DESIGN.axes + ("intersection",),
     make_marker=education_marker,
     factorial=EDUCATION_DESIGN,
-    pair_stratum=lambda r: r.prompt_id,
+    quality_field="high_quality",
 )
 
 DOMAINS = {CREDIT.name: CREDIT, CV.name: CV, EDUCATION.name: EDUCATION}

@@ -29,9 +29,12 @@ rsync -av --progress \
   --include='*/' --include='raw/***' --exclude='*' \
   data/demographic/ "$REMOTE:$REPO/data/demographic/"
 
-echo "==> generated matched pairs (~60 MB; regenerable, but skip the rebuild)"
+# cells.jsonl (all 8 factorial texts per block) is what the cross-marker design reads; it must come from
+# the SAME generator run as pairs.jsonl (its cells are byte-identical to the ones the pairs were cut from),
+# so the two always travel together. Local embedding caches (artifacts/, gitignored) are never staged.
+echo "==> generated matched pairs + factorial cells (a few hundred MB; regenerable, but skip the rebuild)"
 rsync -av --progress \
-  --include='*/' --include='pairs.jsonl' --include='manifest.json' --exclude='*' \
+  --include='*/' --include='pairs.jsonl' --include='cells.jsonl' --include='manifest.json' --exclude='*' \
   data/demographic/ "$REMOTE:$REPO/data/demographic/"
 
 echo

@@ -1,0 +1,48 @@
+# Demographic bias — CROSS-MARKER DECISION design, cv, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# USER: a Bias-in-Bios profile in each of the 8 sex x age x family-status cells (+ unmarked);
+# ASSISTANT: approve / neutral decline / coded decline / evasive. Role-matched and mismatched bios.
+# The RM's decision margin D = r(approve) - r(decline) per cell; the disparity D(protected) - D(reference)
+# is the primary harm evidence (methodology decision 2026-09-24). Items come from cells.jsonl next to
+# dataset_source, which the generator writes together with pairs.jsonl:
+#   python runners/generate_bios.py --from-hub
+#
+#   python runners/run_cross_marker.py --config configs/demographic_cv_crossmarker_qwen06.yaml
+
+name: demographic_cv_crossmarker_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+trust_remote_code: true
+
+# The direct manifest: its directions are projected out (RQ5 transfer) and its probe records are
+# excluded from evaluation; cells.jsonl is read from the same directory.
+dataset_source: data/demographic/cv/pairs.jsonl
+dataset_name: cv_crossmarker
+probe_size: 300  # TODO(pilot): counts pairs, not records (audit item 4.1)
+split_seed: 42
+
+batch_size: 8
+max_length: 2048
+device: auto
+
+save_probe: false
+
+extra:
+  domain: cv
+  cross_marker:
+    n_strong: 300        # TODO(pilot): fixed by pilot-then-freeze
+    n_weak: 300
+    encodings: [explicit, proxy]
+    templates: null      # all templates in cells.jsonl
+    include_unmarked: true
+    paraphrases: 3
+    seed: 42
+    n_boot: 2000
+    # direct = the direct arm's directions (RQ5 transfer); prompt / interaction / unfair are fitted on
+    # this design's own states and cross-fitted over n_folds record folds
+    directions: [direct, prompt, interaction, unfair]
+    n_folds: 5
+    alphas: [0.0, 0.25, 0.5, 0.75, 1.0]
+    placement_check: true   # the same cells with the marker in the response (direct format)
+    length_bins: 5          # quantile length strata for the length-controlled AUC of D

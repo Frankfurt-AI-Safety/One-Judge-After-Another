@@ -1,15 +1,10 @@
-# Mechanistic-analysis extras (reasoning low/high-complexity test) + the review-site build.
+# Mechanistic-analysis extras (reasoning low/high-complexity test).
 #   pip install -r requirements-analysis.txt
 #
 # Used by experiments/run_reasoning_erasure.py + src/nb/nullbias/erasure.py:
 #   - concept-erasure: LEACE (Belrose et al. 2023), provably-optimal linear concept erasure.
 #   - scikit-learn:     LogisticRegression (linear probe) + MLPClassifier (non-linear probe).
-# Used by experiments/build_review_site.py + src/nb/site/:
-#   - markdown-it-py:   CommonMark + tables for the hand-written page content. Pinned here
-#                       because it otherwise only arrives transitively, and the site build
-#                       must not depend on another package's dependency tree.
 -r requirements.txt
 
 scikit-learn>=1.4
 concept-erasure>=0.2
-markdown-it-py>=3.0

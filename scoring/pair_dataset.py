@@ -1,4 +1,10 @@
 """
+The direct-scoring arm's datasets. Since the 2026-09-24 methodology decision this arm is the mechanism
+layer: the document is recited as the assistant turn, so it measures that the reward is sensitive to
+protected attributes under controlled substitution, and supplies the sharpest directions (RQ3, RQ4
+mechanics, the response-placement side of RQ5) — not evidence that the RM assesses applicants in a
+biased way (that is the cross-marker decision design, `runners/run_cross_marker.py`).
+
 `MatchedPairDataset` — a domain-agnostic `ProbeDataset` over a generated matched-pairs manifest
 (`pairs.jsonl`), plus the credit arm's `CreditDemographicDataset`. The hiring and education arms
 subclass the same base (`scoring/bios_dataset.py`, `scoring/education_dataset.py`); each domain reads
@@ -26,7 +32,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Set
 
 from scoring.dataset_base import ContrastivePair, EvalExample, ProbeDataset, format_conversation
 
@@ -95,6 +101,13 @@ class MatchedPairDataset(ProbeDataset):
     def _get_group_key(self, example: Any) -> Optional[str]:
         return example["source_record_id"] if self.GROUP_BY_RECORD else None
 
+    def probe_record_ids(self) -> Set[str]:
+        """The records whose pairs sit in the probe split, i.e. the records a direction built from this
+        dataset has seen. A runner that evaluates other texts of the same records (the cross-marker
+        decision design) excludes them, so the grouped split holds there too."""
+        self._ensure_loaded()
+        return {str(self._raw_data[i]["source_record_id"]) for i in self._probe_indices}
+
     def _fmt(self, tokenizer: Any, profile_text: str) -> Any:
         return format_conversation(tokenizer, self.prompt, profile_text)
 
@@ -104,7 +117,8 @@ class MatchedPairDataset(ProbeDataset):
             positive_text=self._fmt(tokenizer, raw_example["text_a"]),
             negative_text=self._fmt(tokenizer, raw_example["text_b"]),
             metadata={"id": raw_example["id"], "axis": self.axis, "encoding": self.encoding,
-                      "label_a": raw_example["label_a"], "label_b": raw_example["label_b"]},
+                      "label_a": raw_example["label_a"], "label_b": raw_example["label_b"],
+                      "source_record_id": raw_example["source_record_id"]},
         )
 
     def _make_eval_example(self, raw_example: Any, tokenizer: Any) -> Optional[EvalExample]:

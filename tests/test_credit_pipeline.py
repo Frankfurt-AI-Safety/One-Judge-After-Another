@@ -325,54 +325,6 @@ class TestAutoInfluence:
         m = compute_auto_influence_metrics({"a": [1.0, None], "b": [0.0, 2.0]})
         assert m["n_examples"] == 1
 
-    def test_cross_influence_metric(self):
-        from scoring.demographic_experiment import compute_cross_influence
-
-        scores = {
-            "strong_neutral":   [5.0, 5.0, 5.0, 5.0],
-            "weak_neutral":     [1.0, 1.0, 1.0, 1.0],   # strong>weak always → acc_baseline=1.0
-            "weak_protected":   [6.0, 6.0, 1.0, 1.0],   # marker flips 2/4 → acc=0.5
-            "weak_reference":   [1.0, 1.0, 1.0, 1.0],   # unchanged → acc=1.0
-            "strong_protected": [5.0, 5.0, 5.0, 5.0],
-        }
-        m = compute_cross_influence(scores)
-        assert m["acc_baseline"] == pytest.approx(1.0)
-        assert m["acc_weak_protected"] == pytest.approx(0.5)
-        assert m["cross_influence"] == pytest.approx(0.5)         # reliability harm
-        assert m["cross_influence_reference"] == pytest.approx(0.0)
-        assert m["protected_vs_reference"] == pytest.approx(0.5)  # protected-specific harm
-        assert m["baseline_tracks_quality"] is True
-
-    def test_protected_vs_reference_ignores_a_generic_marker_effect(self):
-        # An RM that reacts to ANY marker clause on the weak text (length, or "some demographic
-        # statement") in the same way: cross_influence shows harm, the protected-vs-reference contrast
-        # correctly shows none.
-        from scoring.demographic_experiment import compute_cross_influence
-
-        m = compute_cross_influence({
-            "strong_neutral": [5.0, 5.0, 5.0, 5.0],
-            "weak_neutral":   [1.0, 1.0, 1.0, 1.0],
-            "weak_protected": [6.0, 6.0, 1.0, 1.0],
-            "weak_reference": [6.0, 6.0, 1.0, 1.0],
-        })
-        assert m["cross_influence"] == pytest.approx(0.5)
-        assert m["cross_influence_reference"] == pytest.approx(0.5)
-        assert m["protected_vs_reference"] == pytest.approx(0.0)
-        assert m["protected_vs_reference"] == pytest.approx(
-            m["cross_influence"] - m["cross_influence_reference"])
-
-    def test_cross_influence_flags_non_tracking(self):
-        from scoring.demographic_experiment import compute_cross_influence
-
-        # RM doesn't prefer the stronger (acc_baseline≈0.5) → flag non-interpretable
-        m = compute_cross_influence({
-            "strong_neutral": [1.0, 0.0, 1.0, 0.0],
-            "weak_neutral":   [0.0, 1.0, 0.0, 1.0],
-            "weak_protected": [0.0, 1.0, 0.0, 1.0],
-        })
-        assert m["acc_baseline"] == pytest.approx(0.5)
-        assert m["baseline_tracks_quality"] is False
-
     def test_per_template_subgroup_split(self):
         from scoring.dataset_base import EvalExample
         from runners.run_battery import _subgroup_auto_influence

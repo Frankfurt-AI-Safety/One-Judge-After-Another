@@ -1,4 +1,6 @@
-# Demographic bias — DECISION-RESPONSE arm, credit, Skywork-Reward-V2-Qwen3-0.6B.
+# Demographic bias — DECISION-RESPONSE arm (blatant verdict: the floor), credit, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Not the harm evidence: that is the cross-marker decision design (configs/*_crossmarker_*.yaml).
 #
 # USER presents a loan applicant (factorial marker: sex / age / marital status / intersection) and asks
 # whether to approve the loan; the RM scores fair vs discriminatory vs neutral vs evasive verdicts.

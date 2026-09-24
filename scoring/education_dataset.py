@@ -13,8 +13,8 @@ from __future__ import annotations
 from scoring.pair_dataset import MatchedPairDataset
 
 # Fixed, neutral grading prompt for the education direct-scoring design. Kept plain to avoid extra
-# signal (matches the credit/CV arms). Essay quality is what RMs natively score, so this is the domain
-# where cross-influence may become interpretable.
+# signal (matches the credit/CV arms). Grading is the one domain where scoring a document directly has a
+# deployment analogue (automated essay scoring).
 EDU_ASSESSMENT_PROMPT = (
     "You are grading a student's essay. Read the submission below and assess its quality."
 )

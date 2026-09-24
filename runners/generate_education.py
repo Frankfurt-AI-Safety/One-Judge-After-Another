@@ -4,7 +4,8 @@ Generate the demographic education (grading) matched-pair dataset (education arm
 
 Two designs, two manifests, ONE essay pool (`--design`). Both load the shared education pool
 (`substrates/education_clean.load_education_essays`: stage-neutral prompts, no in-essay pupil cues, no
-talk of the writer's own household money), which the A2 positioned arm and cross-influence use too.
+talk of the writer's own household money), which the A2 positioned arm uses too; the cross-marker
+decision design reads the factorial's cells.jsonl.
 
 **factorial** (default) — sex × ethnicity × economic status as a 2×2×2, all 8 cells rendered per
 essay/template/encoding and the matched pairs cut from them (pairs/factorial.py). Sex and ethnicity

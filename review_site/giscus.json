@@ -1,8 +1,0 @@
-{
-  "_comment": "giscus config for the per-page comment boxes. The ids below are already correct for Frankfurt-AI-Safety/rm-bias-experiment-review (Discussions is enabled). ONE STEP REMAINS: install the giscus GitHub App on that repo at https://github.com/apps/giscus, then set \"enabled\": true and rebuild. The switch is separate from the ids because embedding the widget before the app is installed shows a giscus error box, which is worse for a reviewer than the labelled placeholder we render instead.",
-  "repo": "Frankfurt-AI-Safety/rm-bias-experiment-review",
-  "repoId": "R_kgDOT2msOA",
-  "category": "General",
-  "categoryId": "DIC_kwDOT2msOM4DDPKK",
-  "enabled": true
-}

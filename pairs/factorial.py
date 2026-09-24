@@ -202,7 +202,8 @@ class FactorialDesign:
 
     def marker(self, axis: str, encoding: str, rng: random.Random,
                subject: str = "applicant") -> MarkerSpec:
-        """A factorial marker pair for runners that inject clauses on the fly (e.g. cross-influence).
+        """A factorial marker pair for runners that inject clauses on the fly (e.g. the blatant
+        decision-response arm).
 
         Draws one of the axis's pole pairs at random (and proxy names), so the injected clause has the
         same form as the pairs the probe direction was built from.

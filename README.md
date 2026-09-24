@@ -26,8 +26,7 @@ Review in the following order: substrates -> pairs -> probes -> scoring -> runne
 | 3 | `probes/` | **the mechanistic core**: difference-of-means, null-space projection, LEACE | 798 lines |
 | 4 | `scoring/` | model loading, dataset plumbing, experiment orchestration, metrics | 2,217 lines |
 | 5 | `runners/` | CLI entry points — one per experiment arm | 2,432 lines |
-| 6 | `review_site/` | static site generator for team review of the setups | 1,548 lines |
-| 7 | `cluster/` | hessian.AI 42 cluster deployment | 309 lines |
+| 6 | `cluster/` | hessian.AI 42 cluster deployment | 309 lines |
 | — | `tests/` `configs/` | read alongside the stage they cover | 1,756 lines |
 
 `probes/` is small and load-bearing: it is where the actual intervention lives, and where a
@@ -42,8 +41,19 @@ corpus record                     (substrates/)
   -> reward model forward pass -> last-layer hidden state     (scoring/)
   -> difference-of-means direction from contrastive pairs     (probes/)
   -> h' = h - alpha * (v.h) v   before the scalar head
-  -> metrics: auto-influence, cross-influence, identity gap   (scoring/)
+  -> metrics: auto-influence, identity gap                    (scoring/)
 ```
+
+That is the **direct-scoring** arm, since 2026-09-24 the *mechanism layer*: the document is recited as
+the assistant turn, so it shows that the reward is sensitive to protected attributes under controlled
+substitution, and gives the sharpest directions. The **harm evidence** is the cross-marker decision
+design (`runners/run_cross_marker.py`): one record in all 8 factorial cells in the USER turn, responses
+that name no attribute value (approve / neutral decline / coded decline / overt decline / evasive), and
+the disparity of the decision margin D = r(approve) − r(decline) between protected and reference cells,
+with decision-format cross-influence on strong and weak records and its own mechanism layer
+(cross-fitted prompt / interaction / unfair directions, cross-nulling, placement check). The blatant
+decision-response arm (`runners/run_decision_response.py`) is the floor: does the RM at least punish an
+openly stated discriminatory verdict?
 
 ## Quick start
 
@@ -82,8 +92,8 @@ Deliberately **not** carried over:
   synthetic `CandidateRecord` and its "experience" claim type reads
   `getattr(record, "years_experience", "several")`, so on a Bias-in-Bios record it does not fail —
   it silently falls back to "several years". It is also hiring-only. Pinned by
-  `tests/test_decision_response.py::TestSubstratePortingGap`. (The decision-response arm was ported
-  on 2026-09-16: it covers all three domains and reads no record fields.)
+  `tests/test_decision_response.py::TestSubstratePortingGap`. (The blatant decision-response arm was
+  ported on 2026-09-16: it covers all three domains and reads no record fields.)
 - **LEACE has only been applied to the reasoning concepts**, never to a demographic direction.
   The reward-vs-representation claim is scoped accordingly.
 - **`auto_influence` is a preference rate.** It saturates at 1.00 for any consistently-signed
@@ -95,7 +105,11 @@ Deliberately **not** carried over:
   *Measured with the scrub before 2026-09-17.* The scrub now also drops bios that still name a
   person by a sex-coded first name (about 36% of otherwise clean bios did) or contain further
   gendered words; `validate_bios_scrub.py` has to be re-run.
-- **No confidence intervals or multi-seed runs** anywhere yet.
+- **No multi-seed runs** anywhere yet; record-clustered bootstrap CIs exist only in the cross-marker
+  metrics so far.
+- **Direct-form cross-influence was dropped** (2026-09-24): its premise, that the RM judges applicant
+  quality in an off-task recitation, does not hold. It is measured in decision format now; the old runner
+  is in the git history.
 
 ## Acknowledgement
 
