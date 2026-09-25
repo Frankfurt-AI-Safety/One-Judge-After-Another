@@ -39,6 +39,10 @@ per scored text, one reward column per variant) and ``<out>_directions.pt`` (eve
 Usage:
     python runners/run_cross_marker.py --config configs/demographic_credit_crossmarker_qwen06.yaml
     python runners/run_cross_marker.py --config ... --n-strong 8 --n-weak 8 --device mps   # smoke
+    python runners/run_cross_marker.py --config ... --model Skywork/Skywork-Reward-V2-Llama-3.1-8B --batch-size 32
+
+``summary["timing"]`` (and the report's last line) gives the seconds per phase, the texts that went through
+the model, the scoring throughput and the peak GPU memory — the numbers that size the cluster runs.
 """
 
 from __future__ import annotations
@@ -47,6 +51,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
@@ -77,6 +82,24 @@ DEFAULTS: Dict[str, Any] = {
     "placement_check": True,
     "length_bins": 5,           # quantile strata for the within-length AUC of D (quality tracking)
 }
+
+
+class PhaseTimer:
+    """Wall-clock seconds per phase of a run, summed over repeats: ``lap(name)`` books the time since the
+    previous lap (or the start) to ``name``. Feeds ``summary["timing"]``, the throughput numbers that size
+    the cluster runs."""
+
+    def __init__(self) -> None:
+        self.start = self._last = time.perf_counter()
+        self.seconds: Dict[str, float] = {}
+
+    def lap(self, name: str) -> None:
+        now = time.perf_counter()
+        self.seconds[name] = self.seconds.get(name, 0.0) + now - self._last
+        self._last = now
+
+    def total(self) -> float:
+        return time.perf_counter() - self.start
 
 
 # --------------------------------------------------------------------------- settings ----------------
@@ -282,10 +305,12 @@ def _set_column(rows: List[Dict[str, Any]], idx: Sequence[int], values: Any, col
 def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialDesign,
                    rows: List[Dict[str, Any]], convs: List[Any], direct_rows: List[Dict[str, Any]],
                    direct_convs: List[Any], direct_dirs: Mapping[str, Any], settings: Dict[str, Any], *,
-                   batch_size: int, max_length: int, show_progress: bool = True
+                   batch_size: int, max_length: int, show_progress: bool = True,
+                   timer: Optional[PhaseTimer] = None
                    ) -> Tuple[List[str], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Score one encoding: add every reward column to its ``rows`` and ``direct_rows`` in place, and
-    return ``(columns, geometry, alpha_sweep, directions)``. See the module docstring for the variants."""
+    return ``(columns, geometry, alpha_sweep, directions)``. See the module docstring for the variants.
+    ``timer`` books the forward pass to ``embed`` and everything after it to ``mechanism``."""
     import torch
 
     from probes import cross_marker_directions as cmd
@@ -299,6 +324,8 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
     if d_idx:
         hd, _ = embed_states(model, tokenizer, [direct_convs[i] for i in d_idx], batch_size=batch_size,
                              max_length=max_length, show_progress=show_progress)
+    timer = timer or PhaseTimer()
+    timer.lap("embed")
 
     def apply(column: str, basis: Optional[torch.Tensor], alpha: float = 1.0,
               x_sub: Optional[Sequence[int]] = None, d_sub: Optional[Sequence[int]] = None) -> None:
@@ -401,7 +428,28 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
     saved = {"direct": {n: v for n, v in directions.items() if n.startswith("direct:")},
              "full_data": {n: v for n, v in directions.items() if not n.startswith("direct:")},
              "cross_fitted": fitted, "folds": folds}
+    timer.lap("mechanism")
     return columns, geometry, sweep, saved
+
+
+def timing_report(timer: PhaseTimer, *, batch_size: int, texts: Optional[Mapping[str, int]]
+                  ) -> Dict[str, Any]:
+    """Seconds per phase, the texts that went through the model (embedding-cache misses; None with the
+    cache off), the scoring throughput and, on CUDA, the peak GPU memory summed over the visible devices."""
+    import torch
+
+    seconds = {k: round(v, 1) for k, v in timer.seconds.items()}
+    report: Dict[str, Any] = {"seconds": seconds, "total_s": round(timer.total(), 1),
+                              "batch_size": batch_size, "texts_through_model": texts}
+    if texts and timer.seconds.get("embed"):
+        report["scoring_texts_per_s"] = round(texts["scoring"] / timer.seconds["embed"], 1)
+    if torch.cuda.is_available():
+        devices = range(torch.cuda.device_count())
+        report["gpus"] = [torch.cuda.get_device_name(i) for i in devices]
+        report["peak_gpu_memory_gib"] = {
+            "allocated": round(sum(torch.cuda.max_memory_allocated(i) for i in devices) / 2**30, 2),
+            "reserved": round(sum(torch.cuda.max_memory_reserved(i) for i in devices) / 2**30, 2)}
+    return report
 
 
 def credit_reference(dom: Any, selected: Dict[str, List[CellBlock]]) -> Optional[Dict[str, Any]]:
@@ -504,17 +552,21 @@ def print_report(summary: Dict[str, Any]) -> None:
         print(f"direct directions: {'/'.join(map(str, records))} probe records per direction "
               f"({summary['selection']['excluded_probe_records']} excluded from evaluation); "
               f"strata (strong=True) {next(iter(strata.values()))}")
+    timing = summary.get("timing")
+    if timing:
+        phases = " | ".join(f"{k} {v:.0f}s" for k, v in timing["seconds"].items())
+        texts = timing.get("texts_through_model")
+        rate = timing.get("scoring_texts_per_s")
+        mem = timing.get("peak_gpu_memory_gib")
+        print(f"timing (batch {timing['batch_size']}): {phases} | total {timing['total_s']:.0f}s"
+              + (f" | through the model {texts['direct_directions']} + {texts['scoring']} texts" if texts else "")
+              + (f", scoring {rate:.0f} texts/s" if rate else "")
+              + (f" | peak GPU {mem['allocated']:.1f} GiB allocated, {mem['reserved']:.1f} reserved" if mem else ""))
     print("=" * 118)
 
 
 # --------------------------------------------------------------------------- main --------------------
-def main() -> None:
-    import torch
-
-    from scoring.demographic_experiment import DemographicBiasExperiment
-    from scoring.experiment import ExperimentConfig
-    from substrates.domains import get_domain
-
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, default=Path("configs/demographic_credit_crossmarker_qwen06.yaml"))
     ap.add_argument("--cells", default=None, help="cells.jsonl (default: next to the config's dataset_source)")
@@ -533,16 +585,36 @@ def main() -> None:
     ap.add_argument("--n-boot", type=int, default=None)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--device", default=None, help="Overrides the config's device (e.g. cpu, mps)")
+    ap.add_argument("--model", default=None,
+                    help="Overrides the config's model_path (e.g. an 8B RM on a 0.6B config)")
+    ap.add_argument("--batch-size", type=int, default=None, help="Overrides the config's batch_size")
     ap.add_argument("--out", type=Path, default=None,
                     help="Default artifacts/results/demographic/crossmarker_{domain}_{model}.json")
-    args = ap.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    return ap
 
-    cfg = ExperimentConfig.from_yaml(args.config)
-    if args.device:
-        cfg.device = args.device
-    if args.probe_records is not None:
-        cfg.probe_records = args.probe_records
+
+def apply_overrides(cfg: Any, args: argparse.Namespace) -> Any:
+    """The CLI over the config (config precedence: YAML < CLI), for the keys the runner reads from ``cfg``."""
+    for attr, value in (("device", args.device), ("model_path", args.model),
+                        ("batch_size", args.batch_size), ("probe_records", args.probe_records)):
+        if value is not None:
+            setattr(cfg, attr, value)
+    return cfg
+
+
+def main() -> None:
+    import torch
+
+    from scoring.demographic_experiment import DemographicBiasExperiment
+    from scoring.experiment import ExperimentConfig
+    from substrates.domains import get_domain
+
+    timer = PhaseTimer()
+    args = build_parser().parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                        datefmt="%H:%M:%S")
+
+    cfg = apply_overrides(ExperimentConfig.from_yaml(args.config), args)
     dom = get_domain(cfg.extra.get("domain", "credit"))
     design = dom.factorial
     split = lambda s: [x.strip() for x in s.split(",") if x.strip()] if s else None
@@ -562,9 +634,12 @@ def main() -> None:
     blocks = load_cell_blocks(path, design, cells_report)
     templates = settings["templates"] or sorted({b.template_id for b in blocks})
 
+    timer.lap("setup")
     exp = DemographicBiasExperiment(cfg)
     exp.load_model()
     model, tok = exp.model, exp.tokenizer
+    cache = getattr(model, "_onejudge_embedding_cache", None)
+    timer.lap("load_model")
 
     direct_dirs: Dict[str, Dict[str, Any]] = {}
     probe_ids: Set[str] = set()
@@ -574,6 +649,8 @@ def main() -> None:
             model, tok, dom, source, settings["encodings"], probe_size=cfg.probe_size,
             split_seed=cfg.split_seed, batch_size=cfg.batch_size, device=cfg.device,
             max_length=cfg.max_length, reliability_seed=settings["seed"], probe_records=cfg.probe_records)
+    direct_misses = None if cache is None else cache.misses
+    timer.lap("direct_directions")
 
     format_fn = lambda prompt, response: format_conversation(tok, prompt, response)
     fits = block_fits(dom.name, settings, format_fn, token_counter(tok), cfg.max_length)
@@ -591,6 +668,7 @@ def main() -> None:
                                                       dom.assessment_prompt, format_fn)
     logger.info("Scoring %d decision texts + %d direct-placement texts for %d records",
                 len(rows), len(direct_rows), len(selected))
+    timer.lap("prepare")
 
     metrics: Dict[str, Dict[str, Any]] = {}
     placement: Dict[str, Dict[str, Any]] = {}
@@ -601,7 +679,8 @@ def main() -> None:
     for encoding in settings["encodings"]:
         columns, geometry[encoding], sweeps[encoding], saved[encoding] = score_encoding(
             model, tok, encoding, design, rows, convs, direct_rows, direct_convs,
-            direct_dirs.get(encoding, {}), settings, batch_size=cfg.batch_size, max_length=cfg.max_length)
+            direct_dirs.get(encoding, {}), settings, batch_size=cfg.batch_size, max_length=cfg.max_length,
+            timer=timer)
         all_columns += [c for c in columns if c not in all_columns]
         enc_rows = [r for r in rows if r["encoding"] == encoding]
         enc_direct = [r for r in direct_rows if r["encoding"] == encoding]
@@ -613,8 +692,10 @@ def main() -> None:
             placement[encoding] = {c: placement_check(enc_direct, enc_rows, design, encoding, reward_key=c,
                                                       n_boot=settings["n_boot"], seed=settings["seed"])
                                    for c in columns}
+        timer.lap("metrics")
 
-    cache = getattr(model, "_onejudge_embedding_cache", None)
+    reference = credit_reference(dom, selected)
+    timer.lap("metrics")
     summary = {
         "model": cfg.model_path, "domain": dom.name, "settings": {**settings, "templates": templates},
         "max_length": cfg.max_length, "probe_records": cfg.probe_records,
@@ -630,7 +711,9 @@ def main() -> None:
         "placement": placement,
         "geometry": geometry,
         "alpha_sweep": sweeps,
-        "credit_reference": credit_reference(dom, selected),
+        "credit_reference": reference,
+        "timing": timing_report(timer, batch_size=cfg.batch_size, texts=None if cache is None else {
+            "direct_directions": direct_misses, "scoring": cache.misses - direct_misses}),
         "caveats": [
             "Direct probe directions are fitted on probe_records records per direction, stratified by "
             "quality and shared by every axis (probe_directions[*].split); none of them is evaluated. "

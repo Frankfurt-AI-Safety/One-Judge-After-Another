@@ -17,8 +17,9 @@ from transformers import LlamaConfig, LlamaForSequenceClassification, PreTrained
 from pairs.cross_marker import RESPONSE_TYPES, block_from_row
 from pairs.factorial import CREDIT_DESIGN, build_factorial_rows
 from runners.run_cross_marker import (
-    DEFAULTS, DIRECTION_SOURCES, block_fits, build_direct_rows, build_rows, cells_path, direct_directions,
-    resolve_settings, score_encoding, select_records, token_counter,
+    DEFAULTS, DIRECTION_SOURCES, PhaseTimer, apply_overrides, block_fits, build_direct_rows, build_parser,
+    build_rows, cells_path, direct_directions, print_report, resolve_settings, score_encoding, select_records,
+    timing_report, token_counter,
 )
 from scoring.cross_marker_metrics import cross_marker_metrics, placement_check
 from scoring.dataset_base import format_conversation
@@ -69,6 +70,56 @@ class TestSettings:
             assert s["directions"] == list(DIRECTION_SOURCES) and set(s["encodings"]) == {"explicit", "proxy"}
             assert s["n_folds"] == 5 and s["placement_check"] is True and s["length_bins"] == 5
             assert cfg.dataset_source.endswith("pairs.jsonl")
+
+    def test_cli_overrides_the_config(self):
+        from scoring.experiment import ExperimentConfig
+        path = "configs/demographic_credit_crossmarker_qwen06.yaml"
+        cfg = apply_overrides(ExperimentConfig.from_yaml(path), build_parser().parse_args(
+            ["--model", "Skywork/Skywork-Reward-V2-Llama-3.1-8B", "--batch-size", "32", "--probe-records", "10",
+             "--device", "cpu"]))
+        assert (cfg.model_path, cfg.batch_size, cfg.probe_records, cfg.device) == (
+            "Skywork/Skywork-Reward-V2-Llama-3.1-8B", 32, 10, "cpu")
+        # no flag: the config's values stand
+        plain = ExperimentConfig.from_yaml(path)
+        cfg = apply_overrides(ExperimentConfig.from_yaml(path), build_parser().parse_args([]))
+        assert (cfg.model_path, cfg.batch_size, cfg.probe_records, cfg.device) == (
+            plain.model_path, plain.batch_size, plain.probe_records, plain.device)
+
+
+# --------------------------------------------------------------------------- timing ------------------
+class TestTiming:
+    def test_laps_are_booked_to_their_phase_and_summed(self, monkeypatch):
+        clock = iter([0.0, 2.0, 5.0, 6.0, 10.0])
+        monkeypatch.setattr("runners.run_cross_marker.time.perf_counter", lambda: next(clock))
+        timer = PhaseTimer()                                    # start at 0
+        timer.lap("load_model")                                 # 0 -> 2
+        timer.lap("embed")                                      # 2 -> 5
+        timer.lap("load_model")                                 # 5 -> 6, summed
+        assert timer.seconds == {"load_model": 3.0, "embed": 3.0}
+        assert timer.total() == 10.0
+
+    def test_report(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        timer = PhaseTimer()
+        timer.seconds = {"load_model": 12.34, "embed": 50.0}
+        rep = timing_report(timer, batch_size=16, texts={"direct_directions": 400, "scoring": 1000})
+        assert rep["seconds"] == {"load_model": 12.3, "embed": 50.0} and rep["batch_size"] == 16
+        assert rep["scoring_texts_per_s"] == 20.0 and "peak_gpu_memory_gib" not in rep
+        # cache off: nothing is known about what went through the model
+        rep = timing_report(timer, batch_size=16, texts=None)
+        assert rep["texts_through_model"] is None and "scoring_texts_per_s" not in rep
+
+    def test_report_line(self, capsys):
+        sel = {"n_strong": 20, "requested_strong": 20, "n_weak": 20, "requested_weak": 20}
+        summary = {"domain": "credit", "model": "m", "selection": sel, "metrics": {},
+                   "timing": {"seconds": {"load_model": 12.0, "embed": 50.0}, "total_s": 70.0, "batch_size": 16,
+                              "texts_through_model": {"direct_directions": 400, "scoring": 1000},
+                              "scoring_texts_per_s": 20.0,
+                              "peak_gpu_memory_gib": {"allocated": 3.2, "reserved": 3.6}}}
+        print_report(summary)
+        line = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("timing"))
+        assert "load_model 12s | embed 50s | total 70s" in line and "400 + 1000 texts" in line
+        assert "20 texts/s" in line and "3.2 GiB allocated" in line
 
 
 # --------------------------------------------------------------------------- selection ---------------
@@ -211,9 +262,11 @@ def test_end_to_end_on_a_tiny_model(manifest, monkeypatch):
     assert not set(selected) & probe_ids and rep["too_long_records"] == 0
     rows, convs = build_rows(selected, "credit", "credit_good", fmt, settings)
     drows, dconvs = build_direct_rows(selected, CREDIT_DESIGN, "credit_good", DOM.assessment_prompt, fmt)
+    timer = PhaseTimer()
     columns, geometry, sweep, saved = score_encoding(
         model, tok, "explicit", CREDIT_DESIGN, rows, convs, drows, dconvs, directions["explicit"], settings,
-        batch_size=16, max_length=1024, show_progress=False)
+        batch_size=16, max_length=1024, show_progress=False, timer=timer)
+    assert set(timer.seconds) == {"embed", "mechanism"} and all(v > 0 for v in timer.seconds.values())
     axes = ("sex", "age", "marital_status", "intersection")
     assert columns == (["baseline"] + [f"null_direct:{a}" for a in axes] + ["null_direct:joint"]
                        + [f"null_prompt:{a}" for a in axes] + [f"null_interaction:{a}" for a in axes]

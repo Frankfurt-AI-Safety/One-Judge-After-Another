@@ -264,6 +264,24 @@ magnitude alongside it, as the A2 arm already does with `identity_gap`.
 
 ## 4. Scale the ladder
 
+**Throughput trial 1 — 2026-09-25** (A100-80GB, Qwen3-0.6B, `run_cross_marker.py --n-strong 20 --n-weak 20`,
+batch 8, fresh embedding cache). Each domain put 12,882 texts through the model: 8,480 decision and
+placement texts, which grow with the record count, and 4,402 direct-probe texts for the 150 probe records,
+which do not.
+
+| domain | wall | forward passes | peak GPU memory |
+|---|---|---|---|
+| credit | 3 min 09 s | 42–85 s | 3.6 GB (all runs) |
+| hiring | 3 min 44 s | 41–82 s | |
+| education | 5 min 25 s | 156–312 s | |
+
+The forward-pass figures are ranges because they were summed from tqdm bars, which sometimes print their
+final line twice. Mean GPU utilisation was 25%: batch 8 leaves the card mostly idle. The rest of the wall
+time (model load, analysis) could not be split, because the log had no timestamps. Since then the runner
+records the seconds per phase, the texts through the model, the texts/s and the peak GPU memory in
+`summary["timing"]` and on the report's last line, and `--model` / `--batch-size` override the config.
+The trial outputs are named `trial_crossmarker_*`; they are throughput checks, not results.
+
 | models | `resources.slots` |
 |---|---|
 | 0.6B, DeBERTa, 3× 8B | 1 |
