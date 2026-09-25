@@ -10,12 +10,18 @@ Determined's trial machinery is needed. A task with a plain `entrypoint` just ru
 
 ## 0. Connect
 
+TU VPN up first. `det` 0.35.0 is installed in the Mac's system Python 3.14
+(`/Library/Frameworks/Python.framework/Versions/3.14/bin/det`), so no venv needs activating:
+
 ```bash
-source .venv-mlx/bin/activate                 # `det` 0.35.0 lives here
 export DET_MASTER=https://login01.ai.tu-darmstadt.de:8080
-det user login ck21zoly                        # TU VPN must be up first
+det user login ck21zoly
 det workspace ls
 ```
+
+`export` holds for one terminal only: repeat it in every new terminal, or add the line to `~/.zshrc`.
+Paste command lines without trailing `# ...` comments into the Mac terminal; zsh without
+`interactivecomments` passes them to the command as extra arguments.
 
 The configs are filled in for this workspace and TU-ID; nothing needs editing before a first
 launch. `<REGISTRY>` appears only in the optional custom-image route below.
@@ -89,11 +95,81 @@ both `image.cpu` and `image.cuda` in `config.yaml` at it.
 Everything lives on PFSS, never on the instance — instance storage is wiped when a task ends,
 and overrunning it crashes the whole compute node.
 
+**How the connection works.** There is no direct SSH login. `det shell start` launches a container on a
+cluster node (a *shell*, with PFSS mounted) and connects the terminal to it; `exit` only disconnects, the
+shell keeps running until `det shell kill <id>` or its 1 h `idle_timeout`. Typing commands on the cluster
+needs no further setup. `stage.sh`, however, runs **on the Mac** and copies with `rsync` over SSH, so it
+needs an SSH host alias (the `<ssh-target>`) in `~/.ssh/config`. Work with two terminals, one on the Mac
+(prompt ends in `%`) and one inside the shell (prompt `ck21zoly@<container>:...$`), and check the prompt
+before every command.
+
+**1. Start a staging shell** (Mac terminal; it turns into the cluster terminal). `slots=0` holds no GPU:
+
 ```bash
 det shell start -w IL_rm_bias --config-file cluster/config.yaml --config resources.slots=0
-det shell show-ssh-command <shell-id>
-./cluster/stage.sh <ssh-target>               # ~730 MB of code + corpora
 ```
+
+**2. Replacing an earlier copy** (cluster terminal; skip on a first staging). `pylibs/` and `hf_cache/` sit
+next to the repo folder, so swapping the folder needs no reinstall. Move the old copy aside rather than
+deleting it (earlier results live under its `artifacts/`), and reuse its raw corpora so they do not cross
+the VPN again (a corpus missing there is simply uploaded by `stage.sh`):
+
+```bash
+cd $PFSS
+mv OneBiasAfterAnotherFork OneBiasAfterAnotherFork.old
+for d in credit cv education; do mkdir -p OneBiasAfterAnotherFork/data/demographic/$d; cp -a OneBiasAfterAnotherFork.old/data/demographic/$d/raw OneBiasAfterAnotherFork/data/demographic/$d/; done
+which rsync
+```
+
+Do not reuse its `pairs.jsonl` / `cells.jsonl`: they come from an older generator. `which rsync` must
+print a path — rsync is needed on both ends (it is in the image as of 2026-09-25). Delete the `.old`
+folder once anything worth keeping is copied out.
+
+**3. Create the SSH alias** (Mac terminal). The shell id is the UUID in `det shell list`, **not** the
+container name in the cluster prompt:
+
+```bash
+det shell list
+det shell show-ssh-command <shell-id>
+```
+
+It prints `ssh -o "ProxyCommand=<proxy>" ... -i <key> ck21zoly@<shell-id>`. Copy its parts into
+`~/.ssh/config` (`chmod 600` it); drop `-tt`, which forces a terminal and breaks rsync:
+
+```
+Host det-stage
+    HostName <shell-id>
+    User ck21zoly
+    ProxyCommand <everything inside the quotes after ProxyCommand=, keeping %h>
+    IdentityFile <the path after -i>
+    IdentitiesOnly yes
+    StrictHostKeyChecking no
+```
+
+Every new shell has a new id and key, so `HostName` and `IdentityFile` change each time; the
+`ProxyCommand` stays.
+
+**4. Test, then stage** (Mac terminal, repo root):
+
+```bash
+ssh det-stage hostname
+./cluster/stage.sh det-stage
+```
+
+The test must print the container name without asking for a password (`Permission denied (publickey)`:
+wrong `User`/`IdentityFile`; a hang: VPN down or the shell ended). `stage.sh` sends code, the raw corpora
+(~665 MB, skipped where step 2 already copied them) and the generated pairs and cells (~1.9 GB); if it
+breaks off, rerun it — rsync skips what has arrived.
+
+**5. Check** (cluster terminal):
+
+```bash
+cd $PFSS/OneBiasAfterAnotherFork
+python -c "import torch, numpy, transformers; print(torch.__file__); print(numpy.__file__); print(transformers.__version__)"
+python -m pytest -q
+```
+
+`torch` and `numpy` must resolve under `/usr/local/lib/python3.10/dist-packages/` (see §1).
 
 Then, still on **slots=0** (downloading while holding an A100 wastes the allocation):
 

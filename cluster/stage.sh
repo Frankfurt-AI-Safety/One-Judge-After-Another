@@ -3,13 +3,15 @@
 # Determined shell already running (it is the only SSH route onto the cluster).
 #
 #   det shell start -w IL_rm_bias --config-file cluster/config.yaml --config resources.slots=0
-#   det shell show-ssh-command <shell-id>      # -> gives host/port/key for scp and rsync
-#   ./cluster/stage.sh <ssh-host-from-that-command>
+#   det shell show-ssh-command <shell-id>      # -> ProxyCommand, key and user for an SSH alias
+#   ./cluster/stage.sh det-stage               # the alias's name in ~/.ssh/config
 #
+# The target must be an SSH host alias: a shell is only reachable through Determined's ProxyCommand with
+# its own key, and both ssh and rsync below need that. Setup: cluster/README.md §2, step 3.
 # slots=0 matters: staging needs no GPU, and an idle GPU-holding shell burns the allocation.
 set -euo pipefail
 
-REMOTE="${1:?usage: stage.sh <ssh-target-from-det-shell-show-ssh-command>}"
+REMOTE="${1:?usage: stage.sh <ssh-alias> (see cluster/README.md §2)}"
 PFSS="/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias"
 REPO="$PFSS/OneBiasAfterAnotherFork"
 
@@ -19,7 +21,7 @@ ssh "$REMOTE" "mkdir -p '$REPO' '$PFSS/hf_cache' '$PFSS/artifacts/results/demogr
 echo "==> code (tracked files only; no venvs, no caches)"
 git ls-files -z | rsync -av --files-from=- --from0 ./ "$REMOTE:$REPO/"
 
-# ~730 MB total. Gitignored, so it is not covered by the git ls-files pass above.
+# Raw corpora ~665 MB (+ ~1.9 GB generated data below). Gitignored, so it is not covered by the git ls-files pass above.
 #
 # INODES: send the corpora as single large files and let the generators rebuild pairs.jsonl
 # on the cluster. The onboarding deck asks for <2M inodes per workspace; a handful of big
