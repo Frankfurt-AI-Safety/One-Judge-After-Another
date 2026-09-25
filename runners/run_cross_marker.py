@@ -248,6 +248,18 @@ def block_fits(domain: str, settings: Dict[str, Any], format_fn: Callable[[str, 
 
 
 # --------------------------------------------------------------------------- directions --------------
+def record_contrast_matrix(pairs: Sequence[Any], pos: Any, neg: Any) -> Any:
+    """One row per record (first-seen order): the mean over the record's pairs of the state difference
+    positive − negative. The unit that split-half reliabilities resample, since a record's pairs share
+    its content."""
+    import torch
+
+    by_record: Dict[str, List[int]] = defaultdict(list)
+    for i, p in enumerate(pairs):
+        by_record[str(p.metadata["source_record_id"])].append(i)
+    return torch.stack([(pos[idx] - neg[idx]).mean(0) for idx in by_record.values()])
+
+
 def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodings: Sequence[str], *,
                       probe_size: int, split_seed: int, batch_size: int, device: str, max_length: int,
                       reliability_seed: int = 0, probe_records: Optional[int] = None
@@ -282,10 +294,7 @@ def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodin
                                   max_length=max_length, show_progress=False)
             neg, _ = embed_states(model, tokenizer, [p.negative_text for p in pairs], batch_size=batch_size,
                                   max_length=max_length, show_progress=False)
-            by_record: Dict[str, List[int]] = defaultdict(list)
-            for i, p in enumerate(pairs):
-                by_record[str(p.metadata["source_record_id"])].append(i)
-            contrasts = torch.stack([(pos[idx] - neg[idx]).mean(0) for idx in by_record.values()])
+            contrasts = record_contrast_matrix(pairs, pos, neg)
             directions.setdefault(encoding, {})[axis] = probe
             probe_ids |= ids
             meta[f"{encoding}/{axis}"] = {"n_pairs": len(pairs), "n_records": len(ids),

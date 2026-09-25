@@ -301,6 +301,32 @@ and is the largest phase for credit and hiring; batch 32 buys +25% forward speed
 education, too little to leave batch 8. The 8B model's forward pass is ~4x slower than the 0.6B's, and it
 passed `verify_score_path` (Skywork-Reward-V2-Llama-3.1-8B, 2026-09-25).
 
+**The pilot** (pilot-then-freeze; the rules are stated in the working notes, 2026-09-25, before any pilot run).
+`cluster/pilot.sh <lane>` runs one lane per GPU: `small` = Qwen3-0.6B, `8b` = Skywork-Reward-V2-Llama-3.1-8B.
+Each lane runs the probe-size curve (`runners/run_probe_curve.py`) for credit, hiring and PERSUADE, then the
+cross-marker design on the full credit and education pools and 600 + 600 hiring records. Expected: ~4 h for
+`small`, ~9–10 h for `8b`. The two lanes use both GPUs the workspace allows, so nothing else can run meanwhile.
+
+1. Stage first (§2). `stage.sh` copies **tracked** files only, so `cluster/pilot.sh` and the two new runners
+   must be committed (or at least `git add`ed) before staging.
+2. Submit both lanes from the Mac (repo root, `DET_MASTER` exported):
+
+   ```bash
+   det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config idle_timeout=24h --config description=pilot_small bash cluster/pilot.sh small
+   det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config idle_timeout=24h --config description=pilot_8b bash cluster/pilot.sh 8b
+   ```
+
+   Unattended: the laptop can close. `idle_timeout=24h` guards against Determined counting a command without
+   a connection as idle; the command ends when its lane does.
+3. Check: `det command list` (state), `det command logs <id> --tail 20` (one `start` / `done` / `FAILED` line
+   per step, with its timing line), and the per-step logs in `$PFSS/pilot_logs/`.
+4. A lane that stopped (a failed step, a killed command) is resubmitted with the same command: steps whose
+   JSON exists in `artifacts/results/demographic/pilot/` are skipped, and the embedding cache
+   (`$PFSS/embedding_cache`) serves every state already computed.
+5. Afterwards, on any shell: `python runners/pilot_sizing.py --inputs artifacts/results/demographic/pilot/*_*.json`
+   prints the records needed per group (for δ × m) and the probe-records answer per domain. The pilot JSONs
+   carry ids and numbers only, so they can be copied to the Mac.
+
 | models | `resources.slots` |
 |---|---|
 | 0.6B, DeBERTa, 3× 8B | 1 |
