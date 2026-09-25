@@ -282,6 +282,25 @@ records the seconds per phase, the texts through the model, the texts/s and the 
 `summary["timing"]` and on the report's last line, and `--model` / `--batch-size` override the config.
 The trial outputs are named `trial_crossmarker_*`; they are throughput checks, not results.
 
+**Throughput trial 2 — 2026-09-25** (A100-80GB, `summary["timing"]`, one empty cache per run; up to two
+runs in parallel, so the CPU phases are noisy by up to ±50%). Seconds per phase:
+
+| run | load | direct dirs | prepare | embed | mechanism | metrics | total | texts/s | peak GiB |
+|---|---|---|---|---|---|---|---|---|---|
+| credit 20+20, 0.6B, b8 | 9 | 121 | 4 | 35 | 140 | 10 | 319 | 228 | 1.4 |
+| credit 60+60, 0.6B, b8 | 7 | 95 | 14 | 106 | 322 | 23 | 567 | 228 | 1.4 |
+| credit 60+60, 0.6B, b32 | 6 | 90 | 14 | 85 | 307 | 23 | 525 | 285 | 2.2 |
+| education 20+20, 0.6B, b8 | 8 | 189 | 11 | 104 | 185 | 11 | 509 | 78 | 2.5 |
+| education 60+60, 0.6B, b8 | 5 | 120 | 33 | 299 | 134 | 24 | 617 | 81 | 2.6 |
+| education 60+60, 0.6B, b32 | 5 | 124 | 32 | 287 | 158 | 24 | 630 | 85 | 6.9 |
+| credit 20+20, Llama-3.1-8B, b8 | 27 | 189 | 3 | 144 | 166 | 10 | 540 | 56 | 15.2 |
+
+Reading: 202 scoring texts per record; the direct directions are a fixed ~1.5–3 min (4,800 texts, mostly
+not forward passes); the **mechanism layer runs on the CPU and grows with n** (~2.3 s per record for credit)
+and is the largest phase for credit and hiring; batch 32 buys +25% forward speed on credit and +5% on
+education, too little to leave batch 8. The 8B model's forward pass is ~4x slower than the 0.6B's, and it
+passed `verify_score_path` (Skywork-Reward-V2-Llama-3.1-8B, 2026-09-25).
+
 | models | `resources.slots` |
 |---|---|
 | 0.6B, DeBERTa, 3× 8B | 1 |
@@ -313,6 +332,14 @@ Create a project first: `det project create IL_rm_bias scaling`.
 
 ## Things that will bite
 
+- **At most 2 GPUs at once per workspace.** The cluster's "GPU slots limiter" counts every running
+  allocation of the workspace (shells, commands, experiments; `slots=0` shells count 0). A task that
+  would exceed 2 is **not queued**: it starts, is stopped at once with exit code 1, and `det command
+  list` shows it TERMINATED (`Allocations slots limit reached - Limit: 2` in `det command logs`). Submit
+  a third job only after one has finished. A 70B run (`slots: 2`) needs the workspace to itself.
+- **Unattended runs:** `det command run -d ... bash -c "..."` runs one command in its own container,
+  independent of the SSH connection and VPN, and frees the GPU when it exits. A run started inside a
+  `det shell` dies with the connection (laptop closed, VPN down).
 - **No default compute pool** on this workspace, so `resource_pool: 42_Compute` must be set on
   every launch. It is in `config.yaml`; do not drop it. `42_Priority` does not exist for us.
 - **Idle shells keep burning GPU quota.** `det shell kill <id>` when done, or launch with
