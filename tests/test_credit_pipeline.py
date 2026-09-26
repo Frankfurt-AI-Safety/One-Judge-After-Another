@@ -20,7 +20,7 @@ import pytest
 from substrates.credit_ingest import GermanCreditRecord, load_german_credit
 from substrates.credit_render import render_profile, TEMPLATES
 from pairs.factorial import factorial_pairs
-from pairs.validate import validate_pair, validate_pairs, Thresholds
+from pairs.validate import REASON_CODES, Thresholds, tally_reasons, validate_pair
 
 
 def _sex_pair(rec, seed=0):
@@ -230,11 +230,11 @@ class TestMarkersAndGate:
 
     def test_gate_rejects_content_drift(self):
         pair = _sex_pair(_fake_record())
-        # corrupt a financial fact on one side only → not single-axis anymore
+        # corrupt a financial fact on one side only → a difference outside the marker slot
         pair.text_b = pair.text_b.replace("2000 EUR", "9999 EUR")
         res = validate_pair(pair)
         assert not res.ok
-        assert any("single-axis" in r or "non-marker" in r for r in res.reasons)
+        assert res.codes == ["content_differs"]
 
     def test_gate_rejects_length_blowup(self):
         pair = _sex_pair(_fake_record())
@@ -242,11 +242,50 @@ class TestMarkersAndGate:
         res = validate_pair(pair, Thresholds(max_char_delta=12, max_token_delta=3))
         assert not res.ok
 
-    def test_validate_pairs_report(self):
-        recs = [_fake_record(f"r{i}") for i in range(5)]
-        pairs = [_sex_pair(r) for r in recs]
-        passed, failed, report = validate_pairs(pairs)
-        assert report["n_passed"] == 5 and report["n_failed"] == 0
+    def test_gate_rejects_a_clause_moved_to_another_slot(self):
+        # stripping the clauses leaves equal remainders, but side B carries its clause elsewhere
+        pair = _sex_pair(_fake_record())
+        i = pair.text_a.index(pair.clause_a)
+        body = pair.text_a[:i] + pair.text_a[i + len(pair.clause_a):]
+        pair.text_b = body + pair.clause_b
+        assert pair.text_a != body + pair.clause_a  # the original slot is not at the end
+        res = validate_pair(pair)
+        assert res.codes == ["clause_position"]
+
+    def test_gate_rejects_a_pair_with_no_contrast(self):
+        pair = _sex_pair(_fake_record())
+        pair.clause_b, pair.text_b = pair.clause_a, pair.text_a
+        assert validate_pair(pair).codes == ["no_contrast"]
+
+    def test_gate_always_runs_the_readability_check(self):
+        # same length in words, far apart in syllables: only the Flesch check can catch it
+        pair = _sex_pair(_fake_record())
+        pair.clause_a, pair.clause_b = " She is a cat.", " Heterogeneous administrative responsibilities."
+        pair.text_a, pair.text_b = "Loan." + pair.clause_a, "Loan." + pair.clause_b
+        res = validate_pair(pair, Thresholds(max_char_delta=100, max_token_delta=100))
+        assert res.codes == ["flesch_delta"]
+        assert res.metrics["flesch_delta"] > 8.0
+
+    def test_every_failure_carries_a_stable_code(self):
+        pair = _sex_pair(_fake_record())
+        pair.text_a = pair.text_a.replace(pair.clause_a, pair.clause_a * 2) + " padding" * 20
+        res = validate_pair(pair)
+        assert len(res.codes) == len(res.reasons) and set(res.codes) <= set(REASON_CODES)
+        assert {"clause_not_once", "content_differs", "char_delta", "token_delta"} <= set(res.codes)
+
+    def test_tally_counts_by_code_not_by_measured_value(self):
+        # three pairs failing the length bound by different amounts: one key, not three
+        results = []
+        for n in (20, 21, 22):
+            pair = _sex_pair(_fake_record())
+            pair.text_a = pair.text_a + "x" * n
+            results.append(validate_pair(pair))
+        counts = {"char_delta": 1}
+        tally_reasons(results, counts)
+        assert counts["char_delta"] == 4
+        assert counts["content_differs"] == 3
+        tally_reasons([validate_pair(_sex_pair(_fake_record()))], counts)  # a passing pair adds nothing
+        assert sum(counts.values()) == 7
 
 
 # --------------------------------------------------------------------------- loader

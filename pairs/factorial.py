@@ -61,6 +61,7 @@ from pairs.markers import (
     AGE_OLDER, AGE_YOUNG, BLACK_FEMALE_NAMES, BLACK_MALE_NAMES, FEMALE_NAMES, MALE_NAMES,
     STAGE_LADDER_AXES, GeneratedPair, MarkerSpec, make_marker,
 )
+from pairs.validate import tally_reasons
 
 ENCODINGS = ("explicit", "proxy")
 # Birth years are computed from a fixed reference year so they stay reproducible.
@@ -408,7 +409,7 @@ def build_factorial_rows(
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     """Render, gate and serialise every record/template/encoding block.
 
-    A block with any pair failing ``validate`` (returns an object with ``.ok`` and ``.reasons``) is
+    A block with any pair failing ``validate`` (returns a `pairs.validate.ValidationResult`) is
     dropped whole, so the factorial stays balanced. ``real_fields(rec)`` (the record's real attributes,
     never rendered, incl. its quality label) goes onto the block's cells row and onto every pair row.
     Returns ``(pair_rows, cell_rows, gate_report)``.
@@ -433,11 +434,7 @@ def build_factorial_rows(
                 failures = [res for res in (validate(p) for p in pairs) if not res.ok]
                 if failures:
                     gate[enc]["blocks_dropped"] += 1
-                    reasons = gate[enc]["failure_reasons"]
-                    for res in failures:
-                        for rsn in res.reasons:
-                            key = rsn.split(" (")[0].split(" >")[0]
-                            reasons[key] = reasons.get(key, 0) + 1
+                    tally_reasons(failures, gate[enc]["failure_reasons"])
                     continue
                 gate[enc]["blocks_kept"] += 1
                 for p in pairs:

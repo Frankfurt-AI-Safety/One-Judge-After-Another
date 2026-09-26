@@ -166,6 +166,15 @@ class TestGenerator:
         assert len(cells) == 2 * 2 * 2 and all(len(c["cells"]) == 8 for c in cells)
         assert report["gate"]["explicit"] == {"blocks_kept": 4, "blocks_dropped": 0, "failure_reasons": {}}
 
+    def test_gate_report_counts_failures_by_reason_code(self):
+        from pairs.validate import Thresholds
+        from runners.generate_credit import build_dataset
+
+        # a zero char bound fails every pair whose poles differ in length; the report keys by code only
+        _, _, report = build_dataset(self._records(), seed=7, thr=Thresholds(max_char_delta=0))
+        g = report["gate"]["explicit"]
+        assert g["blocks_dropped"] == 4 and set(g["failure_reasons"]) == {"char_delta"}
+
     def test_build_dataset_is_deterministic(self):
         from runners.generate_credit import build_dataset
 

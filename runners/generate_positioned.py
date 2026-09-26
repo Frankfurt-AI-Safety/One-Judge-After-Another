@@ -36,7 +36,7 @@ from pairs.factorial import stable_rng
 from pairs.positionality import (
     DEFAULT_HEADER_TEMPLATE, POSITIONED_AXES, POSITIONS, block_id_suffix, make_positioned_pairs,
 )
-from pairs.validate import Thresholds, validate_pair
+from pairs.validate import Thresholds, tally_reasons, validate_pair
 from pairs.manifest import EDU_ATTRIBUTION, pair_to_record, write_manifest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s",
@@ -107,10 +107,7 @@ def main() -> None:
                 failures = [res for res in (validate_pair(p, thr) for p in pairs) if not res.ok]
                 if failures:
                     dropped_blocks += 1
-                    for res in failures:
-                        for rsn in res.reasons:
-                            k = rsn.split(" (")[0].split(" >")[0]
-                            fail_reasons[k] = fail_reasons.get(k, 0) + 1
+                    tally_reasons(failures, fail_reasons)
                     continue
                 kept_blocks += 1
                 for pair in pairs:

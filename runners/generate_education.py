@@ -49,7 +49,7 @@ from substrates.education_ingest import real_fields
 from substrates.education_render import EDU_TEMPLATES, render_essay
 from pairs.factorial import EDUCATION_DESIGN, build_factorial_rows, stable_rng
 from pairs.markers import STAGE_LADDER_AXES, make_pair
-from pairs.validate import Thresholds, validate_pair
+from pairs.validate import Thresholds, tally_reasons, validate_pair
 from pairs.manifest import EDU_ATTRIBUTION, pair_to_record, write_manifest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s",
@@ -168,10 +168,7 @@ def build_stage_rows(records, *, axes, encodings, templates, n_per, seed, valida
         failures = [res for res in (validate(pair) for _, _, pair in block) if not res.ok]
         if failures:
             dropped += 1
-            for res in failures:
-                for rsn in res.reasons:
-                    k = rsn.split(" (")[0].split(" >")[0]
-                    fail_reasons[k] = fail_reasons.get(k, 0) + 1
+            tally_reasons(failures, fail_reasons)
             continue
         kept += 1
         for axis, enc, pair in block:

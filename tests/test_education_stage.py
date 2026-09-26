@@ -182,8 +182,9 @@ class TestSharedStageSample:
 
         def validate(pair):
             bad = pair.record_id == "essay-003" and pair.axis == "stage_masters"
-            return ValidationResult(ok=not bad, reasons=["forced"] if bad else [], metrics={})
+            return ValidationResult(ok=not bad, reasons=["forced"] if bad else [], codes=["forced"] if bad else [])
 
         rows, rep = self._rows(validate=validate, n_per=100)
         assert "essay-003" not in {r["source_record_id"] for r in rows}
         assert rep["blocks_dropped"] == len(EDU_TEMPLATES)
+        assert rep["failure_reasons"] == {"forced": 2 * len(EDU_TEMPLATES)}  # explicit + proxy per block
