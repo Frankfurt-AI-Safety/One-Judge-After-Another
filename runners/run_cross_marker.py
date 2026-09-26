@@ -60,12 +60,14 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from pairs.cross_marker import CellBlock, build_block_items, fits_max_length, load_cell_blocks
 from pairs.factorial import FactorialDesign, stable_rng
-from scoring.cross_marker_metrics import cross_marker_metrics, placement_check
+from scoring.cross_marker_metrics import RewardIndex, cross_marker_metrics, placement_check, sweep_point
 from scoring.dataset_base import format_conversation
 
 logger = logging.getLogger(__name__)
@@ -183,22 +185,24 @@ def select_records(
 
 # --------------------------------------------------------------------------- items -> rows -----------
 def build_rows(selected: Dict[str, List[CellBlock]], domain: str, quality_field: str,
-               format_fn: Callable[[str, str], Any], settings: Dict[str, Any]
+               format_fn: Callable[[str, str], Any], settings: Dict[str, Any],
+               cache: Optional[Dict[Tuple[str, str, str], List[Any]]] = None
                ) -> Tuple[List[Dict[str, Any]], List[Any]]:
     """One row per (record, encoding, template, cell, response) and its formatted conversation (same
-    order). Rows carry ids and labels only, never text."""
+    order). Rows carry ids and labels only, never text. ``cache`` holds the conversations `block_fits`
+    already formatted (per block, in item order), so they are not rendered twice."""
     rows: List[Dict[str, Any]] = []
     convs: List[Any] = []
     for rid, blocks in selected.items():
         for block in blocks:
             strong = block.is_strong(quality_field)
-            for item in build_block_items(block, domain, seed=settings["seed"],
-                                          n_paraphrases=settings["paraphrases"],
-                                          include_unmarked=settings["include_unmarked"]):
+            items = block_items(block, domain, settings)
+            cached = (cache or {}).get(_block_key(block))
+            for k, item in enumerate(items):
                 rows.append({"record_id": rid, "template_id": item.template_id, "encoding": item.encoding,
                              "cell": "unmarked" if item.cell is None else list(item.cell),
                              "response": item.response, "paraphrase": item.paraphrase, "strong": strong})
-                convs.append(format_fn(item.prompt, item.text))
+                convs.append(cached[k] if cached is not None else format_fn(item.prompt, item.text))
     return rows, convs
 
 
@@ -233,21 +237,51 @@ def document_lengths(selected: Dict[str, List[CellBlock]], tokenizer: Any) -> Di
 
 def token_counter(tokenizer: Any) -> Callable[[Any], int]:
     """Tokens of one formatted conversation as the forward pass tokenizes it (special tokens included,
-    no truncation); pair-format inputs are (prompt, response) tuples."""
+    no truncation); pair-format inputs are (prompt, response) tuples. ``count.batch(convs)`` counts a list
+    in one tokenizer call (the same counts, far fewer calls)."""
     def count(conv: Any) -> int:
         ids = tokenizer(*conv)["input_ids"] if isinstance(conv, tuple) else tokenizer(conv)["input_ids"]
         return len(ids)
+
+    def batch(convs: Sequence[Any]) -> List[int]:
+        if not convs:
+            return []
+        if isinstance(convs[0], tuple):
+            ids = tokenizer([c[0] for c in convs], [c[1] for c in convs])["input_ids"]
+        else:
+            ids = tokenizer(list(convs))["input_ids"]
+        return [len(i) for i in ids]
+
+    count.batch = batch
     return count
 
 
+def _block_key(block: CellBlock) -> Tuple[str, str, str]:
+    return (block.record_id, block.encoding, block.template_id)
+
+
+def block_items(block: CellBlock, domain: str, settings: Dict[str, Any]) -> List[Any]:
+    return build_block_items(block, domain, seed=settings["seed"], n_paraphrases=settings["paraphrases"],
+                             include_unmarked=settings["include_unmarked"])
+
+
 def block_fits(domain: str, settings: Dict[str, Any], format_fn: Callable[[str, str], Any],
-               count: Callable[[Any], int], max_length: int) -> Callable[[List[CellBlock]], bool]:
+               count: Callable[[Any], int], max_length: int,
+               cache: Optional[Dict[Tuple[str, str, str], List[Any]]] = None
+               ) -> Callable[[List[CellBlock]], bool]:
+    """The length guard for `select_records`. Formats each candidate block's conversations once; with a
+    ``cache`` they are kept for `build_rows`. A counter with ``.batch`` (`token_counter`) counts them in one
+    call per record."""
     def fits(blocks: List[CellBlock]) -> bool:
-        return all(fits_max_length(
-            (format_fn(i.prompt, i.text) for i in build_block_items(
-                b, domain, seed=settings["seed"], n_paraphrases=settings["paraphrases"],
-                include_unmarked=settings["include_unmarked"])),
-            count, max_length) for b in blocks)
+        per_block = []
+        for b in blocks:
+            convs = [format_fn(i.prompt, i.text) for i in block_items(b, domain, settings)]
+            if cache is not None:
+                cache[_block_key(b)] = convs
+            per_block.append(convs)
+        if hasattr(count, "batch"):
+            return all(n <= max_length for n in count.batch([c for convs in per_block for c in convs]))
+        return all(fits_max_length(convs, count, max_length) for convs in per_block)
     return fits
 
 
@@ -258,10 +292,13 @@ def record_contrasts(pairs: Sequence[Any], pos: Any, neg: Any) -> Tuple[List[str
     since a record's pairs share its content."""
     import torch
 
-    by_record: Dict[str, List[int]] = defaultdict(list)
-    for i, p in enumerate(pairs):
-        by_record[str(p.metadata["source_record_id"])].append(i)
-    return list(by_record), torch.stack([(pos[idx] - neg[idx]).mean(0) for idx in by_record.values()])
+    order: Dict[str, int] = {}
+    owner = torch.tensor([order.setdefault(str(p.metadata["source_record_id"]), len(order)) for p in pairs],
+                         dtype=torch.long)
+    diff = (pos - neg).float()
+    sums = torch.zeros(len(order), diff.shape[1]).index_add_(0, owner, diff)   # one op, not one per record
+    counts = torch.bincount(owner, minlength=len(order)).float()
+    return list(order), sums / counts[:, None]
 
 
 def record_contrast_matrix(pairs: Sequence[Any], pos: Any, neg: Any) -> Any:
@@ -429,7 +466,15 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
         "head": head.kind if not head.gated else f"{head.kind} (mean effective head over the rows)",
     }
 
-    # α-sweep of the own-axis directions (states in memory: only the head runs per α)
+    # α-sweep of the own-axis directions (states in memory: only the head runs per α). Each point needs one
+    # disparity and one AUC, so it is computed from a reward vector (`sweep_point`), not the full metrics.
+    def x_rewards(basis: torch.Tensor, alpha: float, sub: Optional[Sequence[int]] = None) -> np.ndarray:
+        pick = (lambda t: t) if sub is None else (lambda t: t[list(sub)])
+        _, r = rewards_from_hidden(model, pick(hx), dtype, basis, null_alpha=alpha,
+                                   gates=None if gx is None else pick(gx))
+        return r.double().numpy()
+
+    sweep_index = RewardIndex(x_rows, design, encoding)
     sweep: Dict[str, Any] = {}
     for kind in ("direct", "prompt", "interaction"):
         for axis in axes:
@@ -438,19 +483,14 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
                 continue
             curve = {}
             for alpha in settings["alphas"]:
+                vec = np.empty(len(x_rows))
                 if kind == "direct":
-                    apply("_alpha", directions[name], alpha, d_sub=[])
+                    vec[:] = x_rewards(directions[name], alpha)
                 else:
                     for f, u in fitted[name].items():
-                        apply("_alpha", u, alpha, x_sub=x_by_fold[f], d_sub=[])
-                m = cross_marker_metrics(x_rows, design, encoding, reward_key="_alpha", n_boot=1,
-                                         seed=settings["seed"])
-                d = m["margins"]["D"].get("strong") or m["margins"]["D"]["weak"]
-                curve[str(alpha)] = {"disparity": d["disparity"][axis]["mean"],
-                                     "auc_marked": m["accuracy"]["auc_marked"]}
+                        vec[x_by_fold[f]] = x_rewards(u, alpha, x_by_fold[f])
+                curve[str(alpha)] = sweep_point(sweep_index, vec[sweep_index.pos], axis)
             sweep[name] = curve
-    for r in x_rows:
-        r.pop("_alpha", None)
     saved = {"direct": {n: v for n, v in directions.items() if n.startswith("direct:")},
              "full_data": {n: v for n, v in directions.items() if not n.startswith("direct:")},
              "cross_fitted": fitted, "folds": folds}
@@ -641,6 +681,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--model", default=None,
                     help="Overrides the config's model_path (e.g. an 8B RM on a 0.6B config)")
     ap.add_argument("--batch-size", type=int, default=None, help="Overrides the config's batch_size")
+    ap.add_argument("--revision", default=None,
+                    help="Hub revision of the model (default: pinned in scoring.backend, else main)")
     ap.add_argument("--out", type=Path, default=None,
                     help="Default artifacts/results/demographic/crossmarker_{domain}_{model}.json")
     return ap
@@ -649,7 +691,8 @@ def build_parser() -> argparse.ArgumentParser:
 def apply_overrides(cfg: Any, args: argparse.Namespace) -> Any:
     """The CLI over the config (config precedence: YAML < CLI), for the keys the runner reads from ``cfg``."""
     for attr, value in (("device", args.device), ("model_path", args.model),
-                        ("batch_size", args.batch_size), ("probe_records", args.probe_records)):
+                        ("batch_size", args.batch_size), ("probe_records", args.probe_records),
+                        ("model_revision", getattr(args, "revision", None))):
         if value is not None:
             setattr(cfg, attr, value)
     return cfg
@@ -706,12 +749,14 @@ def main() -> None:
     timer.lap("direct_directions")
 
     format_fn = lambda prompt, response: format_conversation(tok, prompt, response)
-    fits = block_fits(dom.name, settings, format_fn, token_counter(tok), cfg.max_length)
+    formatted: Dict[Tuple[str, str, str], List[Any]] = {}     # rendered once, by the length guard
+    fits = block_fits(dom.name, settings, format_fn, token_counter(tok), cfg.max_length, cache=formatted)
     selected, selection = select_records(
         blocks, quality_field=dom.quality_field, encodings=settings["encodings"], templates=templates,
         exclude=probe_ids, n_strong=settings["n_strong"], n_weak=settings["n_weak"],
         seed=settings["seed"], fits=fits)
-    rows, convs = build_rows(selected, dom.name, dom.quality_field, format_fn, settings)
+    rows, convs = build_rows(selected, dom.name, dom.quality_field, format_fn, settings, cache=formatted)
+    formatted.clear()                                          # convs holds what is needed
     lengths = document_lengths(selected, tok)
     for row in rows:                      # stored with the rewards, so quality tracking recomputes offline
         row["doc_tokens"] = lengths[(row["record_id"], row["template_id"])]
@@ -737,13 +782,15 @@ def main() -> None:
         all_columns += [c for c in columns if c not in all_columns]
         enc_rows = [r for r in rows if r["encoding"] == encoding]
         enc_direct = [r for r in direct_rows if r["encoding"] == encoding]
+        index = RewardIndex(enc_rows, design, encoding)       # once per encoding, shared by every column
         metrics[encoding] = {c: cross_marker_metrics(enc_rows, design, encoding, reward_key=c,
                                                      n_boot=settings["n_boot"], seed=settings["seed"],
-                                                     n_length_bins=settings["length_bins"])
+                                                     n_length_bins=settings["length_bins"], index=index)
                              for c in columns}
         if enc_direct:
             placement[encoding] = {c: placement_check(enc_direct, enc_rows, design, encoding, reward_key=c,
-                                                      n_boot=settings["n_boot"], seed=settings["seed"])
+                                                      n_boot=settings["n_boot"], seed=settings["seed"],
+                                                      index=index)
                                    for c in columns}
         timer.lap("metrics")
 

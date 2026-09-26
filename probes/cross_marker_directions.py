@@ -86,21 +86,38 @@ def record_contrasts(states: torch.Tensor, index: Mapping[StateKey, int], record
         templates_of.setdefault(rid, [])
         if tid not in templates_of[rid]:
             templates_of[rid].append(tid)
-    out = torch.zeros(len(record_ids), states.shape[1], dtype=torch.float32)
+    plus_idx: List[int] = []
+    plus_of: List[int] = []
+    minus_idx: List[int] = []
+    minus_of: List[int] = []
+    units = torch.zeros(len(record_ids), dtype=torch.float32)
     for n, rid in enumerate(record_ids):
-        plus_idx: List[int] = []
-        minus_idx: List[int] = []
-        units = 0
         for plus, minus in _terms(kind, axis, design, encoding, sorted(templates_of[rid]), responses):
             keys_p = [(rid, *k) for k in plus]
             keys_m = [(rid, *k) for k in minus]
             if all(k in index for k in keys_p + keys_m):
                 plus_idx += [index[k] for k in keys_p]
                 minus_idx += [index[k] for k in keys_m]
-                units += 1
-        if units == 0:
-            raise ValueError(f"record {rid}: no complete {kind} contrast for axis {axis!r}")
-        out[n] = (states[plus_idx].float().sum(0) - states[minus_idx].float().sum(0)) / units
+                plus_of += [n] * len(keys_p)
+                minus_of += [n] * len(keys_m)
+                units[n] += 1
+    if (units == 0).any():
+        rid = record_ids[int((units == 0).nonzero()[0])]
+        raise ValueError(f"record {rid}: no complete {kind} contrast for axis {axis!r}")
+    # all records' sums at once (a per-record loop of tiny ops was the mechanism layer's cost, 2026-09-26)
+    plus = _segment_sum(states, plus_idx, plus_of, len(record_ids))
+    minus = _segment_sum(states, minus_idx, minus_of, len(record_ids))
+    return (plus - minus) / units[:, None]
+
+
+def _segment_sum(states: torch.Tensor, rows: List[int], owner: List[int], n: int,
+                 chunk: int = 1 << 15) -> torch.Tensor:
+    """float32 [n, d]: row ``owner[k]`` accumulates ``states[rows[k]]``, gathered in chunks so no more than
+    ``chunk`` state rows are copied at a time."""
+    out = torch.zeros(n, states.shape[1], dtype=torch.float32)
+    rows_t, owner_t = torch.tensor(rows, dtype=torch.long), torch.tensor(owner, dtype=torch.long)
+    for start in range(0, len(rows), chunk):
+        out.index_add_(0, owner_t[start:start + chunk], states[rows_t[start:start + chunk]].float())
     return out
 
 

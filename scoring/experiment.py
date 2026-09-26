@@ -46,6 +46,10 @@ class ExperimentConfig:
     
     trust_remote_code: bool = True
     """Whether to trust remote code when loading model"""
+
+    model_revision: Optional[str] = None
+    """Hub revision (commit) of the model; None = the pinned default in `scoring.backend.PINNED_REVISIONS`,
+    else the Hub's main branch"""
     
     # Dataset settings
     dataset_source: str = ""
@@ -140,6 +144,7 @@ class ExperimentConfig:
             "bias_type": self.bias_type,
             "model_path": self.model_path,
             "trust_remote_code": self.trust_remote_code,
+            "model_revision": self.model_revision,
             "dataset_source": self.dataset_source,
             "dataset_class": self.dataset_class,
             "probe_size": self.probe_size,

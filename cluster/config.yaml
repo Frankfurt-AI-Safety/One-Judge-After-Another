@@ -63,6 +63,13 @@ environment:
     # falling back if this is 1 and the package is absent.
     - HF_HUB_ENABLE_HF_TRANSFER=1
     - TOKENIZERS_PARALLELISM=false
+    # Cap CPU threads. Default = every core of the node, and the mechanism layer runs ~15k tiny torch ops
+    # (per-record sums in probes/cross_marker_directions.py): each paid the thread-pool overhead, so the
+    # cross-marker mechanism layer ran 13x slower (profiled 2026-09-26: credit 0.6B explicit, 1289 s -> 96 s,
+    # whole run 1513 s -> 258 s). GPU work is unaffected. 2, 8 and 16 threads all gave 257-258 s: the cap
+    # matters, not its value.
+    - OMP_NUM_THREADS=8
+    - MKL_NUM_THREADS=8
     # Repo first, then the PFSS-installed extras (option (b) above). Harmless if unused.
     - PYTHONPATH=/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/OneBiasAfterAnotherFork:/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/pylibs
 

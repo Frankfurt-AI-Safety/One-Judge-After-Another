@@ -373,6 +373,11 @@ Create a project first: `det project create IL_rm_bias scaling`.
   would exceed 2 is **not queued**: it starts, is stopped at once with exit code 1, and `det command
   list` shows it TERMINATED (`Allocations slots limit reached - Limit: 2` in `det command logs`). Submit
   a third job only after one has finished. A 70B run (`slots: 2`) needs the workspace to itself.
+- **Thread oversubscription.** Without a cap, torch and numpy use every core of the node for each
+  operation, and the cross-marker mechanism layer (thousands of tiny per-record torch ops) ran 13x slower:
+  credit 0.6B explicit, 1,289 s vs 96 s with `OMP_NUM_THREADS=8` (profiled 2026-09-26; the whole run 1,513 s
+  vs 258 s). `config.yaml` now sets `OMP_NUM_THREADS=8` and `MKL_NUM_THREADS=8` for every task. The pilot
+  timings in this README predate the cap.
 - **Unattended runs:** `det command run -d ... bash -c "..."` runs one command in its own container,
   independent of the SSH connection and VPN, and frees the GPU when it exits. A run started inside a
   `det shell` dies with the connection (laptop closed, VPN down).
