@@ -1,0 +1,71 @@
+# Cohort and class signals of the proxy first names (pairs/markers.py name pools).
+#
+# Purpose: the pool-level check of the assumption stated above the pools in pairs/markers.py — that a
+# name's sex (and, in education, ethnicity) signal dominates its age-cohort and class signals. What biases
+# a proxy contrast is the difference between the two pools' MEANS (names are drawn uniformly per block),
+# not the signal of any single name. Working notes, 2026-09-26.
+# Data only: no code reads this file yet; tests/test_name_pool_signals.py keeps it in sync with the pools.
+#
+# ssa_*  — US Social Security Administration national baby-name counts, 1880-2017, as packaged in the R
+#          package `babynames` 1.0.1 (CRAN, CC0; data/babynames.rda md5 863695efb777349b1244ced90526821e).
+#          Only the births of the name to the pool's sex count. Spelling matched case-insensitively
+#          (SSA writes "Daquan", "Deandre"). median/q25/q75: the count-weighted quantiles of the birth year
+#          (births, not the living population: no mortality adjustment). births: total count 1880-2017.
+#          same_sex_share: the pool sex's share of all births with the name (a sex-ambiguity indicator).
+#          Truncated at 2017: names still near their peak then (Logan, Claire, Abigail, Hunter) would have
+#          later medians with 2018+ data. Claire is bimodal (IQR 1947-2008), so its median is a poor summary.
+# gaddis_* — Gaddis (2017), "How Black Are Lakisha and Jamal?", Sociological Science 4:469-489, online
+#          supplement Table A1: New York State birth records 1994-2012. pct_some_college: % of mothers
+#          with some college or more among children given the name — an objective SES correlate of the
+#          naming families, NOT a perceived-class rating. race: plurality race of the mothers (W/B).
+#          ny_births: the name's total count there (small for Lakisha 22, Latonya 15: noisy).
+#          Haim et al. (2024) drew all 40 names from Gaddis's 200-name set, so every name is covered.
+# Perceived class: Crabtree et al. (2023, Scientific Data 10:130, CC BY 4.0) rate perceived income and
+#          education for 600 first+last names, but only 5 of our 40 first names are among theirs (Lakisha,
+#          Latonya, Latoya, Tamika, Tanisha — one pool), so it cannot give a between-pool gap. Not included.
+# Retrieved 2026-09-26.
+
+female_white:   # pairs.markers.FEMALE_NAMES
+  Abigail: {ssa_median_birth_year: 2004, ssa_q25: 1998, ssa_q75: 2010, ssa_births: 356404, ssa_same_sex_share: 0.998, gaddis_pct_some_college: 73.8, gaddis_ny_births: 11857, gaddis_race: W}
+  Claire: {ssa_median_birth_year: 1996, ssa_q25: 1947, ssa_q75: 2008, ssa_births: 182353, ssa_same_sex_share: 0.988, gaddis_pct_some_college: 89.2, gaddis_ny_births: 3298, gaddis_race: W}
+  Emily: {ssa_median_birth_year: 1996, ssa_q25: 1985, ssa_q75: 2004, ssa_births: 841491, ssa_same_sex_share: 0.998, gaddis_pct_some_college: 64.3, gaddis_ny_births: 26406, gaddis_race: W}
+  Katelyn: {ssa_median_birth_year: 1999, ssa_q25: 1993, ssa_q75: 2005, ssa_births: 130865, ssa_same_sex_share: 0.999, gaddis_pct_some_college: 61.8, gaddis_ny_births: 3572, gaddis_race: W}
+  Kristen: {ssa_median_birth_year: 1985, ssa_q25: 1977, ssa_q75: 1991, ssa_births: 217598, ssa_same_sex_share: 0.990, gaddis_pct_some_college: 67.2, gaddis_ny_births: 3015, gaddis_race: W}
+  Laurie: {ssa_median_birth_year: 1962, ssa_q25: 1958, ssa_q75: 1969, ssa_births: 166073, ssa_same_sex_share: 0.988, gaddis_pct_some_college: 54.7, gaddis_ny_births: 179, gaddis_race: W}
+  Megan: {ssa_median_birth_year: 1990, ssa_q25: 1985, ssa_q75: 1997, ssa_births: 436520, ssa_same_sex_share: 0.997, gaddis_pct_some_college: 69.1, gaddis_ny_births: 7660, gaddis_race: W}
+  Molly: {ssa_median_birth_year: 1992, ssa_q25: 1977, ssa_q75: 2004, ssa_births: 163300, ssa_same_sex_share: 0.998, gaddis_pct_some_college: 83.8, gaddis_ny_births: 3837, gaddis_race: W}
+  Sarah: {ssa_median_birth_year: 1984, ssa_q25: 1964, ssa_q75: 1994, ssa_births: 1073895, ssa_same_sex_share: 0.997, gaddis_pct_some_college: 65.1, gaddis_ny_births: 18308, gaddis_race: W}
+  Stephanie: {ssa_median_birth_year: 1983, ssa_q25: 1972, ssa_q75: 1991, ssa_births: 739285, ssa_same_sex_share: 0.996, gaddis_pct_some_college: 39.8, gaddis_ny_births: 9870, gaddis_race: W}
+male_white:   # pairs.markers.MALE_NAMES
+  Dustin: {ssa_median_birth_year: 1987, ssa_q25: 1982, ssa_q75: 1993, ssa_births: 204843, ssa_same_sex_share: 0.993, gaddis_pct_some_college: 33.1, gaddis_ny_births: 1244, gaddis_race: W}
+  Hunter: {ssa_median_birth_year: 2003, ssa_q25: 1998, ssa_q75: 2010, ssa_births: 229068, ssa_same_sex_share: 0.951, gaddis_pct_some_college: 58.6, gaddis_ny_births: 5688, gaddis_race: W}
+  Jake: {ssa_median_birth_year: 1999, ssa_q25: 1990, ssa_q75: 2006, ssa_births: 121670, ssa_same_sex_share: 0.998, gaddis_pct_some_college: 78.2, gaddis_ny_births: 6928, gaddis_race: W}
+  Logan: {ssa_median_birth_year: 2006, ssa_q25: 1999, ssa_q75: 2011, ssa_births: 320461, ssa_same_sex_share: 0.929, gaddis_pct_some_college: 66.9, gaddis_ny_births: 8714, gaddis_race: W}
+  Matthew: {ssa_median_birth_year: 1987, ssa_q25: 1978, ssa_q75: 1997, ssa_births: 1590440, ssa_same_sex_share: 0.997, gaddis_pct_some_college: 68.5, gaddis_ny_births: 38106, gaddis_race: W}
+  Ryan: {ssa_median_birth_year: 1991, ssa_q25: 1982, ssa_q75: 2000, ssa_births: 924877, ssa_same_sex_share: 0.976, gaddis_pct_some_college: 69.4, gaddis_ny_births: 28678, gaddis_race: W}
+  Scott: {ssa_median_birth_year: 1969, ssa_q25: 1962, ssa_q75: 1979, ssa_births: 771059, ssa_same_sex_share: 0.997, gaddis_pct_some_college: 60.2, gaddis_ny_births: 2689, gaddis_race: W}
+  Seth: {ssa_median_birth_year: 1995, ssa_q25: 1984, ssa_q75: 2003, ssa_births: 160481, ssa_same_sex_share: 0.997, gaddis_pct_some_college: 59.3, gaddis_ny_births: 2361, gaddis_race: W}
+  Todd: {ssa_median_birth_year: 1969, ssa_q25: 1964, ssa_q75: 1976, ssa_births: 281400, ssa_same_sex_share: 0.996, gaddis_pct_some_college: 46.7, gaddis_ny_births: 551, gaddis_race: W}
+  Zachary: {ssa_median_birth_year: 1995, ssa_q25: 1990, ssa_q75: 2002, ssa_births: 531709, ssa_same_sex_share: 0.997, gaddis_pct_some_college: 69.3, gaddis_ny_births: 15495, gaddis_race: W}
+female_black:   # pairs.markers.BLACK_FEMALE_NAMES
+  Janae: {ssa_median_birth_year: 1997, ssa_q25: 1989, ssa_q75: 2005, ssa_births: 16668, ssa_same_sex_share: 1.000, gaddis_pct_some_college: 50.6, gaddis_ny_births: 457, gaddis_race: B}
+  Keyana: {ssa_median_birth_year: 1996, ssa_q25: 1990, ssa_q75: 2003, ssa_births: 3683, ssa_same_sex_share: 1.000, gaddis_pct_some_college: 25.1, gaddis_ny_births: 203, gaddis_race: B}
+  Lakisha: {ssa_median_birth_year: 1979, ssa_q25: 1976, ssa_q75: 1983, ssa_births: 12307, ssa_same_sex_share: 0.999, gaddis_pct_some_college: 0.0, gaddis_ny_births: 22, gaddis_race: B}
+  Latonya: {ssa_median_birth_year: 1976, ssa_q25: 1971, ssa_q75: 1981, ssa_births: 21740, ssa_same_sex_share: 0.997, gaddis_pct_some_college: 13.3, gaddis_ny_births: 15, gaddis_race: B}
+  Latoya: {ssa_median_birth_year: 1983, ssa_q25: 1979, ssa_q75: 1986, ssa_births: 45474, ssa_same_sex_share: 0.996, gaddis_pct_some_college: 11.7, gaddis_ny_births: 105, gaddis_race: B}
+  Shanice: {ssa_median_birth_year: 1993, ssa_q25: 1991, ssa_q75: 1996, ssa_births: 9475, ssa_same_sex_share: 0.999, gaddis_pct_some_college: 24.9, gaddis_ny_births: 569, gaddis_race: B}
+  Tamika: {ssa_median_birth_year: 1979, ssa_q25: 1975, ssa_q75: 1984, ssa_births: 22709, ssa_same_sex_share: 0.996, gaddis_pct_some_college: 15.6, gaddis_ny_births: 94, gaddis_race: B}
+  Tanisha: {ssa_median_birth_year: 1985, ssa_q25: 1978, ssa_q75: 1992, ssa_births: 19136, ssa_same_sex_share: 0.999, gaddis_pct_some_college: 24.1, gaddis_ny_births: 363, gaddis_race: B}
+  Tionna: {ssa_median_birth_year: 2000, ssa_q25: 1995, ssa_q75: 2005, ssa_births: 2504, ssa_same_sex_share: 1.000, gaddis_pct_some_college: 28.2, gaddis_ny_births: 105, gaddis_race: B}
+  Tyra: {ssa_median_birth_year: 1996, ssa_q25: 1978, ssa_q75: 2001, ssa_births: 14303, ssa_same_sex_share: 0.990, gaddis_pct_some_college: 38.0, gaddis_ny_births: 393, gaddis_race: B}
+male_black:   # pairs.markers.BLACK_MALE_NAMES
+  DaQuan: {ssa_median_birth_year: 1997, ssa_q25: 1994, ssa_q75: 2002, ssa_births: 7564, ssa_same_sex_share: 0.999, gaddis_pct_some_college: 12.8, gaddis_ny_births: 490, gaddis_race: B}
+  DaShawn: {ssa_median_birth_year: 1999, ssa_q25: 1993, ssa_q75: 2006, ssa_births: 8300, ssa_same_sex_share: 0.939, gaddis_pct_some_college: 14.7, gaddis_ny_births: 497, gaddis_race: B}
+  DeAndre: {ssa_median_birth_year: 1996, ssa_q25: 1990, ssa_q75: 2004, ssa_births: 27351, ssa_same_sex_share: 0.984, gaddis_pct_some_college: 31.5, gaddis_ny_births: 421, gaddis_race: B}
+  Jamal: {ssa_median_birth_year: 1992, ssa_q25: 1984, ssa_q75: 2001, ssa_births: 31384, ssa_same_sex_share: 0.992, gaddis_pct_some_college: 31.0, gaddis_ny_births: 958, gaddis_race: B}
+  Jayvon: {ssa_median_birth_year: 2006, ssa_q25: 2000, ssa_q75: 2010, ssa_births: 3351, ssa_same_sex_share: 1.000, gaddis_pct_some_college: 25.0, gaddis_ny_births: 252, gaddis_race: B}
+  Keyshawn: {ssa_median_birth_year: 2002, ssa_q25: 1999, ssa_q75: 2006, ssa_births: 3773, ssa_same_sex_share: 0.994, gaddis_pct_some_college: 23.6, gaddis_ny_births: 301, gaddis_race: B}
+  Latrell: {ssa_median_birth_year: 2002, ssa_q25: 1998, ssa_q75: 2007, ssa_births: 3496, ssa_same_sex_share: 0.866, gaddis_pct_some_college: 25.5, gaddis_ny_births: 304, gaddis_race: B}
+  Terrell: {ssa_median_birth_year: 1987, ssa_q25: 1973, ssa_q75: 1998, ssa_births: 35232, ssa_same_sex_share: 0.957, gaddis_pct_some_college: 33.2, gaddis_ny_births: 698, gaddis_race: B}
+  Tremayne: {ssa_median_birth_year: 1986, ssa_q25: 1977, ssa_q75: 1998, ssa_births: 3812, ssa_same_sex_share: 0.990, gaddis_pct_some_college: 34.1, gaddis_ny_births: 44, gaddis_race: B}
+  Tyrone: {ssa_median_birth_year: 1972, ssa_q25: 1961, ssa_q75: 1985, ssa_births: 78246, ssa_same_sex_share: 0.991, gaddis_pct_some_college: 24.4, gaddis_ny_births: 680, gaddis_race: B}
