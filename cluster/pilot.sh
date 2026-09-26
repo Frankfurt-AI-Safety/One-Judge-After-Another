@@ -6,6 +6,11 @@
 #     --config description=pilot_small bash cluster/pilot.sh small
 #   (the same with 8b; the workspace allows 2 GPUs, so the two lanes are all that can run)
 #
+# Lane 70b is a separate, smaller pilot: the largest model (Llama-3.1-70B RB2, pinned safetensors revision) on
+# BOTH GPUs, small n, about 3 h, for its speed and a first look at its quality. It needs the whole workspace:
+#   det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config resources.slots=2 \
+#     --config idle_timeout=12h --config description=pilot_70b bash cluster/pilot.sh 70b
+#
 # Per lane: the probe-size curve for credit, hiring and PERSUADE, then the cross-marker design on the full
 # credit and education pools and 600 + 600 hiring records. Each step writes
 # artifacts/results/demographic/pilot/<step>_<lane>.json and logs to $PFSS/pilot_logs/<step>_<lane>.log.
@@ -14,11 +19,12 @@
 # (2026-09-25); runners/pilot_sizing.py applies them.
 set -u
 
-LANE="${1:?usage: pilot.sh small|8b}"
+LANE="${1:?usage: pilot.sh small|8b|70b}"
 case "$LANE" in
   small) MODEL=Skywork/Skywork-Reward-V2-Qwen3-0.6B ;;
   8b)    MODEL=Skywork/Skywork-Reward-V2-Llama-3.1-8B ;;
-  *)     echo "unknown lane: $LANE (small|8b)"; exit 2 ;;
+  70b)   MODEL=allenai/Llama-3.1-70B-Instruct-RM-RB2 ;;
+  *)     echo "unknown lane: $LANE (small|8b|70b)"; exit 2 ;;
 esac
 PFSS="${PFSS:?PFSS is not set -- cluster/config.yaml sets it in every task}"
 cd "$PFSS/OneBiasAfterAnotherFork" || exit 1
@@ -52,6 +58,18 @@ step() {  # step <name> <runner> <args...>
 }
 
 echo "$(date +%T) pilot lane $LANE: $MODEL"
+if [ "$LANE" = 70b ]; then
+  # Sized for ~3 h (estimate in cluster/README.md §4): 50 probe records instead of 150 (the direct directions
+  # cost ~1,600 texts per domain), 60 records per domain for credit and hiring, 32 for the long essays, whose
+  # batch is cut to 2 so 80 layers of hidden states fit next to 140 GB of weights. Credit runs first: its
+  # timing line predicts the rest.
+  step crossmarker_credit    run_cross_marker.py --config "$CREDIT"    --n-strong 30 --n-weak 30 --probe-records 50
+  step crossmarker_hiring    run_cross_marker.py --config "$HIRING"    --n-strong 30 --n-weak 30 --probe-records 50
+  step crossmarker_education run_cross_marker.py --config "$EDUCATION" --n-strong 16 --n-weak 16 --probe-records 50 \
+    --batch-size 2
+  echo "$(date +%T) pilot lane $LANE finished"
+  exit 0
+fi
 step probecurve_credit     run_probe_curve.py  --config "$CREDIT"
 step probecurve_hiring     run_probe_curve.py  --config "$HIRING"
 step probecurve_education  run_probe_curve.py  --config "$EDUCATION"

@@ -274,6 +274,36 @@ magnitude alongside it, as the A2 arm already does with `identity_gap`.
 
 ## 4. Scale the ladder
 
+**70B pilot (lane `70b` of `cluster/pilot.sh`, 2026-09-26).** Llama-3.1-70B RB2 on both GPUs, small n, for speed
+and a first look at quality. Estimate, extrapolated from the 8B pilot (8.8x the FLOPs; `device_map="auto"` runs
+the two GPUs one after the other, so they add memory, not speed): about 6 / 7 / 2 texts/s for credit / hiring /
+education. Credit ~45 min (model load ~5, 50 probe records ~5, 60 records x 212 texts ~35), hiring ~40 min,
+education ~80 min (32 records, batch 2): **about 3 h in total, uncertain by ±50%**. Credit runs first; its timing
+line predicts the rest.
+
+1. Download (unattended, no GPU; ~139 GB of safetensors from the pinned revision, `.bin` skipped):
+   ```bash
+   det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config resources.slots=0 \
+     --config idle_timeout=12h --config description=prefetch_70b python cluster/prefetch_models.py --tier 70b
+   ```
+   `det command logs <id> --tail 5` shows progress; wait until `det command list` shows it terminated.
+2. Run (both GPUs, so nothing else can run meanwhile):
+   ```bash
+   det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config resources.slots=2 \
+     --config idle_timeout=12h --config description=pilot_70b bash cluster/pilot.sh 70b
+   ```
+3. Read out (any `slots=0` shell): `grep -h "^timing\|OFFLOADED\|placement" $PFSS/pilot_logs/*_70b.log`. A
+   `OFFLOADED` warning means accelerate put layers on the CPU (the GPUs were too small) and the timings are
+   not representative.
+
+**`.bin`-only checkpoints.** transformers >= 4.50 refuses PyTorch `.bin` weights under torch < 2.6
+(CVE-2025-32434), and the image has torch 2.3. Both AllenAI RB2 models (8B, 70B) and the DeBERTa RM publish
+only `.bin` on main. The RB2 models load from Hugging Face's own safetensors conversion (SFconvertbot pull
+requests), pinned in `scoring/backend.py::PINNED_REVISIONS`; `prefetch_models.py` fetches that revision and skips
+`.bin` wherever safetensors exist. Checked on the Hub 2026-09-26: the Nemotron ids exist; the two 32B ones are
+sequence classifiers stored in fp32 (~128 GB download, 64 GB in bf16), **Llama-3.3-Nemotron-70B-Reward is a
+`LlamaForCausalLM`** (a generative reward) and cannot be scored without its own head adapter.
+
 **Throughput trial 1 — 2026-09-25** (A100-80GB, Qwen3-0.6B, `run_cross_marker.py --n-strong 20 --n-weak 20`,
 batch 8, fresh embedding cache). Each domain put 12,882 texts through the model: 8,480 decision and
 placement texts, which grow with the record count, and 4,402 direct-probe texts for the 150 probe records,

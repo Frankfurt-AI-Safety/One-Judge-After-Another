@@ -23,6 +23,9 @@ import argparse
 import os
 import shutil
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # the repo root: scoring.backend
 
 # (hf_id, params_b, tier, confirmed)
 #
@@ -70,6 +73,13 @@ def preflight() -> bool:
         return False
 
 
+def skip_patterns(files: list) -> list:
+    """Files not to download: a repo with safetensors weights often also carries the same weights as .bin
+    (the pinned AllenAI revisions do), which would double a 139 GB download. transformers loads the
+    safetensors, and cannot load .bin under the cluster's torch anyway (see scoring.backend.PINNED_REVISIONS)."""
+    return ["*.bin", "*.pth"] if any(f.endswith(".safetensors") for f in files) else []
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -94,11 +104,18 @@ def main() -> None:
     total = sum(b * 2 for _, b, _, _ in todo)
     print(f"\n{len(todo)} checkpoint(s), ~{total:.0f} GB in bf16\n")
 
+    from huggingface_hub import list_repo_files
+
+    from scoring.backend import PINNED_REVISIONS
+
     for hf_id, params_b, _, confirmed in todo:
         flag = "" if confirmed else "  [UNCONFIRMED ID]"
-        print(f"--> {hf_id} (~{params_b * 2:.0f} GB){flag}", flush=True)
+        revision = PINNED_REVISIONS.get(hf_id)
+        print(f"--> {hf_id} (~{params_b * 2:.0f} GB){flag}" + (f" @ {revision[:10]}" if revision else ""),
+              flush=True)
         try:
-            snapshot_download(hf_id, resume_download=True)
+            ignore = skip_patterns(list_repo_files(hf_id, revision=revision))
+            snapshot_download(hf_id, revision=revision, ignore_patterns=ignore, resume_download=True)
         except Exception as e:  # noqa: BLE001
             print(f"    FAILED: {type(e).__name__}: {e}")
             if not confirmed:

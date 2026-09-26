@@ -701,6 +701,7 @@ def apply_overrides(cfg: Any, args: argparse.Namespace) -> Any:
 def main() -> None:
     import torch
 
+    from scoring.backend import model_revision
     from scoring.demographic_experiment import DemographicBiasExperiment
     from scoring.experiment import ExperimentConfig
     from substrates.domains import get_domain
@@ -797,7 +798,8 @@ def main() -> None:
     reference = credit_reference(dom, selected)
     timer.lap("metrics")
     summary = {
-        "model": cfg.model_path, "domain": dom.name, "settings": {**settings, "templates": templates},
+        "model": cfg.model_path, "model_revision": model_revision(cfg),
+        "domain": dom.name, "settings": {**settings, "templates": templates},
         "max_length": cfg.max_length, "probe_records": cfg.probe_records,
         "cells_path": str(path), "cells_report": cells_report,
         "direct_manifest": source, "probe_directions": probe_meta,
