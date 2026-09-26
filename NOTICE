@@ -23,5 +23,10 @@ Modifications made by the Frankfurt AI Safety RM-Bias Working Group, 2026:
     RewardBench and perplexity evaluations, and the MLX (Apple Silicon) backend. This
     repository does not reproduce the upstream results.
 
+scoring/qrm.py is our own implementation of the architecture of QRM (N. Dorka, "Quantile Regression
+for Distributional Reward Models in RLHF", arXiv:2409.10164; https://github.com/Nicolinho/QRM), written so
+the published checkpoint (nicolinho/QRM-Gemma-2-27B, Llama 3 licence) can be loaded without its remote
+code. No QRM code or weights are included in this repository.
+
 Files under probes/ and parts of scoring/ derive directly from the upstream project and
 retain its copyright; see LICENSE for the full Apache-2.0 terms.

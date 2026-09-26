@@ -212,8 +212,18 @@ Education essays are long: expect roughly 3x the credit runtime per record.
 **Every model is checked at load** (`verify_score_path`): the pipeline's reward, which is the score
 head on the pooled last-token state, must reproduce the model's own score on two texts. A model that
 pools differently is refused rather than silently mis-scored. As of 2026-09-24 that is **the
-OpenAssistant DeBERTa RM** (first-token `ContextPooler`), and the QRM-Gemma quantile head is untested.
-Neither can run until it has its own pooling and projection site.
+OpenAssistant DeBERTa RM** (first-token `ContextPooler`); it cannot run until it has its own pooling and
+projection site.
+
+**QRM-Gemma-2-27B** (since 2026-09-26) is loaded with our own implementation of its architecture
+(`scoring/qrm.py`): its remote code imports a transformers constant that no longer exists, so
+`trust_remote_code` fails under 4.57. Its score is a gated mix of quantile heads; the gate reads the end of
+the user turn. The pipeline projects the last-token state only and holds the gate fixed
+(`probes/heads.py`), the gates are cached in `<cache>/gates/`, and the cross-marker report adds a
+`gate fixed` column (the part of each disparity that does not run through the gate). `verify_score_path`
+checks both the score and the gate at load. Tested on a tiny random QRM only; the first cluster load of the
+real checkpoint is its real test. Run it with `--model nicolinho/QRM-Gemma-2-27B` (one A100-80GB, ~54 GB
+in bf16).
 
 ## 3. Parity smoke test — do this before spending the allocation
 

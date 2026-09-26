@@ -14,8 +14,9 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from scoring.dataset_base import ContrastivePair
+from scoring.dataset_base import ContrastivePair, format_conversation
 from probes.embedding_cache import CACHE_ATTR, text_key
+from probes.heads import get_head
 
 logger = logging.getLogger(__name__)
 
@@ -339,8 +340,10 @@ class ScorePathMismatch(RuntimeError):
     """The pipeline's reward (linear head on the pooled last-token state) is not the model's score."""
 
 
-_CHECK_TEXTS = ("The applicant has a stable income and repaid every earlier loan on time.",
-                "A short essay.")
+# (prompt, response): chat-formatted like every text the pipeline scores (a gated head reads the user turn)
+_CHECK_CONVERSATIONS = (("Should this loan be approved?",
+                         "The applicant has a stable income and repaid every earlier loan on time."),
+                        ("Grade this essay.", "A short essay."))
 
 
 def verify_score_path(model: AutoModelForSequenceClassification, tokenizer: AutoTokenizer,
@@ -350,17 +353,25 @@ def verify_score_path(model: AutoModelForSequenceClassification, tokenizer: Auto
     projected out right before the head). That is how Llama/Qwen/Gemma sequence-classification RMs
     score, but not every RM: DeBERTa scores the FIRST token through a ``ContextPooler`` (dense +
     activation) before its classifier, so the pipeline's "rewards" for it were unrelated to the model's
-    scores — silently. This compares the pipeline path with the model's own ``logits`` on two texts of
-    different length (bf16 tolerance) and raises `ScorePathMismatch` if they disagree. Returns the
-    largest absolute difference."""
+    scores — silently. This compares the pipeline path with the model's own ``logits`` on two
+    chat-formatted conversations of different length (bf16 tolerance) and raises `ScorePathMismatch` if
+    they disagree; for a gated head (QRM) it also compares the pipeline's gates with the model's. Returns
+    the largest absolute difference."""
     model.eval()
-    base, _ = get_rewards_both(model, tokenizer, list(_CHECK_TEXTS), None, batch_size=2,
-                               max_length=max_length, show_progress=False)
+    texts = [format_conversation(tokenizer, prompt, response) for prompt, response in _CHECK_CONVERSATIONS]
+    states, state_dtype, gates = _forward_pooled(model, tokenizer, texts, 2, max_length, False)
+    base, _ = rewards_from_hidden(model, states, state_dtype, None, gates=gates)
     base_model = get_base_model(model)
-    inputs = tokenize_inputs(tokenizer, list(_CHECK_TEXTS), max_length=max_length)
+    inputs = tokenize_inputs(tokenizer, texts, max_length=max_length)
     inputs = {k: v.to(next(base_model.parameters()).device) for k, v in inputs.items()}
     with torch.no_grad():
-        logits = model(**inputs).logits
+        output = model(**inputs)
+    logits = output.logits
+    if gates is not None:
+        model_gates = output.gating_output.float().cpu()
+        if not torch.allclose(gates, model_gates, atol=1e-3, rtol=1e-3):
+            raise ScorePathMismatch(f"{type(model).__name__}: the pipeline's gates {gates.tolist()} differ from "
+                                    f"the model's {model_gates.tolist()}")
     if logits.dim() > 1 and logits.shape[-1] != 1:
         raise ScorePathMismatch(f"{type(model).__name__} outputs {logits.shape[-1]} scores per text; "
                                 f"the pipeline assumes one scalar reward")
@@ -383,12 +394,15 @@ def _forward_pooled(
     batch_size: int,
     max_length: int,
     show_progress: bool,
-) -> Tuple[torch.Tensor, torch.dtype]:
+) -> Tuple[torch.Tensor, torch.dtype, Optional[torch.Tensor]]:
     """The one forward pass of the pipeline: float32 [n, d] pooled last-token states of
-    ``hidden_states[-1]`` (right padding; see `scoring/backend.py`), plus the dtype the model computed
-    them in. Tokenizes on the fly per batch to avoid OOM on large datasets."""
+    ``hidden_states[-1]`` (right padding; see `scoring/backend.py`), the dtype the model computed
+    them in, and — for a gated head (QRM, `probes/heads.py`) — the float32 gates [n, objectives] from the
+    same pass (None otherwise). Tokenizes on the fly per batch to avoid OOM on large datasets."""
     model.eval()
     all_embeddings = []
+    all_gates: List[torch.Tensor] = []
+    head = get_head(model)
     state_dtype = next(model.parameters()).dtype
     base_model = get_base_model(model)
     n_batches = (len(texts) + batch_size - 1) // batch_size
@@ -432,8 +446,11 @@ def _forward_pooled(
                 last_token_indices.to(hs_device),
             ]
             all_embeddings.append(batch_embeddings.float().cpu())
+            if head.gated:
+                all_gates.append(head.gates_from_hidden(hidden_states, inputs["input_ids"]))
 
-    return torch.cat(all_embeddings, dim=0), state_dtype
+    gates = torch.cat(all_gates, dim=0) if head.gated else None
+    return torch.cat(all_embeddings, dim=0), state_dtype, gates
 
 
 def _embed(
@@ -443,27 +460,34 @@ def _embed(
     batch_size: int,
     max_length: int,
     show_progress: bool,
-) -> Tuple[torch.Tensor, torch.dtype]:
-    """`get_embeddings` plus the state dtype, served from the model's embedding cache when one is
-    attached (`probes/embedding_cache.py`): only texts never embedded under this `max_length` go
-    through the model, each unique text once even if it repeats within the call."""
+) -> Tuple[torch.Tensor, torch.dtype, Optional[torch.Tensor]]:
+    """`get_embeddings` plus the state dtype and, for a gated head, the gates (else None), served from
+    the model's embedding cache when one is attached (`probes/embedding_cache.py`): only texts never
+    embedded under this `max_length` go through the model, each unique text once even if it repeats
+    within the call. A gated model's cache keeps the gates in its ``gates`` sub-cache, same keys."""
     cache = getattr(model, CACHE_ATTR, None)
     if cache is None:
         return _forward_pooled(model, tokenizer, texts, batch_size, max_length, show_progress)
+    gate_cache = cache.gates
     keys = [text_key(t, max_length) for t in texts]
     todo: Dict[str, Any] = {}
     for key, text in zip(keys, texts):
-        if key not in cache and key not in todo:
+        missing = key not in cache or (gate_cache is not None and key not in gate_cache)
+        if missing and key not in todo:
             todo[key] = text
     cache.hits += len(texts) - len(todo)
     cache.misses += len(todo)
     if todo:
-        states, dtype = _forward_pooled(model, tokenizer, list(todo.values()), batch_size,
-                                        max_length, show_progress)
+        states, dtype, gates = _forward_pooled(model, tokenizer, list(todo.values()), batch_size,
+                                               max_length, show_progress)
         cache.put(list(todo), states.to(dtype))  # float32 -> native dtype: exact
         cache.flush()
+        if gate_cache is not None:
+            gate_cache.put(list(todo), gates)     # float32, as the head multiplies them
+            gate_cache.flush()
     logger.info("Embedding cache: %d of %d texts served from cache", len(texts) - len(todo), len(texts))
-    return torch.stack([cache.get(k) for k in keys]).float(), cache.state_dtype
+    gates_out = None if gate_cache is None else torch.stack([gate_cache.get(k) for k in keys]).float()
+    return torch.stack([cache.get(k) for k in keys]).float(), cache.state_dtype, gates_out
 
 
 def embed_states(
@@ -474,8 +498,22 @@ def embed_states(
     max_length: int = 2048,
     show_progress: bool = True,
 ) -> Tuple[torch.Tensor, torch.dtype]:
-    """Float32 pooled states plus the dtype the score head expects: the input of `rewards_from_hidden`,
-    for scoring one embedding pass under several probes or α values (cache-aware, see `_embed`)."""
+    """Float32 pooled states plus the dtype the score head expects — what directions are fitted on
+    (cache-aware, see `_embed`). To score them with `rewards_from_hidden`, use `embed_with_gates`, which
+    also returns the gates a gated head (QRM) needs."""
+    return _embed(model, tokenizer, texts, batch_size, max_length, show_progress)[:2]
+
+
+def embed_with_gates(
+    model: AutoModelForSequenceClassification,
+    tokenizer: AutoTokenizer,
+    texts: List[str],
+    batch_size: int = 8,
+    max_length: int = 2048,
+    show_progress: bool = True,
+) -> Tuple[torch.Tensor, torch.dtype, Optional[torch.Tensor]]:
+    """`embed_states` plus the per-text gates of a gated head (None for a linear head): the full input of
+    `rewards_from_hidden`, for scoring one embedding pass under several probes or α values."""
     return _embed(model, tokenizer, texts, batch_size, max_length, show_progress)
 
 
@@ -528,22 +566,29 @@ def rewards_from_hidden(
     probe: Optional[torch.Tensor] = None,
     null_alpha: float = 1.0,
     batch_size: int = 256,
+    gates: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """(baseline, nulled) rewards from float32 pooled states: the score head applied to the state, and
     to the state with the probe subspace projected out (scaled by ``null_alpha``). Same arithmetic, in
     the same order, as the reward code has always used: project in float32 on the head's device, cast
-    to the model's dtype, apply the head. Cheap — call it once per α instead of re-running the model."""
-    score_head = get_score_head(model)
-    score_device = score_head.weight.device
+    to the model's dtype, apply the head. Cheap — call it once per α instead of re-running the model.
+
+    A gated head (QRM) needs ``gates``, one row per state (`embed_with_gates`); only the state is
+    projected, the gate is held fixed (see `probes/heads.py`)."""
+    head = get_head(model)
+    if head.gated and gates is None:
+        raise ValueError(f"{type(model).__name__} has a gated head: pass the states' gates "
+                         f"(probes.probe.embed_with_gates) to rewards_from_hidden")
+    score_device = head.device
     base_out, null_out = [], []
     with torch.no_grad():
         for start in range(0, hidden.shape[0], batch_size):
             h = hidden[start:start + batch_size].to(score_device)
-            base = score_head(h.to(state_dtype)).squeeze(-1)
+            g = None if gates is None else gates[start:start + batch_size]
+            base = head.score(h.to(state_dtype), g)
             base_out.append(base.cpu())
             if probe is not None:
-                nulled = score_head(project_to_null_space(h, probe, alpha=null_alpha)
-                                    .to(state_dtype)).squeeze(-1)
+                nulled = head.score(project_to_null_space(h, probe, alpha=null_alpha).to(state_dtype), g)
                 null_out.append(nulled.cpu())
             else:
                 null_out.append(base.cpu())
@@ -732,5 +777,5 @@ def get_rewards_both(
     if not texts:
         empty = torch.zeros(0)
         return empty, empty
-    hidden, state_dtype = _embed(model, tokenizer, texts, batch_size, max_length, show_progress)
-    return rewards_from_hidden(model, hidden, state_dtype, probe, null_alpha)
+    hidden, state_dtype, gates = _embed(model, tokenizer, texts, batch_size, max_length, show_progress)
+    return rewards_from_hidden(model, hidden, state_dtype, probe, null_alpha, gates=gates)

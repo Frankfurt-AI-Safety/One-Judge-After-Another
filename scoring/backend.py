@@ -12,6 +12,10 @@ because MLX was its only implementation.
 
 ``transformers`` is imported lazily inside :func:`create_backend` so importing this module
 does not pull in the framework.
+
+One checkpoint family is loaded with our own class instead of ``AutoModelForSequenceClassification``:
+QRM (``Gemma2ForQuantileSequenceClassification``, `scoring/qrm.py`), whose remote code no longer imports
+under current transformers and whose gate the pipeline needs to see.
 """
 
 from __future__ import annotations
@@ -53,11 +57,14 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
     # An explicit single-device string (e.g. "cuda:0", "cpu") is passed
     # through unchanged so the caller retains control.
     device_map = "auto" if config.device in ("cuda", "auto") else config.device
-    model = AutoModelForSequenceClassification.from_pretrained(
+    model_cls = _own_class(config.model_path) or AutoModelForSequenceClassification
+    kwargs = {} if model_cls is not AutoModelForSequenceClassification else {
+        "trust_remote_code": config.trust_remote_code}
+    model = model_cls.from_pretrained(
         config.model_path,
-        trust_remote_code=config.trust_remote_code,
         dtype=torch.bfloat16,
         device_map=device_map,
+        **kwargs,
     )
     # .to() intentionally omitted: device_map handles placement.
 
@@ -65,6 +72,21 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
         model.config.pad_token_id = tokenizer.pad_token_id
 
     return model, tokenizer
+
+
+def _own_class(model_path: str) -> Any:
+    """Our implementation for a checkpoint whose architecture we carry (`scoring/qrm.py`), else None. Reads
+    only the config (no remote code)."""
+    from transformers import AutoConfig
+
+    from scoring.qrm import ARCHITECTURE, Gemma2ForQuantileSequenceClassification
+
+    architectures = getattr(AutoConfig.from_pretrained(model_path), "architectures", None) or []
+    if ARCHITECTURE in architectures:
+        logger.info("%s: %s, loaded with scoring.qrm.Gemma2ForQuantileSequenceClassification (no remote code)",
+                    model_path, ARCHITECTURE)
+        return Gemma2ForQuantileSequenceClassification
+    return None
 
 
 def create_backend(config: Any) -> Tuple[Any, Any]:

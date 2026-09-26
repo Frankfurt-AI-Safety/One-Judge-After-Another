@@ -33,8 +33,12 @@ Configure with the experiment config key ``embedding_cache_dir`` (default ``arti
 gitignored). Environment override ``ONEJUDGE_EMBED_CACHE``: ``off`` disables it, a path replaces the
 directory.
 
-LIMITATION (pre-existing, not introduced here): the reward path assumes the score is a linear head on the
-pooled LAST-token state, as for the Llama/Qwen/Gemma sequence-classification RMs. That is not how every
+Gated heads (QRM, `probes/heads.py`): the score also needs a per-text gate from the same forward pass,
+kept in a ``gates/`` sub-cache under the same keys, and the fingerprint adds the gating network's digest.
+The fingerprint of a linear-head model is unchanged, so existing caches stay valid.
+
+LIMITATION (pre-existing, not introduced here): the reward path assumes the score is a head on the pooled
+LAST-token state, as for the Llama/Qwen/Gemma sequence-classification RMs and QRM. That is not how every
 RM computes its score (e.g. DeBERTa scores a pooled FIRST token through a pooler) — see the working notes.
 """
 
@@ -71,18 +75,13 @@ def text_key(text: Text, max_length: int) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _tensor_digest(t: torch.Tensor) -> str:
-    raw = t.detach().to("cpu").contiguous().view(torch.uint8).numpy().tobytes()
-    return hashlib.sha256(raw).hexdigest()[:16]
-
-
 def model_fingerprint(model: Any, tokenizer: Any) -> Dict[str, Any]:
     """Everything that decides the pooled state of a given text, apart from the text itself."""
-    from probes.probe import get_score_head  # local: probe.py imports this module
+    from probes.heads import get_head
 
     cfg = model.config
-    head = get_score_head(model)
-    return {
+    head = get_head(model)
+    fp = {
         "format_version": FORMAT_VERSION,
         "pooling": POOLING,
         "model_path": getattr(cfg, "_name_or_path", "") or "",
@@ -95,8 +94,12 @@ def model_fingerprint(model: Any, tokenizer: Any) -> Dict[str, Any]:
         "tokenizer": type(tokenizer).__name__,
         "tokenizer_name": getattr(tokenizer, "name_or_path", None),
         "padding_side": getattr(tokenizer, "padding_side", None),
-        "head_digest": _tensor_digest(head.weight),
+        "head_digest": head.digest(),
     }
+    if head.gated:   # linear heads keep the exact earlier fingerprint, so their caches stay valid
+        fp["head_kind"] = head.kind
+        fp["gate_digest"] = head.gate_digest()
+    return fp
 
 
 def _slug(path: str) -> str:
@@ -117,6 +120,7 @@ class EmbeddingCache:
         self.state_dtype: Optional[torch.dtype] = None
         self.hits = 0
         self.misses = 0
+        self.gates: Optional["EmbeddingCache"] = None   # a gated head's per-text gates, same keys
         self._load()
 
     # ------------------------------------------------------------------ disk
@@ -148,16 +152,14 @@ class EmbeddingCache:
 
     def save_head(self, model: Any) -> None:
         """Store the score head once, so rewards can be recomputed without the model (`open_cache`)."""
-        from probes.probe import get_score_head
+        from probes.heads import get_head
 
         path = self.directory / "head.pt"
         if path.exists():
             return
         self.directory.mkdir(parents=True, exist_ok=True)
-        head = get_score_head(model)
         tmp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
-        torch.save({"weight": head.weight.detach().cpu(),
-                    "bias": None if head.bias is None else head.bias.detach().cpu()}, tmp)
+        torch.save(get_head(model).to_saved(), tmp)
         os.replace(tmp, path)
 
     def flush(self) -> None:
@@ -217,9 +219,14 @@ class EmbeddingCache:
             rows.append(state)
         return torch.stack(rows).float()
 
-    def load_head(self) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        data = torch.load(self.directory / "head.pt", map_location="cpu", weights_only=True)
-        return data["weight"], data["bias"]
+    def load_head(self) -> Dict[str, Any]:
+        """The stored head (`probes.heads` ``to_saved`` format): ``weight``/``bias`` for a linear head,
+        ``kind``/``regression_weight``/... for a gated one."""
+        return torch.load(self.directory / "head.pt", map_location="cpu", weights_only=True)
+
+    def lookup_gates(self, texts: Iterable[Text], max_length: int) -> Optional[torch.Tensor]:
+        """Offline access to a gated head's float32 gates [n, objectives]; None for a linear head."""
+        return None if self.gates is None else self.gates.lookup(texts, max_length)
 
 
 def resolve_directory(configured: Optional[str]) -> Optional[Path]:
@@ -240,6 +247,8 @@ def attach(model: Any, tokenizer: Any, root: Optional[str]) -> Optional[Embeddin
     fp = model_fingerprint(model, tokenizer)
     digest = hashlib.sha256(json.dumps(fp, sort_keys=True, default=str).encode()).hexdigest()[:12]
     cache = EmbeddingCache(directory / f"{_slug(fp['model_path'])}--{digest}", fp)
+    if fp.get("head_kind"):
+        cache.gates = EmbeddingCache(cache.directory / "gates", fp)
     cache.save_head(model)
     setattr(model, CACHE_ATTR, cache)
     logger.info("Embedding cache %s: %d states", cache.directory, len(cache))
@@ -251,20 +260,24 @@ def open_cache(directory: Union[str, Path]) -> EmbeddingCache:
     directory = Path(directory)
     if not (directory / "meta.json").exists():
         raise FileNotFoundError(f"no embedding cache at {directory}")
-    return EmbeddingCache(directory)
+    cache = EmbeddingCache(directory)
+    if (directory / "gates" / "meta.json").exists():
+        cache.gates = EmbeddingCache(directory / "gates")
+    return cache
 
 
 def offline_rewards(cache: EmbeddingCache, states: torch.Tensor, probe: Optional[torch.Tensor] = None,
-                    alpha: float = 1.0) -> torch.Tensor:
+                    alpha: float = 1.0, gates: Optional[torch.Tensor] = None) -> torch.Tensor:
     """Rewards from cached states and the saved head, on CPU — the same arithmetic as
-    `probes.probe.rewards_from_hidden` (project in float32, cast to the state dtype, apply the head)."""
+    `probes.probe.rewards_from_hidden` (project in float32, cast to the state dtype, apply the head). A gated
+    head needs the states' ``gates`` (`EmbeddingCache.lookup_gates`)."""
+    from probes.heads import score_saved
     from probes.probe import project_to_null_space
 
-    weight, bias = cache.load_head()
+    saved = cache.load_head()
     h = states.float()
     if probe is not None:
         h = project_to_null_space(h, probe, alpha=alpha)
-    h = h.to(cache.state_dtype or weight.dtype)
+    dtype = cache.state_dtype or saved.get("weight", saved.get("regression_weight")).dtype
     # F.linear: the same kernel as the online nn.Linear head, so offline == online exactly.
-    out = torch.nn.functional.linear(h, weight.to(h.dtype), None if bias is None else bias.to(h.dtype))
-    return out.squeeze(-1)
+    return score_saved(saved, h.to(dtype), gates)

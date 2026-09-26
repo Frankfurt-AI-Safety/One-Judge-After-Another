@@ -25,7 +25,11 @@ Mechanism layer (`probes/cross_marker_directions.py`), all from one embedding pa
 - **placement check**: the same records' byte-identical cells with the marker in the RESPONSE (the direct
   arm's format) — direct gap vs prompt main effect vs DiD, in one unit;
 - **quality tracking**: the AUC of D between strong and weak records next to what document length alone
-  reaches, within length strata and length-residualised (``length_bins``; each row carries ``doc_tokens``).
+  reaches, within length strata and length-residualised (``length_bins``; each row carries ``doc_tokens``);
+- **gate pathway** (gated heads only, e.g. QRM; `probes/heads.py`): the reward also depends on a gate computed
+  from the end of the USER turn, which the projection does not touch. ``gate_fixed`` rescores every row with
+  the gate of its record's unmarked prompt (same template), so its disparities run through the last-token state
+  alone; baseline − gate_fixed is the part that runs through the gate.
 
 Items come from the generator's ``cells.jsonl`` next to the config's ``dataset_source`` (the direct
 manifest). Every record in any direct probe split is excluded from evaluation; a record is evaluated only
@@ -328,16 +332,18 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
     import torch
 
     from probes import cross_marker_directions as cmd
-    from probes.probe import embed_states, get_score_head, rewards_from_hidden
+    from probes.heads import get_head
+    from probes.probe import embed_with_gates, rewards_from_hidden
 
+    head = get_head(model)
     x_idx = [i for i, r in enumerate(rows) if r["encoding"] == encoding]
     d_idx = [i for i, r in enumerate(direct_rows) if r["encoding"] == encoding]
-    hx, dtype = embed_states(model, tokenizer, [convs[i] for i in x_idx], batch_size=batch_size,
-                             max_length=max_length, show_progress=show_progress)
-    hd = None
+    hx, dtype, gx = embed_with_gates(model, tokenizer, [convs[i] for i in x_idx], batch_size=batch_size,
+                                     max_length=max_length, show_progress=show_progress)
+    hd, gd = None, None
     if d_idx:
-        hd, _ = embed_states(model, tokenizer, [direct_convs[i] for i in d_idx], batch_size=batch_size,
-                             max_length=max_length, show_progress=show_progress)
+        hd, _, gd = embed_with_gates(model, tokenizer, [direct_convs[i] for i in d_idx], batch_size=batch_size,
+                                     max_length=max_length, show_progress=show_progress)
     timer = timer or PhaseTimer()
     timer.lap("embed")
 
@@ -345,16 +351,19 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
               x_sub: Optional[Sequence[int]] = None, d_sub: Optional[Sequence[int]] = None) -> None:
         """Rewards of (a subset of) this encoding's rows with ``basis`` projected out (``None`` = all
         rows of that side, an empty list = none)."""
-        for h, sub, idx, table in ((hx, x_sub, x_idx, rows), (hd, d_sub, d_idx, direct_rows)):
+        for h, g, sub, idx, table in ((hx, gx, x_sub, x_idx, rows), (hd, gd, d_sub, d_idx, direct_rows)):
             if h is None or (sub is not None and not len(sub)):
                 continue
-            _, r = rewards_from_hidden(model, h if sub is None else h[list(sub)], dtype, basis,
-                                       null_alpha=alpha)
+            pick = (lambda t: t) if sub is None else (lambda t: t[list(sub)])
+            _, r = rewards_from_hidden(model, pick(h), dtype, basis, null_alpha=alpha,
+                                       gates=None if g is None else pick(g))
             _set_column(table, idx if sub is None else [idx[k] for k in sub], r, column)
 
     apply("baseline", None)
     columns = ["baseline"]
     directions: Dict[str, Any] = {}
+    if gx is not None and gate_fixed_column(model, rows, x_idx, direct_rows, d_idx, hx, gx, dtype):
+        columns.append("gate_fixed")
 
     # the direct arm's directions, fitted on its probe records (never evaluated here)
     for axis, u in direct_dirs.items():
@@ -397,7 +406,9 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
         directions[name] = cmd.unit(contrasts[name].mean(0))
 
     # geometry: cosines, reliability ceilings, head alignment, share of each axis's disparity carried
-    w = get_score_head(model).weight.detach().float().cpu().reshape(-1)
+    # the head vector; a gated head has one per text (its gate is fixed per prompt), so the geometry uses
+    # their mean over this encoding's rows, and did_from_states only approximates the reward-based disparity
+    w = head.effective_weights(gx).mean(0)
     names = list(directions)
     reliability = {n: cmd.split_half_cosine(contrasts[n], settings["seed"]) for n in contrasts}
     # Δ_int over the headline group (strong records), so w·Δ_int reproduces the reported D-disparity
@@ -415,6 +426,7 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
         "did_from_states": {axis: float(w @ delta_int[axis]) for axis in axes},
         "did_group": "strong" if any(strong[r] for r in record_ids) else "weak",
         "n_folds": settings["n_folds"],
+        "head": head.kind if not head.gated else f"{head.kind} (mean effective head over the rows)",
     }
 
     # α-sweep of the own-axis directions (states in memory: only the head runs per α)
@@ -466,6 +478,30 @@ def timing_report(timer: PhaseTimer, *, batch_size: int, texts: Optional[Mapping
     return report
 
 
+def gate_fixed_column(model: Any, rows: List[Dict[str, Any]], x_idx: Sequence[int],
+                      direct_rows: List[Dict[str, Any]], d_idx: Sequence[int], hx: Any, gx: Any,
+                      dtype: Any) -> bool:
+    """Gated heads: the ``gate_fixed`` column — each decision row rescored with the gate of its record's
+    unmarked prompt under the same template (the gate depends on the prompt only). Direct-placement rows share
+    one prompt, so their gate is already fixed and the column equals their baseline. False (no column) when
+    a row has no unmarked control to take the gate from."""
+    from probes.probe import rewards_from_hidden
+
+    ref: Dict[Tuple[str, str], int] = {}
+    for k, i in enumerate(x_idx):
+        if rows[i]["cell"] == "unmarked":
+            ref.setdefault((rows[i]["record_id"], rows[i]["template_id"]), k)
+    keys = [(rows[i]["record_id"], rows[i]["template_id"]) for i in x_idx]
+    if not all(key in ref for key in keys):
+        logger.info("gate_fixed skipped: the rows have no unmarked control to take the gate from")
+        return False
+    _, r = rewards_from_hidden(model, hx, dtype, None, gates=gx[[ref[key] for key in keys]])
+    _set_column(rows, x_idx, r, "gate_fixed")
+    for i in d_idx:
+        direct_rows[i]["gate_fixed"] = direct_rows[i]["baseline"]
+    return True
+
+
 def credit_reference(dom: Any, selected: Dict[str, List[CellBlock]]) -> Optional[Dict[str, Any]]:
     """Credit only: the common-sense scorer's AUC on the evaluated records (`substrates/credit_reference.py`)."""
     if dom.name != "credit":
@@ -509,10 +545,13 @@ def print_report(summary: Dict[str, Any]) -> None:
         print(f"[{encoding}] {group} records — D-disparity, baseline and with each direction projected out "
               f"(cross-fitted where fitted here)")
         heads = ["baseline", "direct", "direct:joint", "prompt", "interaction", "unfair"]
+        gated = "gate_fixed" in by_col
+        if gated:
+            heads.append("gate fixed")
         print(f"  {'axis':14}" + "".join(f"{h:>16}" for h in heads) + f"{'scaled base':>16}{'CI-AUC':>10}")
         for axis, s in d["disparity"].items():
             cols = ["baseline", f"null_direct:{axis}", "null_direct:joint", f"null_prompt:{axis}",
-                    f"null_interaction:{axis}", "null_unfair"]
+                    f"null_interaction:{axis}", "null_unfair"] + (["gate_fixed"] if gated else [])
             vals = []
             for c in cols:
                 m = by_col.get(c, {}).get("margins", {}).get("D", {}).get(group, {})
@@ -733,7 +772,8 @@ def main() -> None:
             "quality and shared by every axis (probe_directions[*].split); none of them is evaluated. "
             "If probe_records is None they are counted in PAIRS (probe_size), ~38 records per single axis.",
             "Last-token projection only: an RM that also reads the prompt elsewhere (QRM's gate) keeps a "
-            "second pathway.",
+            "second pathway; for a gated head, gate_fixed isolates the last-token pathway and the geometry "
+            "uses the mean effective head.",
             "Directions fitted on this design (prompt, interaction, unfair) are cross-fitted for nulling; "
             "geometry and did_share use full-data fits (descriptive, in-sample).",
         ],

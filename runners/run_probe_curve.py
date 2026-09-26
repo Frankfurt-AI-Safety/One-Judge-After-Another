@@ -94,7 +94,7 @@ def direction_curve(model: Any, tokenizer: Any, dataset_cls: Any, source: str, a
                     threshold: float = DEFAULT_THRESHOLD) -> Dict[str, Any]:
     """The probe-size curve of one (encoding, axis) direction; see the module docstring."""
     from probes.cross_marker_directions import cosine, split_half_cosine
-    from probes.probe import build_probe_direction, embed_states, rewards_from_hidden
+    from probes.probe import build_probe_direction, embed_states, embed_with_gates, rewards_from_hidden
 
     grid = sorted(set(grid))
     make = lambda n: dataset_cls(source, axis=axis, encoding=encoding, split_seed=split_seed,
@@ -108,14 +108,14 @@ def direction_curve(model: Any, tokenizer: Any, dataset_cls: Any, source: str, a
     eval_ids = {str(e.metadata["source_record_id"]) for e in examples}
     if eval_ids & max_ids:
         raise AssertionError(f"{encoding}/{axis}: eval records overlap the probe records")
-    h_a, dtype = embed_states(model, tokenizer, [e.texts["a"] for e in examples], batch_size=batch_size,
-                              max_length=max_length, show_progress=False)
-    h_b, _ = embed_states(model, tokenizer, [e.texts["b"] for e in examples], batch_size=batch_size,
-                          max_length=max_length, show_progress=False)
+    h_a, dtype, g_a = embed_with_gates(model, tokenizer, [e.texts["a"] for e in examples],
+                                       batch_size=batch_size, max_length=max_length, show_progress=False)
+    h_b, _, g_b = embed_with_gates(model, tokenizer, [e.texts["b"] for e in examples],
+                                   batch_size=batch_size, max_length=max_length, show_progress=False)
 
     def eval_gaps(direction: Optional[Any]) -> Dict[str, Any]:
-        _, r_a = rewards_from_hidden(model, h_a, dtype, direction)
-        _, r_b = rewards_from_hidden(model, h_b, dtype, direction)
+        _, r_a = rewards_from_hidden(model, h_a, dtype, direction, gates=g_a)
+        _, r_b = rewards_from_hidden(model, h_b, dtype, direction, gates=g_b)
         return gap_summaries(per_record_gaps(examples, (r_a - r_b).tolist()), n_boot, seed)
 
     points: List[Dict[str, Any]] = []

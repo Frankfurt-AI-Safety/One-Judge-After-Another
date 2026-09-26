@@ -35,8 +35,7 @@ from scoring.demographic_experiment import (
 )
 from scoring.intervals import DEFAULT_N_BOOT
 from substrates.domains import get_domain
-from probes.embedding_cache import CACHE_ATTR
-from probes.probe import build_probe_direction, get_embeddings, get_rewards_both, rewards_from_hidden
+from probes.probe import build_probe_direction, embed_with_gates, get_rewards_both, rewards_from_hidden
 
 ENCODINGS = ["explicit", "proxy"]
 SWEEP_ALPHAS = [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -90,15 +89,11 @@ def _alpha_sweep(exp, cfg, all_texts, text_meta, n, probe) -> Dict[str, float]:
     """auto_influence at each α. One embedding pass (served from the embedding cache — these texts
     were just scored), then only the score head per α. The old fast path checked for an MLX-era
     backend method that no longer exists and silently re-ran the model once per α."""
-    hidden = get_embeddings(exp.model, exp.tokenizer, all_texts, batch_size=cfg.batch_size,
-                            device=cfg.device, max_length=cfg.max_length, show_progress=False)
-    state_dtype = next(exp.model.parameters()).dtype
-    cache = getattr(exp.model, CACHE_ATTR, None)
-    if cache is not None and cache.state_dtype is not None:
-        state_dtype = cache.state_dtype
+    hidden, state_dtype, gates = embed_with_gates(exp.model, exp.tokenizer, all_texts, batch_size=cfg.batch_size,
+                                                  max_length=cfg.max_length, show_progress=False)
     curve: Dict[str, float] = {}
     for a in SWEEP_ALPHAS:
-        _, scores = rewards_from_hidden(exp.model, hidden, state_dtype, probe, null_alpha=a)
+        _, scores = rewards_from_hidden(exp.model, hidden, state_dtype, probe, null_alpha=a, gates=gates)
         org = exp._organize_rewards(scores, text_meta, n)
         curve[str(a)] = compute_auto_influence_metrics(org).get("auto_influence", float("nan"))
     return curve
