@@ -292,6 +292,12 @@ line predicts the rest.
    det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config resources.slots=2 \
      --config idle_timeout=12h --config description=pilot_70b bash cluster/pilot.sh 70b
    ```
+**Result, 2026-09-26:** 2 h 15 min in total (estimate ~3 h). Placement 40/44 modules on the two GPUs, no
+offloading; peak 136-139 GiB of 160 (education fits at batch 2 only). Forward passes 7.1 / 8.1 / 2.0 texts/s
+(credit / hiring / education), model load ~2.8 min per process, mechanism layer + metrics ~10 s per domain.
+Extrapolated to full size (150 probe records; credit 653 records, hiring and education 300 + 300): credit ~5.4 h,
+hiring ~4.4 h, education ~17.5 h, **~27 h of both GPUs per 70B model**, two thirds of it education (compute-bound).
+
 3. Read out (any `slots=0` shell): `grep -h "^timing\|OFFLOADED\|placement" $PFSS/pilot_logs/*_70b.log`. A
    `OFFLOADED` warning means accelerate put layers on the CPU (the GPUs were too small) and the timings are
    not representative.
