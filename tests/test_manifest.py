@@ -1,0 +1,136 @@
+"""pairs/manifest.py: the template registry that provenance hashes come from."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+
+import pytest
+
+from pairs.manifest import (
+    GENERATOR_VERSION, _ALL_TEMPLATES, _merge_templates, _spotcheck_sample, _template_hash, code_provenance,
+    write_manifest,
+)
+from pairs.positionality import POSITION_TEMPLATES
+from substrates.bios_render import BIOS_TEMPLATES
+from substrates.credit_render import TEMPLATES
+from substrates.education_render import EDU_TEMPLATES
+
+
+def test_registry_holds_every_domains_templates():
+    for reg in (TEMPLATES, BIOS_TEMPLATES, EDU_TEMPLATES, POSITION_TEMPLATES):
+        assert reg, "an empty registry would leave its domain's pairs unhashable"
+        for tid, text in reg.items():
+            assert _ALL_TEMPLATES[tid] == text
+            assert len(_template_hash(tid)) == 12
+    assert len(_ALL_TEMPLATES) == sum(map(len, (TEMPLATES, BIOS_TEMPLATES, EDU_TEMPLATES, POSITION_TEMPLATES)))
+
+
+def test_a_template_id_defined_twice_raises():
+    with pytest.raises(ValueError, match="edu_v1"):
+        _merge_templates({"edu_v1": "a", "x": "b"}, {"edu_v1": "c"})
+    assert _merge_templates({"a": "1"}, {"b": "2"}) == {"a": "1", "b": "2"}
+
+
+def test_an_unknown_template_id_raises():
+    with pytest.raises(KeyError):
+        _template_hash("no_such_template")
+
+
+def _git(root, *args):
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                   check=True, capture_output=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_code_provenance_names_the_commit_and_what_differs_from_it(tmp_path):
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_text("data/\n")
+    (tmp_path / "gen.py").write_text("x = 1\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "c")
+    head = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "pairs.jsonl").write_text("{}\n")  # generated data is ignored: still clean
+    assert code_provenance(tmp_path) == {"git_commit": head, "git_dirty": False, "git_dirty_paths": []}
+
+    (tmp_path / "gen.py").write_text("x = 2\n")
+    (tmp_path / "new.py").write_text("")
+    assert code_provenance(tmp_path) == {"git_commit": head, "git_dirty": True,
+                                         "git_dirty_paths": ["gen.py", "new.py"]}
+
+
+def test_code_provenance_outside_a_repo_is_none(tmp_path):
+    assert code_provenance(tmp_path / "not_a_repo") == {
+        "git_commit": None, "git_dirty": None, "git_dirty_paths": None}
+
+
+def test_manifest_records_version_and_code(tmp_path):
+    paths = write_manifest(tmp_path, [], seed=1, discard_report={}, thresholds={}, domain="d", attribution="a")
+    m = json.loads(paths["manifest"].read_text())
+    assert m["generator_version"] == GENERATOR_VERSION
+    assert set(m["code"]) == {"git_commit", "git_dirty", "git_dirty_paths"}
+    assert (m["domain"], m["attribution"]) == ("d", "a")
+
+
+def test_domain_and_attribution_have_no_default(tmp_path):
+    with pytest.raises(TypeError, match="domain"):
+        write_manifest(tmp_path, [], seed=1, discard_report={}, thresholds={}, attribution="a")
+    with pytest.raises(TypeError, match="attribution"):
+        write_manifest(tmp_path, [], seed=1, discard_report={}, thresholds={}, domain="d")
+
+
+def _rows(strata):
+    # rows in a fixed per-block order, as the generators write them
+    return [{"id": f"{a}-{e}-{b}", "varied_axis": a, "encoding": e} for b in range(100) for a, e in strata]
+
+
+def test_spotcheck_covers_every_axis_and_encoding():
+    strata = [("sex", "explicit"), ("age", "explicit"), ("sex", "proxy"), ("age", "proxy"),
+              ("marital_status", "explicit"), ("intersection", "explicit"), ("intersection", "proxy")]
+    sample = _spotcheck_sample(_rows(strata), 30, seed=42)
+    per = {s: sum((r["varied_axis"], r["encoding"]) == s for r in sample) for s in strata}
+    assert per == {s: 5 for s in strata}  # ceil(30 / 7)
+    rows = _rows(strata)
+    assert [rows.index(r) for r in sample] == sorted(rows.index(r) for r in sample)  # manifest order
+
+
+def test_spotcheck_is_seeded_and_keeps_small_strata_whole():
+    rows = _rows([("sex", "explicit")]) + [{"id": "only", "varied_axis": "rare", "encoding": "proxy"}]
+    assert _spotcheck_sample(rows, 10, seed=1) == _spotcheck_sample(rows, 10, seed=1)
+    assert _spotcheck_sample(rows, 10, seed=1) != _spotcheck_sample(rows, 10, seed=2)
+    assert rows[-1] in _spotcheck_sample(rows, 10, seed=1)
+    assert _spotcheck_sample([], 10, seed=1) == [] and _spotcheck_sample(rows, 0, seed=1) == []
+
+
+def test_positioned_pairs_also_hash_their_essay_shell(tmp_path):
+    import random
+
+    from pairs.manifest import pair_to_record
+    from pairs.positionality import make_positioned_pairs
+    from substrates.education_ingest import EssayRecord
+
+    rec = EssayRecord(source_record_id="essay-0", essay_text="One. Two. Three. Four.", holistic_score=5.0,
+                      high_quality=True, source_dataset="persuade")
+    pair = make_positioned_pairs(rec, "pos_sex", "conclusion", random.Random(0), header_template="edu_v2")[0]
+    row = pair_to_record(pair, "p0", seed=1, domain="education")
+    assert row["provenance"]["template_hash"] == _template_hash(pair.template_id)
+    assert row["provenance"]["header_template_hash"] == _template_hash("edu_v2")
+    paths = write_manifest(tmp_path, [row], seed=1, discard_report={}, thresholds={}, domain="education",
+                           attribution="a")
+    assert set(json.loads(paths["manifest"].read_text())["templates"]) == {pair.template_id, "edu_v2"}
+
+
+def test_pairs_without_a_shell_carry_no_shell_hash():
+    import random
+
+    from pairs.factorial import CREDIT_DESIGN, factorial_pairs
+    from pairs.manifest import pair_to_record
+    from substrates.credit_render import render_profile
+    from tests.test_credit_pipeline import _fake_record
+
+    pair = factorial_pairs(_fake_record(), "credit_v1", "explicit", render_profile, random.Random(0),
+                           axes=("sex",), design=CREDIT_DESIGN)[0][0]
+    assert "header_template_hash" not in pair_to_record(pair, "c0", seed=1, domain="credit")["provenance"]

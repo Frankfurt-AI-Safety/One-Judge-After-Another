@@ -414,8 +414,8 @@ def build_factorial_rows(
     never rendered, incl. its quality label) goes onto the block's cells row and onto every pair row.
     Returns ``(pair_rows, cell_rows, gate_report)``.
     """
-    # Local import: manifest imports pairs.positionality, which imports this module. At module level the
-    # cycle would fail inside manifest's try/except and silently empty its template registry.
+    # Local import: manifest imports pairs.positionality, which imports this module, so a module-level
+    # import here is a cycle (ImportError).
     from pairs.manifest import pair_to_record
 
     pair_rows: List[Dict[str, Any]] = []

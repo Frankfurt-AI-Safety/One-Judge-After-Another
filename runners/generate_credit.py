@@ -39,7 +39,7 @@ from substrates.credit_ingest import DEFAULT_RAW_PATH, GermanCreditRecord, load_
 from substrates.credit_render import TEMPLATES, render_profile
 from pairs.factorial import CREDIT_DESIGN, build_factorial_rows
 from pairs.validate import Thresholds, validate_pair
-from pairs.manifest import write_manifest
+from pairs.manifest import GERMAN_CREDIT_ATTRIBUTION, write_manifest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s",
                     datefmt="%Y-%m-%d %H:%M:%S")
@@ -136,6 +136,7 @@ def main() -> None:
         args.out_dir, pair_rows, seed=args.seed, discard_report=report,
         thresholds={"max_char_delta": thr.max_char_delta, "max_token_delta": thr.max_token_delta,
                     "max_flesch_delta": thr.max_flesch_delta},
+        domain="credit", attribution=GERMAN_CREDIT_ATTRIBUTION,
     )
     cells_path = args.out_dir / "cells.jsonl"
     with open(cells_path, "w") as f:

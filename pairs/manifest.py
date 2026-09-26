@@ -1,16 +1,19 @@
 """
-Manifest schema + writer for the demographic credit pipeline.
+Manifest schema + writer shared by every pair generator (credit, hiring on Bias-in-Bios, education: the
+factorial, the stage design and the positioned-argument design).
 
-Each probe pair becomes one self-describing JSONL record (which axis varied, which were held fixed,
-template, encoding, intersectional cell, the A/B texts + clauses, and provenance for reproducibility).
-The writer emits three artifacts under the output directory:
-- ``pairs.jsonl``   — one record per matched pair (the dataset the loader consumes).
-- ``manifest.json`` — counts per axis/encoding/cell, generator version/seed, validation thresholds,
-  discard report, and source-dataset licence attribution.
-- ``spotcheck.csv``  — a deterministic sample for human review.
+Each matched pair becomes one self-describing JSONL row (which axis varied, what was held fixed, template,
+encoding, intersectional cell, the A/B texts and clauses, the record's real fields, provenance). The writer
+emits three files into the output directory:
+- ``pairs.jsonl``   — one row per matched pair (what the loader reads).
+- ``manifest.json`` — generator version, the git commit and dirty paths (`code_provenance`), seed, counts
+  per axis/encoding/role, template hashes, validation thresholds, discard report, domain and the
+  substrate's licence line.
+- ``spotcheck.csv`` — a seeded sample for human review, stratified by (axis, encoding).
+The factorial generators also write ``cells.jsonl`` (all eight texts per block) next to these, themselves.
 
-Per-RM chat-template formatting is intentionally NOT stored — it is applied at scoring time via
-``format_conversation`` against each model's tokenizer, so one manifest serves all five RMs.
+Per-RM chat-template formatting is intentionally NOT stored: it is applied at scoring time
+(``format_conversation``) with each model's tokenizer, so one manifest serves every RM.
 """
 
 from __future__ import annotations
@@ -18,51 +21,44 @@ from __future__ import annotations
 import csv
 import json
 import hashlib
-from dataclasses import asdict
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from pairs.factorial import stable_rng
 from pairs.markers import GeneratedPair
+from pairs.positionality import POSITION_TEMPLATES  # positioned-argument (A2) sentence templates
+from substrates.bios_render import BIOS_TEMPLATES
 from substrates.credit_render import TEMPLATES
+from substrates.education_render import EDU_TEMPLATES
 
-try:  # Legacy synthetic-CV templates (retained so pre-2026-08 CV manifests still hash).
-    from pairs.cv_render import CV_TEMPLATES
-except Exception:  # pragma: no cover - defensive
-    CV_TEMPLATES = {}
 
-try:  # Bias-in-Bios (real biography) templates — the current hiring substrate.
-    from substrates.bios_render import BIOS_TEMPLATES
-except Exception:  # pragma: no cover - defensive
-    BIOS_TEMPLATES = {}
+def _merge_templates(*registries: Dict[str, str]) -> Dict[str, str]:
+    """One id -> template registry over all domains; an id defined twice raises instead of overwriting."""
+    merged: Dict[str, str] = {}
+    for reg in registries:
+        clash = merged.keys() & reg.keys()
+        if clash:
+            raise ValueError(f"template ids defined in two registries: {sorted(clash)}")
+        merged.update(reg)
+    return merged
 
-try:  # Education (essay) templates; absent on a minimal checkout is fine.
-    from substrates.education_render import EDU_TEMPLATES
-except Exception:  # pragma: no cover - defensive
-    EDU_TEMPLATES = {}
-
-try:  # Positioned-argument (A2) sentence templates.
-    from pairs.positionality import POSITION_TEMPLATES
-except Exception:  # pragma: no cover - defensive
-    POSITION_TEMPLATES = {}
 
 # Combined registry so provenance hashing works for every domain's template ids.
-_ALL_TEMPLATES: Dict[str, str] = {
-    **TEMPLATES, **CV_TEMPLATES, **BIOS_TEMPLATES, **EDU_TEMPLATES, **POSITION_TEMPLATES,
-}
+_ALL_TEMPLATES: Dict[str, str] = _merge_templates(TEMPLATES, BIOS_TEMPLATES, EDU_TEMPLATES, POSITION_TEMPLATES)
 
 # 0.2.0: credit moved to the sex × age × marital-status factorial on the corrected codebook.
-GENERATOR_VERSION = "0.2.0"
+# 0.3.0: pairs/ code review (2026-09-26): education proxy names drawn independently per cell, stage pairs'
+#        held_fixed/cell metadata, gate reason codes and clause-position check. manifest.json also records the
+#        git commit (`code_provenance`), which identifies the code even where this version was not bumped.
+GENERATOR_VERSION = "0.3.0"
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 GERMAN_CREDIT_ATTRIBUTION = (
     "Substrate: UCI Statlog (German Credit Data), CC-BY-4.0, decoded with the corrected code table "
     "of Groemping (2019). Demographic markers (sex x age x marital status, full factorial) are "
     "synthetic and self-licensed."
-)
-
-CV_ATTRIBUTION = (
-    "Substrate: synthetic CV records, generated deterministically from seed (no external dataset). "
-    "Demographic markers (sex/age/family-status) are synthetic. Self-licensed. "
-    "LEGACY: retained to reproduce pre-2026-08 hiring results; the hiring domain now uses BIOS_ATTRIBUTION."
 )
 
 BIOS_ATTRIBUTION = (
@@ -77,13 +73,45 @@ BIOS_ATTRIBUTION = (
 
 EDU_ATTRIBUTION = (
     "Substrate: real essays — PERSUADE 2.0 (CC BY-NC-SA 4.0, research/measurement use; derived essays "
-    "NOT redistributed) and/or ASAP-AES (Kaggle 2012 Hewlett competition terms). Demographic header "
-    "markers (name -> sex/ethnicity; grade level -> age) are synthetic, injected, self-licensed."
+    "NOT redistributed) and/or ASAP-AES (Kaggle 2012 Hewlett competition terms). Markers are synthetic, "
+    "injected, self-licensed: the sex x ethnicity x economic-status factorial (stated, or a first name for "
+    "sex and ethnicity and the school's free-lunch share for economic status), the education-stage design "
+    "(a stated age or school stage), and the positioned-argument design (an identity sentence in the essay)."
 )
+
+
+def code_provenance(root: Path = _REPO_ROOT) -> Dict[str, Any]:
+    """The git commit the generator ran from and the paths that differed from it (``git status``, ignored
+    files excluded, so generated data does not count). All ``None`` where git or the repo is unavailable."""
+    try:
+        commit = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
+                                         text=True, stderr=subprocess.DEVNULL).strip()
+        status = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"],
+                                         text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return {"git_commit": None, "git_dirty": None, "git_dirty_paths": None}
+    paths = sorted(line[3:] for line in status.splitlines() if line.strip())
+    return {"git_commit": commit, "git_dirty": bool(paths), "git_dirty_paths": paths}
 
 
 def _template_hash(template_id: str) -> str:
     return hashlib.sha256(_ALL_TEMPLATES[template_id].encode("utf-8")).hexdigest()[:12]
+
+
+def _spotcheck_sample(records: List[Dict[str, Any]], n: int, seed: int) -> List[Dict[str, Any]]:
+    """A seeded sample for human review, stratified by (axis, encoding): ceil(n / strata) rows from each
+    stratum (all of a smaller one), in manifest order. A stride over the whole file would keep landing on
+    the same rows of each block (credit's 30 rows covered only two of seven strata)."""
+    strata: Dict[tuple, List[int]] = {}
+    for i, rec in enumerate(records):
+        strata.setdefault((rec["varied_axis"], rec["encoding"]), []).append(i)
+    if not strata or n <= 0:
+        return []
+    k = -(-n // len(strata))
+    picked: List[int] = []
+    for (axis, enc), idx in strata.items():
+        picked += idx if len(idx) <= k else stable_rng("spotcheck", seed, axis, enc).sample(idx, k)
+    return [records[i] for i in sorted(picked)]
 
 
 def pair_to_record(
@@ -92,7 +120,7 @@ def pair_to_record(
     *,
     role: str = "probe",
     seed: int,
-    domain: str = "credit",
+    domain: str,
     real_fields: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Serialize a :class:`GeneratedPair` to a manifest JSONL record.
@@ -122,6 +150,9 @@ def pair_to_record(
             "template_hash": _template_hash(pair.template_id),
         },
     }
+    header = pair.exemplar.get("header_template")
+    if header is not None:  # positioned pairs: the essay shell the sentence sits in, a template of its own
+        row["provenance"]["header_template_hash"] = _template_hash(header)
     if real_fields is not None:
         row["real_fields"] = real_fields
     return row
@@ -135,10 +166,13 @@ def write_manifest(
     discard_report: Dict[str, Any],
     thresholds: Dict[str, Any],
     spotcheck_n: int = 30,
-    domain: str = "credit",
-    attribution: str = GERMAN_CREDIT_ATTRIBUTION,
+    domain: str,
+    attribution: str,
 ) -> Dict[str, Path]:
-    """Write pairs.jsonl + manifest.json + spotcheck.csv. Returns the written paths."""
+    """Write pairs.jsonl + manifest.json + spotcheck.csv. Returns the written paths.
+
+    ``domain`` and ``attribution`` (the substrate's licence line) have no default: a generator that forgot
+    them would otherwise label its manifest as German Credit under CC-BY."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     pairs_path = out_dir / "pairs.jsonl"
@@ -157,22 +191,21 @@ def write_manifest(
 
     manifest = {
         "generator_version": GENERATOR_VERSION,
+        "code": code_provenance(),
         "seed": seed,
         "domain": domain,
         "n_records": len(records),
         "counts_by_axis_encoding_role": counts,
-        "templates": {tid: _template_hash(tid)
-                      for tid in sorted({r["template_id"] for r in records})},
+        "templates": {tid: _template_hash(tid) for tid in sorted(
+            {r["template_id"] for r in records}
+            | {r["exemplar"]["header_template"] for r in records if "header_template" in r.get("exemplar", {})})},
         "validation_thresholds": thresholds,
         "discard_report": discard_report,
         "attribution": attribution,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
-    # deterministic spot-check sample (stride sampling over the ordered records)
-    n = min(spotcheck_n, len(records))
-    stride = max(len(records) // n, 1) if n else 1
-    sample = records[::stride][:n]
+    sample = _spotcheck_sample(records, spotcheck_n, seed)
     with open(spotcheck_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "varied_axis", "encoding", "template_id", "label_a", "label_b",

@@ -298,7 +298,7 @@ class TestLoader:
         for i, r in enumerate(recs):
             p = _sex_pair(r, seed=i)
             rows.append(pair_to_record(p, f"credit-sex-explicit-credit_v1-{r.source_record_id}",
-                                       role="probe", seed=42))
+                                       role="probe", seed=42, domain="credit"))
         path = tmp_path / "pairs.jsonl"
         path.write_text("\n".join(json.dumps(x) for x in rows))
         return path
