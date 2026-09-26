@@ -2,8 +2,9 @@
 Unit tests for the education (grading) demographic pipeline (education arm).
 
 Cover the offline stages (render -> inject -> validate -> loader) on a tiny inline essay fixture
-(no corpus download, no model), plus the new education markers (ethnicity name-grid, grade_level) and
-a regression that the shared `make_pair` default (credit) is unchanged by the new `subject` hook.
+(no corpus download, no model), plus the grade_level poles and the name pools. Injection and the
+Tier-1 gate are tested on the education factorial (tests/test_education_factorial.py) and the stage design
+(tests/test_education_stage.py).
 """
 
 from __future__ import annotations
@@ -21,9 +22,8 @@ from pairs.markers import (
     FEMALE_NAMES,
     MALE_NAMES,
     make_marker,
-    make_pair,
 )
-from pairs.validate import Thresholds, validate_pair
+from pairs.factorial import EDUCATION_DESIGN, factorial_pairs
 
 # A neutral, brace-containing essay body — the renderer must copy it verbatim (never .format it).
 _ESSAY_BODY = (
@@ -254,48 +254,13 @@ class TestIngest:
             assert strong_min - weak_max >= 2   # integer scores: at least one value between the classes
 
 
-# --------------------------------------------------------------------------- markers + gate
+# --------------------------------------------------------------------------- stage marker
 class TestMarkersAndGate:
-    @pytest.mark.parametrize("axis", ["sex", "ethnicity", "grade_level"])
-    @pytest.mark.parametrize("enc", ["explicit", "proxy"])
-    @pytest.mark.parametrize("tid", list(EDU_TEMPLATES))
-    def test_pair_is_single_axis_and_passes_gate(self, axis, enc, tid):
-        pair = make_pair(_fake_record(), tid, axis, enc, random.Random(0),
-                         render_fn=render_essay, content_label="essay_content", subject="student")
-        # stripping each clause yields identical remainders → single-axis (body byte-identical)
-        assert pair.text_a.replace(pair.clause_a, "", 1) == pair.text_b.replace(pair.clause_b, "", 1)
-        assert pair.text_a.count(pair.clause_a) == 1 and pair.text_b.count(pair.clause_b) == 1
-        res = validate_pair(pair, Thresholds())
-        assert res.ok, f"{axis}/{enc}/{tid} failed gate: {res.reasons}"
-        assert "student" in pair.clause_a  # subject noun threaded through
-
-    def test_ethnicity_proxy_holds_sex_fixed(self):
-        # The white/black names on the two poles must be the same sex (ethnicity is the only axis).
-        for seed in range(20):
-            spec = make_marker("ethnicity", "proxy", random.Random(seed), subject="student")
-            white, black = spec.exemplar["white_name"], spec.exemplar["black_name"]
-            if spec.exemplar["held_sex"] == "female":
-                assert white in FEMALE_NAMES and black in BLACK_FEMALE_NAMES
-            else:
-                assert white in MALE_NAMES and black in BLACK_MALE_NAMES
-
-    def test_sex_proxy_holds_ethnicity_fixed(self):
-        # Sex axis uses the "white"-coded pool on both poles, so ethnicity is held.
-        spec = make_marker("sex", "proxy", random.Random(1), subject="student")
-        assert spec.exemplar["female_name"] in FEMALE_NAMES
-        assert spec.exemplar["male_name"] in MALE_NAMES
-
     def test_grade_level_poles_are_the_stage_ladder_ends(self):
         # Poles widened 2026-09-17 from 7th grade / final-year undergraduate; the labels now name the
         # rungs. Wording, ladder and gate are covered by tests/test_education_stage.py.
         spec = make_marker("grade_level", "proxy", random.Random(0), subject="student")
         assert (spec.label_a, spec.label_b) == ("grade6", "doctorate")
-
-    def test_credit_default_subject_unchanged(self):
-        # Regression: the shared make_marker default subject must keep credit clauses byte-identical.
-        spec = make_marker("sex", "explicit", random.Random(0))
-        assert spec.clause_a == " The applicant is a woman."
-        assert spec.clause_b == " The applicant is a man."
 
 
 def test_name_pools_are_haim_table3():
@@ -314,8 +279,9 @@ class TestLoader:
         rows = []
         for i in range(40):
             rec = _fake_record(f"essay-{i:04d}", high_quality=bool(i % 2))
-            p = make_pair(rec, "edu_v1", "ethnicity", "proxy", random.Random(i),
-                          render_fn=render_essay, content_label="essay_content", subject="student")
+            p = factorial_pairs(rec, "edu_v1", "proxy", render_essay, random.Random(i), axes=("ethnicity",),
+                                content_label="essay_content", subject="student",
+                                design=EDUCATION_DESIGN)[0][0]
             rows.append(pair_to_record(p, f"edu-ethnicity-proxy-edu_v1-{rec.source_record_id}",
                                        role="probe", seed=42, domain="education"))
         path = tmp_path / "pairs.jsonl"

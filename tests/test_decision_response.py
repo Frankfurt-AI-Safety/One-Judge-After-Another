@@ -12,6 +12,7 @@ import pytest
 
 from substrates.bios_ingest import RealCVRecord
 from substrates.bios_render import render_bio
+from pairs.factorial import hiring_marker
 from pairs.verdicts import (
     DECISION_FRAMES,
     VERDICT_VARIANTS,
@@ -80,6 +81,16 @@ class TestBuilder:
         rep = verdict_length_report(DECISION_FRAMES[domain].verdicts(axis))
         assert rep["max_token_delta"] <= 12, f"{domain}/{axis}: {rep}"
 
+    @pytest.mark.parametrize("domain,axis", [c for c in _CASES if c[1] != "grade_level"])
+    def test_default_marker_builder_refuses_demographic_axes(self, domain, axis):
+        # Regression (2026-09-26): the default used to be the legacy single-axis builder, whose
+        # ethnicity marker had white as pole A — an education ethnicity item built without marker_fn
+        # put the discriminatory verdict on the white student. The default now raises instead.
+        rec, render, tid, _ = _domain_case(domain)
+        with pytest.raises(ValueError):
+            build_decision_item(rec, axis, "explicit", render, random.Random(0), template_id=tid,
+                                domain=domain)
+
     def test_protected_pole_per_domain(self):
         # Every factorial puts the hypothesised penalised level first, so the protected pole is pole A
         # in all three domains: female / young / married / Black / low income / intersectional.
@@ -113,8 +124,8 @@ class TestBuilder:
                                 template_id=tid, domain="credit", marker_fn=marker_fn)
 
     def test_deterministic(self):
-        a = build_decision_item(_rec(), "sex", "proxy", render_bio, random.Random(7))
-        b = build_decision_item(_rec(), "sex", "proxy", render_bio, random.Random(7))
+        a = build_decision_item(_rec(), "sex", "proxy", render_bio, random.Random(7), marker_fn=hiring_marker)
+        b = build_decision_item(_rec(), "sex", "proxy", render_bio, random.Random(7), marker_fn=hiring_marker)
         assert a == b
 
     def test_unknown_axis_or_domain_raises(self):
@@ -171,5 +182,5 @@ class TestSubstratePortingGap:
 
     def test_decision_verdicts_use_no_record_fields(self):
         item = build_decision_item(_rec(), "sex", "explicit", render_bio,
-                                   random.Random(0), template_id="bios_v1")
+                                   random.Random(0), template_id="bios_v1", marker_fn=hiring_marker)
         assert "years" not in " ".join(item["verdicts"].values())

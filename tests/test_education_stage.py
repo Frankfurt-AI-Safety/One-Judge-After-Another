@@ -106,8 +106,10 @@ class TestStageLadder:
                          content_label="essay_content", subject="student")
         res = validate_pair(pair, Thresholds())
         assert res.ok, (axis, enc, tid, res.reasons)
-        assert pair.held_fixed[-2:] == ["essay_content", "template"]
-        assert axis not in pair.held_fixed
+        # Regression (2026-09-26): held_fixed listed sex, age and family status — absent on the stage
+        # essays, and age is what the stage axis varies.
+        assert pair.held_fixed == ["essay_content", "template"]
+        assert pair.intersectional_cell == {axis: f"{pair.label_a}-vs-{pair.label_b}"}
 
     def test_the_reference_rung_is_not_an_axis(self):
         assert f"stage_{STAGE_REFERENCE}" not in STAGE_LADDER_AXES

@@ -1,9 +1,9 @@
 """
 Unit tests for the hiring (CV-screening) demographic pipeline on the real Bias-in-Bios substrate.
 
-Cover the offline stages (scrub -> render -> inject -> validate -> loader) on tiny inline fixtures
-(no corpus download, no model). The scrub tests matter most: the Tier-1 gate *cannot* catch a bad
-scrub, because it only compares the two poles to each other, so a leaked "she" is present on both
+Cover the offline stages (scrub -> render -> loader) on tiny inline fixtures (no corpus download, no
+model); injection and the Tier-1 gate are tested on the hiring factorial (tests/test_hiring_factorial.py).
+The scrub tests matter most: the Tier-1 gate *cannot* catch a bad scrub, because it only compares the two poles to each other, so a leaked "she" is present on both
 sides and passes. Empirical leakage is measured separately by runners/validate_bios_scrub.py.
 """
 
@@ -25,8 +25,7 @@ from substrates.bios_ingest import (
     with_article,
 )
 from substrates.bios_render import BIOS_TEMPLATES, render_bio
-from pairs.markers import make_pair
-from pairs.validate import Thresholds, validate_pair
+from pairs.factorial import HIRING_DESIGN, factorial_pairs
 
 # A neutral, brace-containing biography body — the renderer must copy it verbatim (never .format it).
 _BIO_BODY = (
@@ -304,29 +303,6 @@ class TestRender:
             assert render_bio(rec, "bios_v1") == render_bio(_fake_record(), "bios_v1")
 
 
-# --------------------------------------------------------------------------- markers + gate
-class TestMarkersAndGate:
-    @pytest.mark.parametrize("axis", ["sex", "age", "family_status", "intersection"])
-    @pytest.mark.parametrize("enc", ["explicit", "proxy"])
-    @pytest.mark.parametrize("tid", list(BIOS_TEMPLATES))
-    def test_pair_is_single_axis_and_passes_gate(self, axis, enc, tid):
-        pair = make_pair(_fake_record(), tid, axis, enc, random.Random(0),
-                         render_fn=render_bio, content_label="bio_content", subject="applicant")
-        # stripping each clause yields identical remainders → single-axis (body byte-identical)
-        assert pair.text_a.replace(pair.clause_a, "", 1) == pair.text_b.replace(pair.clause_b, "", 1)
-        assert pair.text_a.count(pair.clause_a) == 1 and pair.text_b.count(pair.clause_b) == 1
-        # intersection composes three clauses, so it gets the same relaxed bound the generator uses
-        thr = Thresholds(max_char_delta=40) if axis == "intersection" else Thresholds()
-        res = validate_pair(pair, thr)
-        assert res.ok, f"{axis}/{enc}/{tid} failed gate: {res.reasons}"
-        assert "applicant" in pair.clause_a  # subject noun threaded through
-
-    def test_held_fixed_records_the_bio_content(self):
-        pair = make_pair(_fake_record(), "bios_v1", "sex", "explicit", random.Random(0),
-                         render_fn=render_bio, content_label="bio_content", subject="applicant")
-        assert "bio_content" in pair.held_fixed
-
-
 # --------------------------------------------------------------------------- loader
 class TestLoader:
     def _write_jsonl(self, tmp_path):
@@ -335,8 +311,8 @@ class TestLoader:
         rows = []
         for i in range(40):
             rec = _fake_record(f"bios-{i:04d}", qualified=bool(i % 2))
-            p = make_pair(rec, "bios_v1", "sex", "explicit", random.Random(i),
-                          render_fn=render_bio, content_label="bio_content", subject="applicant")
+            p = factorial_pairs(rec, "bios_v1", "explicit", render_bio, random.Random(i), axes=("sex",),
+                                content_label="bio_content", design=HIRING_DESIGN)[0][0]
             rows.append(pair_to_record(p, f"bios-sex-explicit-bios_v1-{rec.source_record_id}",
                                        role="probe", seed=42, domain="cv"))
         path = tmp_path / "pairs.jsonl"

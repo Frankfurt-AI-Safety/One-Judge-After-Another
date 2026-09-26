@@ -416,12 +416,3 @@ def test_credit_domain_uses_marital_status():
     assert credit.axes == ("sex", "age", "marital_status", "intersection")
     assert credit.make_marker is credit_marker
     assert "family_status" in get_domain("cv").axes
-
-
-def test_standalone_marital_marker_is_explicit_only():
-    from pairs.markers import make_marker
-
-    spec = make_marker("marital_status", "explicit", random.Random(0))
-    assert (spec.clause_a, spec.clause_b) == (" The applicant is married.", " The applicant is single.")
-    with pytest.raises(ValueError):
-        make_marker("marital_status", "proxy", random.Random(0))

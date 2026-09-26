@@ -3,7 +3,7 @@ Unit tests for the demographic credit data-creation pipeline.
 
 Cover the offline stages (ingest → render → inject → validate → loader → metric) without any model:
 - renderer determinism + demographic-neutrality of the baseline,
-- marker injection yields a structural single-axis diff,
+- the real-field clause (the factorial pairs' single-axis diff is tested in tests/test_credit_factorial.py),
 - Tier-1 gate accepts clean pairs and rejects content drift,
 - the CreditDemographicDataset loader yields ContrastivePair/EvalExample,
 - auto-influence metric arithmetic.
@@ -19,8 +19,13 @@ import pytest
 
 from substrates.credit_ingest import GermanCreditRecord, load_german_credit
 from substrates.credit_render import render_profile, TEMPLATES
-from pairs.markers import make_pair
+from pairs.factorial import factorial_pairs
 from pairs.validate import validate_pair, validate_pairs, Thresholds
+
+
+def _sex_pair(rec, seed=0):
+    """The record's first explicit sex pair of the credit factorial (a clean single-axis pair)."""
+    return factorial_pairs(rec, "credit_v1", "explicit", render_profile, random.Random(seed), axes=("sex",))[0][0]
 
 
 def _fake_record(rid="german-test") -> GermanCreditRecord:
@@ -204,24 +209,6 @@ class TestRender:
 
 # --------------------------------------------------------------------------- markers + gate
 class TestMarkersAndGate:
-    @pytest.mark.parametrize("axis", ["sex", "age", "family_status", "intersection"])
-    @pytest.mark.parametrize("enc", ["explicit", "proxy"])
-    def test_pair_is_single_axis_and_passes_gate(self, axis, enc):
-        pair = make_pair(_fake_record(), "credit_v1", axis, enc, random.Random(0))
-        # stripping each clause yields identical remainders → single-axis
-        assert pair.text_a.replace(pair.clause_a, "", 1) == pair.text_b.replace(pair.clause_b, "", 1)
-        res = validate_pair(pair)
-        assert res.ok, f"{axis}/{enc} failed gate: {res.reasons}"
-
-    def test_intersection_cell_records_all_axes(self):
-        pair = make_pair(_fake_record(), "credit_v1", "intersection", "explicit", random.Random(0))
-        assert pair.intersectional_cell["sex"] == "female-vs-male"
-        assert pair.intersectional_cell["age"] == "30-vs-50"
-        assert pair.intersectional_cell["family_status"] == "parental_leave-vs-continuous"
-        assert pair.held_fixed == ["financial_content", "template"]
-        assert "woman" in pair.text_a and "30-year-old" in pair.text_a
-        assert "man" in pair.text_b and "50-year-old" in pair.text_b
-
     def test_real_field_clause(self):
         import dataclasses
         from pairs.markers import real_field_clause
@@ -242,7 +229,7 @@ class TestMarkersAndGate:
             clause("male", "single")
 
     def test_gate_rejects_content_drift(self):
-        pair = make_pair(_fake_record(), "credit_v1", "sex", "explicit", random.Random(0))
+        pair = _sex_pair(_fake_record())
         # corrupt a financial fact on one side only → not single-axis anymore
         pair.text_b = pair.text_b.replace("2000 EUR", "9999 EUR")
         res = validate_pair(pair)
@@ -250,14 +237,14 @@ class TestMarkersAndGate:
         assert any("single-axis" in r or "non-marker" in r for r in res.reasons)
 
     def test_gate_rejects_length_blowup(self):
-        pair = make_pair(_fake_record(), "credit_v1", "sex", "explicit", random.Random(0))
+        pair = _sex_pair(_fake_record())
         pair.text_a = pair.text_a + " " + ("padding " * 50)
         res = validate_pair(pair, Thresholds(max_char_delta=12, max_token_delta=3))
         assert not res.ok
 
     def test_validate_pairs_report(self):
         recs = [_fake_record(f"r{i}") for i in range(5)]
-        pairs = [make_pair(r, "credit_v1", "sex", "explicit", random.Random(0)) for r in recs]
+        pairs = [_sex_pair(r) for r in recs]
         passed, failed, report = validate_pairs(pairs)
         assert report["n_passed"] == 5 and report["n_failed"] == 0
 
@@ -265,13 +252,12 @@ class TestMarkersAndGate:
 # --------------------------------------------------------------------------- loader
 class TestLoader:
     def _write_jsonl(self, tmp_path):
-        from pairs.markers import make_pair as mp
         from pairs.manifest import pair_to_record
 
         recs = [_fake_record(f"german-{i:04d}") for i in range(40)]
         rows = []
         for i, r in enumerate(recs):
-            p = mp(r, "credit_v1", "sex", "explicit", random.Random(i))
+            p = _sex_pair(r, seed=i)
             rows.append(pair_to_record(p, f"credit-sex-explicit-credit_v1-{r.source_record_id}",
                                        role="probe", seed=42))
         path = tmp_path / "pairs.jsonl"

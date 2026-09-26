@@ -49,6 +49,15 @@ class TestBuilder:
         assert "not advance" in item["cells"]["true_reject"]
         assert "recommend advancing" in item["cells"]["false_advance"]
 
+    def test_intersection_premise_is_the_hiring_factorial_corner(self):
+        # The premise clause is the protected (pole-A) corner of the hiring factorial, explicit —
+        # the same text the factorial arms inject for that cell.
+        from pairs.factorial import HIRING_DESIGN
+        from pairs.verdicts import REASONING_PREMISES
+
+        corner = HIRING_DESIGN.axis_pairs("intersection", "explicit")[0][0]
+        assert REASONING_PREMISES["intersection"]["clause"] == HIRING_DESIGN.clause(corner, "explicit")
+
     def test_commute_is_non_demographic(self):
         item = build_reasoning_item(_rec(), "commute", render_bio, random.Random(0))
         assert item["meta"]["demographic"] is False
