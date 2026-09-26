@@ -48,7 +48,10 @@ from scoring.dataset_base import format_conversation
 from substrates.domains import get_domain
 from pairs.verdicts import DECISION_FRAMES, VERDICT_VARIANTS, build_decision_item
 from scoring.experiment import ExperimentConfig
-from scoring.demographic_experiment import DemographicBiasExperiment, compute_decision_response_metrics
+from scoring.demographic_experiment import (
+    DemographicBiasExperiment, compute_decision_response_metrics, decision_response_intervals,
+)
+from scoring.intervals import DEFAULT_N_BOOT
 from probes.probe import build_probe_direction, get_rewards_both
 
 def _supported_axes(dom, encoding: str) -> List[str]:
@@ -93,7 +96,10 @@ def run_axis(exp, cfg, dom, axis, encoding, records, rng) -> Dict[str, Any]:
     null_by = {v: nulled[i * n:(i + 1) * n].tolist() for i, v in enumerate(VERDICT_VARIANTS)}
     return {"axis": axis, "encoding": encoding, "n_items": n,
             "baseline": compute_decision_response_metrics(base_by),
-            "nulled": compute_decision_response_metrics(null_by)}
+            "nulled": compute_decision_response_metrics(null_by),
+            # bootstrap over items (one per record): each metric's 95% interval, and nulled − baseline
+            "intervals": decision_response_intervals(base_by, null_by, int(cfg.extra.get("n_boot", DEFAULT_N_BOOT)),
+                                                     cfg.split_seed)}
 
 
 def main() -> None:
@@ -135,6 +141,12 @@ def main() -> None:
               f"{nl['discriminatory_win_rate']:>10.3f} | {b['mean_gap_fair_minus_disc']:>13.3f} | "
               f"{b.get('disc_win_rate_vs_neutral', float('nan')):>10.3f} "
               f"{b.get('evasion_win_rate', float('nan')):>13.3f}")
+    print("-" * 96)
+    for r in results:
+        ci = r["intervals"]["baseline"]["discriminatory_win_rate"]
+        gap = r["intervals"]["baseline"]["mean_gap_fair_minus_disc"]
+        print(f"{r['axis']:14} disc_win [{ci['ci_low']:.3f}, {ci['ci_high']:.3f}]   "
+              f"fair-disc gap [{gap['ci_low']:.3f}, {gap['ci_high']:.3f}]   (95% item bootstrap)")
     print("=" * 96)
     print("disc_win>0.5 ⇒ RM rewards the discriminatory verdict; nulling→0.5 ⇒ rides the linear dir.")
 

@@ -111,8 +111,9 @@ Deliberately **not** carried over:
   *Measured with the scrub before 2026-09-17.* The scrub now also drops bios that still name a
   person by a sex-coded first name (about 36% of otherwise clean bios did) or contain further
   gendered words; `validate_bios_scrub.py` has to be re-run.
-- **No multi-seed runs** anywhere yet; record-clustered bootstrap CIs exist only in the cross-marker
-  metrics so far.
+- **No multi-seed runs** anywhere yet. Every arm now reports cluster-bootstrap 95% intervals (records,
+  or essays for A2; `scoring/intervals.py`), except the reasoning arm, which is not ported. The intervals are
+  uncorrected until the headline family and its multiplicity correction are fixed.
 - **Direct-form cross-influence was dropped** (2026-09-24): its premise, that the RM judges applicant
   quality in an off-task recitation, does not hold. It is measured in decision format now; the old runner
   is in the git history.

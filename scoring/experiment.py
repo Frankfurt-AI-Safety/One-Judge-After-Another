@@ -187,6 +187,9 @@ class ExperimentResults:
     n_eval_examples: int = 0
     """Number of examples used for evaluation"""
 
+    paired_metrics: Optional[Dict[str, Any]] = None
+    """What nulling changed on the same examples (nulled − baseline), with intervals (if computed)"""
+
     @staticmethod
     def _is_position_multi_class(config: ExperimentConfig) -> bool:
         dataset_class = config.dataset_class or config.extra.get("dataset_class", "")
@@ -236,6 +239,7 @@ class ExperimentResults:
             "probe_metadata": self.probe_metadata,
             "n_probe_examples": self.n_probe_examples,
             "n_eval_examples": self.n_eval_examples,
+            "baseline_vs_nulled": self.paired_metrics,
         }
     
     def save(self, path: Path) -> None:
@@ -256,6 +260,7 @@ class ExperimentResults:
             probe_metadata=data.get("probe_metadata"),
             n_probe_examples=data.get("n_probe_examples", 0),
             n_eval_examples=data.get("n_eval_examples", 0),
+            paired_metrics=data.get("baseline_vs_nulled"),
         )
 
 
@@ -313,6 +318,16 @@ class BiasExperiment(ABC):
         """
         pass
     
+    def _compute_paired_metrics(
+        self,
+        baseline: Dict[str, List[float]],
+        nulled: Dict[str, List[float]],
+        eval_examples: List[Any],
+    ) -> Optional[Dict[str, Any]]:
+        """What nulling changed on the same examples (optional; None = not computed). Override in a
+        subclass whose headline is a within-example comparison of the two conditions."""
+        return None
+
     @abstractmethod
     def _create_plot(
         self,
@@ -536,6 +551,7 @@ class BiasExperiment(ABC):
         
         nulled_organized = self._organize_rewards(nulled_rewards, text_meta, n_eval)
         nulled_metrics = self._compute_metrics(nulled_organized, eval_examples)
+        paired_metrics = self._compute_paired_metrics(baseline_organized, nulled_organized, eval_examples)
         
         # Create results
         self.results = ExperimentResults(
@@ -545,6 +561,7 @@ class BiasExperiment(ABC):
             probe_metadata=probe_metadata,
             n_probe_examples=self.probe_dataset.probe_size_actual if self.probe_dataset else 0,
             n_eval_examples=n_eval,
+            paired_metrics=paired_metrics,
         )
         
         # Add cross-dataset info if applicable
@@ -679,10 +696,14 @@ class BiasExperiment(ABC):
             logger.info("Probe accuracy: %.2f%%", 100 * self.results.probe_metadata.get("probe_accuracy", 0))
             logger.info("Probe separation: %.4f", self.results.probe_metadata.get("separation", 0))
         
+        def interval(metrics: Dict[str, Any], key: str) -> str:
+            ci = (metrics.get("intervals") or {}).get(key)
+            return f"  [{ci['ci_low']:.4f}, {ci['ci_high']:.4f}]" if ci else ""
+
         logger.info("\nBaseline metrics:")
         for key, val in self.results.baseline_metrics.items():
             if isinstance(val, float):
-                logger.info("  %s: %.4f", key, val)
+                logger.info("  %s: %.4f%s", key, val, interval(self.results.baseline_metrics, key))
         
         if self.results.nulled_metrics:
             logger.info("\nNulled metrics (alpha=%.2f):", self.config.null_alpha)
@@ -690,7 +711,11 @@ class BiasExperiment(ABC):
                 if isinstance(val, float):
                     baseline_val = self.results.baseline_metrics.get(key, 0)
                     delta = val - baseline_val
-                    logger.info("  %s: %.4f (%+.4f)", key, val, delta)
+                    logger.info("  %s: %.4f (%+.4f)%s", key, val, delta,
+                                interval(self.results.nulled_metrics, key))
+
+        for key, ci in ((self.results.paired_metrics or {}).get("nulled_minus_baseline") or {}).items():
+            logger.info("  %s: %+.4f  [%.4f, %.4f]", key, ci["estimate"], ci["ci_low"], ci["ci_high"])
         
         logger.info("=" * 60)
 

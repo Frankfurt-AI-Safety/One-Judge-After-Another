@@ -23,6 +23,11 @@ intersection and its marginals are compared at equal precision. (Counting pairs,
 does, gave the marginals ~38 records and the intersection 150: a record contributes 8 pairs to a
 marginal axis but 2 to the intersection.)
 
+Every cosine also gets a 95% interval from a bootstrap over the probe records (``intervals``): the
+directions are refitted on each resample of the shared records, from the per-record contrasts (a record's
+pairs share its content). The interval shows whether a cosine clears a verdict threshold or only its point
+estimate does.
+
 Credit has no proxy for marital status (see pairs/factorial.py), so credit additivity is explicit only.
 """
 
@@ -31,6 +36,9 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Dict, List, Mapping, Sequence
+
+import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -40,7 +48,9 @@ import torch
 from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import DemographicBiasExperiment
 from substrates.domains import DOMAINS, get_domain
-from probes.probe import build_probe_direction
+from probes.probe import build_probe_direction, embed_states
+from runners.run_cross_marker import record_contrasts
+from scoring.intervals import DEFAULT_N_BOOT
 
 # Short names for the output keys; `family` keeps the historical CV keys (cos_sex_family, ...).
 _SHORT = {"family_status": "family", "marital_status": "marital"}
@@ -48,6 +58,40 @@ _SHORT = {"family_status": "family", "marital_status": "marital"}
 
 def _cos(a: torch.Tensor, b: torch.Tensor) -> float:
     return float((a / a.norm()) @ (b / b.norm()))
+
+
+def _unit_rows(m: np.ndarray) -> np.ndarray:
+    return m / np.linalg.norm(m, axis=-1, keepdims=True)
+
+
+def additivity_intervals(contrasts: Mapping[str, Mapping[str, torch.Tensor]], marginal_axes: Sequence[str],
+                         n_boot: int = DEFAULT_N_BOOT, seed: int = 0) -> Dict[str, Dict[str, float]]:
+    """Record-bootstrap intervals of cos(intersection, Σ unit marginals) and of the pairwise marginal
+    cosines. ``contrasts[axis][record]`` is the record's mean pair contrast; every direction is the unit
+    mean over the resampled records (the difference of means, as `build_probe_direction` fits it when
+    every record has the same number of pairs). Only records present on every axis are used."""
+    axes = list(marginal_axes) + ["intersection"]
+    records = sorted(set.intersection(*(set(contrasts[a]) for a in axes)))
+    k = len(records)
+    mats = {a: torch.stack([contrasts[a][r] for r in records]).float().numpy() for a in axes}
+    draws = np.random.default_rng(seed).integers(0, k, size=(n_boot, k))
+    weights = np.stack([np.bincount(row, minlength=k) for row in draws]) / k        # (n_boot, k)
+    full = np.full((1, k), 1.0 / k)
+    short = [_SHORT.get(a, a) for a in marginal_axes]
+
+    def cosines(w: np.ndarray) -> Dict[str, np.ndarray]:
+        dirs = {a: _unit_rows(w @ mats[a]) for a in axes}                             # (b, d) each
+        total = sum(dirs[a] for a in marginal_axes)
+        out = {"cos_intersection_vs_marginal_sum": np.sum(dirs["intersection"] * _unit_rows(total), -1)}
+        for i in range(len(marginal_axes)):
+            for j in range(i + 1, len(marginal_axes)):
+                out[f"cos_{short[i]}_{short[j]}"] = np.sum(dirs[marginal_axes[i]] * dirs[marginal_axes[j]], -1)
+        return out
+
+    point, boot = cosines(full), cosines(weights)
+    return {name: {"estimate": float(point[name][0]), "ci_low": float(np.percentile(boot[name], 2.5)),
+                   "ci_high": float(np.percentile(boot[name], 97.5)), "n_records": k}
+            for name in point}
 
 
 def main() -> None:
@@ -62,6 +106,8 @@ def main() -> None:
     ap.add_argument("--device", default="auto")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--max-length", type=int, default=2048)
+    ap.add_argument("--n-boot", type=int, default=DEFAULT_N_BOOT)
+    ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", type=Path, default=None,
                     help="Optional JSON output (feeds runners/export_paper_numbers.py)")
     args = ap.parse_args()
@@ -82,6 +128,7 @@ def main() -> None:
     exp.load_model()
 
     probes = {}
+    contrasts: Dict[str, Dict[str, torch.Tensor]] = {}
     for axis in marginal_axes + ["intersection"]:
         ds = dataset_cls(pairs_path, axis=axis, encoding=args.encoding,
                          probe_size=args.probe_size, split_seed=cfg.split_seed,
@@ -91,6 +138,13 @@ def main() -> None:
                                             batch_size=args.batch_size, device=args.device,
                                             max_length=args.max_length)
         probes[axis] = probe
+        # the same states again (embedding-cache hits), per record for the bootstrap
+        pos, _ = embed_states(exp.model, exp.tokenizer, [p.positive_text for p in pairs],
+                              batch_size=args.batch_size, max_length=args.max_length, show_progress=False)
+        neg, _ = embed_states(exp.model, exp.tokenizer, [p.negative_text for p in pairs],
+                              batch_size=args.batch_size, max_length=args.max_length, show_progress=False)
+        ids, rows = record_contrasts(pairs, pos, neg)
+        contrasts[axis] = dict(zip(ids, rows))
         split = ds.split_report()
         print(f"  {axis:14} probe: n={len(pairs)} pairs / {split.get('probe_records')} records "
               f"acc={meta.get('probe_accuracy', 0):.2%} sep={meta.get('separation', 0):.3f}")
@@ -104,10 +158,13 @@ def main() -> None:
     print("\n" + "=" * 64)
     print(f"ADDITIVITY ({args.encoding}, {args.model})")
     print("=" * 64)
-    print(f"cosine(intersection, {'+'.join(short)}) = {cos_inter_sum:.4f}")
+    intervals = additivity_intervals(contrasts, marginal_axes, args.n_boot, args.seed)
+    ci = lambda key: f"[{intervals[key]['ci_low']:+.4f}, {intervals[key]['ci_high']:+.4f}]"
+    print(f"cosine(intersection, {'+'.join(short)}) = {cos_inter_sum:.4f}   95% {ci('cos_intersection_vs_marginal_sum')}"
+          f"  ({intervals['cos_intersection_vs_marginal_sum']['n_records']} records, bootstrap)")
     print("pairwise marginal cosines (overlap):")
     for key, val in pairwise.items():
-        print(f"  {key[4:].replace('_', '·'):18} = {val:+.4f}")
+        print(f"  {key[4:].replace('_', '·'):18} = {val:+.4f}   95% {ci(key)}")
     verdict = ("ADDITIVE (≈ low-complexity)" if cos_inter_sum >= 0.9
                else "PARTIALLY ADDITIVE" if cos_inter_sum >= 0.6
                else "NON-ADDITIVE (distinct interaction)")
@@ -124,6 +181,7 @@ def main() -> None:
             "cos_intersection_vs_marginal_sum": cos_inter_sum,
             **pairwise,
             "verdict": verdict,
+            "intervals": intervals,
         }, indent=2))
         print(f"saved → {args.out}")
 

@@ -30,7 +30,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scoring.experiment import ExperimentConfig
-from scoring.demographic_experiment import DemographicBiasExperiment, compute_auto_influence_metrics
+from scoring.demographic_experiment import (
+    DemographicBiasExperiment, auto_influence_with_intervals, compute_auto_influence_metrics, nulling_change,
+)
+from scoring.intervals import DEFAULT_N_BOOT
 from substrates.domains import get_domain
 from probes.embedding_cache import CACHE_ATTR
 from probes.probe import build_probe_direction, get_embeddings, get_rewards_both, rewards_from_hidden
@@ -67,11 +70,14 @@ def run_cell(exp, cfg, axis, encoding, dataset_cls, sweep_axes=SWEEP_AXES) -> Di
                                         max_length=cfg.max_length, null_alpha=1.0, show_progress=False)
     base_org = exp._organize_rewards(baseline, text_meta, n)
     null_org = exp._organize_rewards(nulled, text_meta, n)
+    n_boot, seed = int(cfg.extra.get("n_boot", DEFAULT_N_BOOT)), cfg.split_seed
     cell = {
         "axis": axis, "encoding": encoding, "n_eval": n,
         "probe_accuracy": meta.get("probe_accuracy"), "probe_separation": meta.get("separation"),
-        "baseline": compute_auto_influence_metrics(base_org),
-        "nulled": compute_auto_influence_metrics(null_org),
+        # each metric with its record-bootstrap interval (a record's pairs are correlated)
+        "baseline": auto_influence_with_intervals(base_org, eval_examples, n_boot, seed),
+        "nulled": auto_influence_with_intervals(null_org, eval_examples, n_boot, seed),
+        "baseline_vs_nulled": nulling_change(base_org, null_org, eval_examples, n_boot, seed),
         "baseline_by_template": _subgroup_auto_influence(base_org, eval_examples),
     }
     # α-sweep: the texts' states come from the embedding cache; only the head runs per α.
@@ -144,6 +150,14 @@ def main() -> None:
         print(f"{c['axis']:14} {c['encoding']:9} {c['probe_accuracy']:>9.2%} "
               f"{c['baseline']['auto_influence']:>8.3f} {c['nulled']['auto_influence']:>8.3f} "
               f"{c['baseline']['mean_gap']:>9.3f}  {bt}")
+    print("-" * 86)
+    print("abs_mean_gap with its record-bootstrap 95% interval, and what nulling changed on the same pairs")
+    for c in cells:
+        ci = c["baseline"]["intervals"]["abs_mean_gap"]
+        ch = c["baseline_vs_nulled"]["nulled_minus_baseline"]["abs_mean_gap_change"]
+        print(f"{c['axis']:14} {c['encoding']:9} |gap| {ci['estimate']:.4f} [{ci['ci_low']:.4f}, "
+              f"{ci['ci_high']:.4f}]   nulled − baseline {ch['estimate']:+.4f} "
+              f"[{ch['ci_low']:+.4f}, {ch['ci_high']:+.4f}]   ({ci['n_clusters']} records)")
     print("-" * 86)
     for c in cells:
         if "alpha_sweep" in c:

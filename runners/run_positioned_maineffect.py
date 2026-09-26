@@ -13,6 +13,9 @@ first-person persona". This script scores three variants per essay --- **neutral
   identity_gap = delta_a - delta_b (= mean base_gap)       [the identity-specific part]
   auto_infl = 2*|P(reward_a > reward_b) - 0.5|
 
+Every quantity also gets a 95% interval from a bootstrap over **essays** (an essay's positioned pairs
+share the essay; `scoring/intervals.py`), in ``intervals``.
+
 Read across axes: if the demographic `identity_gap` is large while the *genuinely neutral* controls
 (pos_ctrl_hobby/pet/region) are ~0, the effect is demographic-specific. If the neutral controls also show a
 large gap, it is generic persona-sensitivity. `main_fx` says whether the RM simply likes (or dislikes) a
@@ -37,6 +40,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scoring.dataset_base import ContrastivePair, format_conversation
+from scoring.intervals import DEFAULT_N_BOOT, cluster_bootstrap, clusters_of
 from substrates.domains import get_domain
 from substrates.education_clean import load_education_essays
 from substrates.education_render import EDU_TEMPLATES
@@ -61,6 +65,23 @@ SOURCES = ("persuade", "asap")
 
 def _mean(xs: List[float]) -> float:
     return sum(xs) / max(len(xs), 1)
+
+
+# items are (reward_neutral, reward_a, reward_b) of one positioned pair (the neutral is its essay's)
+POSITIONED_STATS = {
+    "delta_a": lambda s: _mean([a - n for n, a, _ in s]),
+    "delta_b": lambda s: _mean([b - n for n, _, b in s]),
+    "main_effect": lambda s: _mean([(a + b) / 2 - n for n, a, b in s]),
+    "identity_gap": lambda s: _mean([a - b for _, a, b in s]),
+    "auto_influence": lambda s: 2 * abs(_mean([1.0 if a > b else 0.0 for _, a, b in s]) - 0.5),
+}
+
+
+def positioned_intervals(r_neu: List[float], r_a: List[float], r_b: List[float], owner: List[int],
+                         n_boot: int = DEFAULT_N_BOOT, seed: int = 0) -> Dict[str, Any]:
+    """Essay-bootstrap 95% intervals of the decomposition (pair k belongs to essay ``owner[k]``)."""
+    items = [(r_neu[owner[k]], r_a[k], r_b[k]) for k in range(len(r_a))]
+    return cluster_bootstrap(clusters_of(items, owner), POSITIONED_STATS, n_boot, seed)
 
 
 def run_axis(exp, cfg, dom, essays, axis, position, seed, variant=None,
@@ -116,6 +137,8 @@ def run_axis(exp, cfg, dom, essays, axis, position, seed, variant=None,
         "auto_influence": 2 * abs(pref_a - 0.5), "pref_a": pref_a,
         "frac_a_above_neutral": _mean([1.0 if d > 0 else 0.0 for d in d_a]),
         "frac_b_above_neutral": _mean([1.0 if d > 0 else 0.0 for d in d_b]),
+        "intervals": positioned_intervals(r_neu, r_a, r_b, owner, int(cfg.extra.get("n_boot", DEFAULT_N_BOOT)),
+                                          seed),
     }
 
 
@@ -172,10 +195,12 @@ def main() -> None:
           f"— {cfg.model_path} (n={len(essays)})")
     print("=" * 118)
     print(f"{'axis':18} {'position':10} {'stance':8} {'variant':24} {'mean_neu':>8} {'main_fx':>8} "
-          f"{'id_gap':>8} {'auto_AI':>8}")
+          f"{'id_gap':>8} {'auto_AI':>8}  id_gap 95% (essay bootstrap)")
     for r in results:
+        ci = r["intervals"]["identity_gap"]
         print(f"{r['axis']:18} {r['position']:10} {r['stance']:8} {r['variant']:24} {r['mean_neutral']:>8.3f} "
-              f"{r['main_effect']:>8.3f} {r['identity_gap']:>8.3f} {r['auto_influence']:>8.3f}")
+              f"{r['main_effect']:>8.3f} {r['identity_gap']:>8.3f} {r['auto_influence']:>8.3f}  "
+              f"[{ci['ci_low']:+.3f}, {ci['ci_high']:+.3f}]")
     print("=" * 118)
     if args.stance == "both":
         print("Compare id_gap ENDORSE vs NEUTRAL per axis: gap persists under neutral ⇒ standpoint-driven;")

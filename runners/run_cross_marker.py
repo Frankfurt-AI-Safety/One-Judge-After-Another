@@ -248,16 +248,21 @@ def block_fits(domain: str, settings: Dict[str, Any], format_fn: Callable[[str, 
 
 
 # --------------------------------------------------------------------------- directions --------------
-def record_contrast_matrix(pairs: Sequence[Any], pos: Any, neg: Any) -> Any:
-    """One row per record (first-seen order): the mean over the record's pairs of the state difference
-    positive − negative. The unit that split-half reliabilities resample, since a record's pairs share
-    its content."""
+def record_contrasts(pairs: Sequence[Any], pos: Any, neg: Any) -> Tuple[List[str], Any]:
+    """The records (first-seen order) and, one row each, the mean over the record's pairs of the state
+    difference positive − negative. The unit that split-half reliabilities and bootstraps resample,
+    since a record's pairs share its content."""
     import torch
 
     by_record: Dict[str, List[int]] = defaultdict(list)
     for i, p in enumerate(pairs):
         by_record[str(p.metadata["source_record_id"])].append(i)
-    return torch.stack([(pos[idx] - neg[idx]).mean(0) for idx in by_record.values()])
+    return list(by_record), torch.stack([(pos[idx] - neg[idx]).mean(0) for idx in by_record.values()])
+
+
+def record_contrast_matrix(pairs: Sequence[Any], pos: Any, neg: Any) -> Any:
+    """`record_contrasts` without the record ids."""
+    return record_contrasts(pairs, pos, neg)[1]
 
 
 def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodings: Sequence[str], *,
