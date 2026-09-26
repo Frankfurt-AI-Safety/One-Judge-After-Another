@@ -302,7 +302,13 @@ only `.bin` on main. The RB2 models load from Hugging Face's own safetensors con
 requests), pinned in `scoring/backend.py::PINNED_REVISIONS`; `prefetch_models.py` fetches that revision and skips
 `.bin` wherever safetensors exist. Checked on the Hub 2026-09-26: the Nemotron ids exist; the two 32B ones are
 sequence classifiers stored in fp32 (~128 GB download, 64 GB in bf16), **Llama-3.3-Nemotron-70B-Reward is a
-`LlamaForCausalLM`** (a generative reward) and cannot be scored without its own head adapter.
+`LlamaForCausalLM`**, but a Bradley-Terry scalar RM underneath: its model card reads the reward as the raw logit of
+vocabulary token 0 after the conversation, i.e. row 0 of `lm_head` applied to the last-token state (linear, no bias).
+Loaded since 2026-09-26 through `scoring/logit_reward.py` (that row as the score head; the load-time check
+compares it with the model's own logit). Its model card tokenizes with the chat template's own ids, which carry no
+BOS, so the pipeline adds no special tokens for it (`scoring/backend.py::TEMPLATE_TOKENIZED`); every other model keeps
+the tokenizer's defaults, as the Skywork cards and RewardBench (RB2) score. The loader logs how each model's tokens
+relate to its template. `--tier 70b` now downloads both 70B models (~280 GB).
 
 **Throughput trial 1 — 2026-09-25** (A100-80GB, Qwen3-0.6B, `run_cross_marker.py --n-strong 20 --n-weak 20`,
 batch 8, fresh embedding cache). Each domain put 12,882 texts through the model: 8,480 decision and

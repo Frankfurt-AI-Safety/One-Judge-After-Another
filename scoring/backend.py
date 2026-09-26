@@ -23,9 +23,24 @@ from __future__ import annotations
 import logging
 from typing import Any, Tuple
 
+from scoring.dataset_base import tokenization_vs_template, use_template_tokens
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["create_backend", "PINNED_REVISIONS", "model_revision"]
+__all__ = ["create_backend", "PINNED_REVISIONS", "LOGIT_REWARD_MODELS", "model_revision"]
+
+# Reward models packaged as causal LMs, with the vocabulary token whose logit at the last position is the reward
+# (`scoring/logit_reward.py`). Only listed checkpoints are loaded this way; any other causal LM is refused.
+LOGIT_REWARD_MODELS = {
+    "nvidia/Llama-3.3-Nemotron-70B-Reward": 0,       # model card: generate(...).scores[0][0][0]
+}
+
+# Models whose authors score the chat template's own token ids (apply_chat_template(tokenize=True)) rather than
+# the tokenizer's defaults on the formatted text; the pipeline then adds no special tokens (scoring.dataset_base).
+# Checked against the model cards / evaluation code on 2026-09-26: Nemotron-70B-Reward's card tokenizes with the
+# template (no BOS: its template has none); the Skywork cards and RewardBench (RB2) use the tokenizer's defaults,
+# the pipeline's default.
+TEMPLATE_TOKENIZED = {"nvidia/Llama-3.3-Nemotron-70B-Reward"}
 
 # Checkpoints loaded from a pinned Hub revision rather than main. The AllenAI RB2 reward models publish only
 # PyTorch .bin weights on main, which transformers >= 4.50 refuses to load under torch < 2.6 (CVE-2025-32434;
@@ -79,6 +94,17 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # Tokenize as the model's authors score it (see TEMPLATE_TOKENIZED); report how that relates to the template.
+    if config.model_path in TEMPLATE_TOKENIZED:
+        use_template_tokens(tokenizer)
+    relation = tokenization_vs_template(tokenizer)
+    if relation == "mismatch":
+        logger.warning("%s: the pipeline's token ids differ from the chat template's own on a sample conversation "
+                       "(beyond a BOS); check how the model's authors tokenize", config.model_path)
+    else:
+        logger.info("%s: tokenization vs chat template: %s%s", config.model_path, relation,
+                    " (template token ids, as its authors score)" if config.model_path in TEMPLATE_TOKENIZED else "")
+
     # Pin RIGHT padding. Every activation read in probe.py gathers the last real token via
     # `attention_mask.sum(dim=1) - 1`, which is only the last token under right padding; with
     # left padding that index lands mid-sequence on a pad and the scores are silently wrong.
@@ -92,16 +118,28 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
     # An explicit single-device string (e.g. "cuda:0", "cpu") is passed
     # through unchanged so the caller retains control.
     device_map = "auto" if config.device in ("cuda", "auto") else config.device
-    model_cls = _own_class(config.model_path, revision) or AutoModelForSequenceClassification
-    kwargs = {} if model_cls is not AutoModelForSequenceClassification else {
-        "trust_remote_code": config.trust_remote_code}
-    model = model_cls.from_pretrained(
-        config.model_path,
-        revision=revision,
-        dtype=torch.bfloat16,
-        device_map=device_map,
-        **kwargs,
-    )
+    token = LOGIT_REWARD_MODELS.get(config.model_path)
+    if token is not None:
+        from transformers import AutoModelForCausalLM
+
+        from scoring.logit_reward import LogitRewardModel
+
+        logger.info("%s: causal-LM reward model, reward = logit of token %d at the last position",
+                    config.model_path, token)
+        causal = AutoModelForCausalLM.from_pretrained(
+            config.model_path, revision=revision, dtype=torch.bfloat16, device_map=device_map)
+        model = LogitRewardModel(causal, token)
+    else:
+        model_cls = _own_class(config.model_path, revision) or AutoModelForSequenceClassification
+        kwargs = {} if model_cls is not AutoModelForSequenceClassification else {
+            "trust_remote_code": config.trust_remote_code}
+        model = model_cls.from_pretrained(
+            config.model_path,
+            revision=revision,
+            dtype=torch.bfloat16,
+            device_map=device_map,
+            **kwargs,
+        )
     # .to() intentionally omitted: device_map handles placement.
     check_placement(model)
 
@@ -119,6 +157,10 @@ def _own_class(model_path: str, revision: Any = None) -> Any:
     from scoring.qrm import ARCHITECTURE, Gemma2ForQuantileSequenceClassification
 
     architectures = getattr(AutoConfig.from_pretrained(model_path, revision=revision), "architectures", None) or []
+    if any(a.endswith("ForCausalLM") for a in architectures):
+        raise ValueError(f"{model_path} is a causal LM ({architectures}): loading it as a sequence classifier would "
+                         f"attach a randomly initialised score head. If it is a reward model that reads its reward "
+                         f"from one token's logit, add it with that token to scoring.backend.LOGIT_REWARD_MODELS.")
     if ARCHITECTURE in architectures:
         logger.info("%s: %s, loaded with scoring.qrm.Gemma2ForQuantileSequenceClassification (no remote code)",
                     model_path, ARCHITECTURE)

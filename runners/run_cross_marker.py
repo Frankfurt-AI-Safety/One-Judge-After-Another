@@ -68,7 +68,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from pairs.cross_marker import CellBlock, build_block_items, fits_max_length, load_cell_blocks
 from pairs.factorial import FactorialDesign, stable_rng
 from scoring.cross_marker_metrics import RewardIndex, cross_marker_metrics, placement_check, sweep_point
-from scoring.dataset_base import format_conversation
+from scoring.dataset_base import add_special_tokens, format_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,8 @@ def token_counter(tokenizer: Any) -> Callable[[Any], int]:
     no truncation); pair-format inputs are (prompt, response) tuples. ``count.batch(convs)`` counts a list
     in one tokenizer call (the same counts, far fewer calls)."""
     def count(conv: Any) -> int:
-        ids = tokenizer(*conv)["input_ids"] if isinstance(conv, tuple) else tokenizer(conv)["input_ids"]
+        ids = (tokenizer(*conv)["input_ids"] if isinstance(conv, tuple)
+               else tokenizer(conv, add_special_tokens=add_special_tokens(tokenizer))["input_ids"])
         return len(ids)
 
     def batch(convs: Sequence[Any]) -> List[int]:
@@ -249,7 +250,7 @@ def token_counter(tokenizer: Any) -> Callable[[Any], int]:
         if isinstance(convs[0], tuple):
             ids = tokenizer([c[0] for c in convs], [c[1] for c in convs])["input_ids"]
         else:
-            ids = tokenizer(list(convs))["input_ids"]
+            ids = tokenizer(list(convs), add_special_tokens=add_special_tokens(tokenizer))["input_ids"]
         return [len(i) for i in ids]
 
     count.batch = batch

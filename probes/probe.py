@@ -14,7 +14,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from scoring.dataset_base import ContrastivePair, format_conversation
+from scoring.dataset_base import ContrastivePair, add_special_tokens, format_conversation
 from probes.embedding_cache import CACHE_ATTR, text_key
 from probes.heads import get_head
 
@@ -60,13 +60,14 @@ def tokenize_inputs(
             return_tensors=return_tensors,
         )
     else:
-        # Single string format
+        # Single string format (chat-formatted text; special tokens as `scoring.dataset_base.add_special_tokens` says)
         return tokenizer(
             texts,
             padding=padding,
             truncation=truncation,
             max_length=max_length,
             return_tensors=return_tensors,
+            add_special_tokens=add_special_tokens(tokenizer),
         )
 
 

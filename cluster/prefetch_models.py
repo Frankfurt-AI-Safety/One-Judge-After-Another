@@ -29,10 +29,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # the repo roo
 
 # (hf_id, params_b, tier, confirmed)
 #
-# `confirmed=False` marks the NVIDIA Nemotron entries: working_notes.tex records that their
-# exact Hugging Face paths were never verified against the current releases. They are listed
-# so the ladder is complete, but are skipped unless --include-unconfirmed is passed, because
-# guessing an id here would silently fetch the wrong model or fail deep in a scaling run.
+# `confirmed=False` would mark an id never verified against the Hub; such entries are skipped unless
+# --include-unconfirmed is passed, because a guessed id silently fetches the wrong model or fails deep in a
+# scaling run. The three NVIDIA Nemotron ids were verified on 2026-09-26: the 32B ones are sequence classifiers
+# stored in fp32 (~128 GB each to download, 64 GB in bf16); the 70B is a causal LM whose reward is one token's
+# logit, loaded through scoring/logit_reward.py.
 MODELS = [
     ("Skywork/Skywork-Reward-V2-Qwen3-0.6B",      0.6, "small", True),
     ("OpenAssistant/reward-model-deberta-v3-large-v2", 0.4, "small", True),
@@ -41,10 +42,10 @@ MODELS = [
     ("allenai/Llama-3.1-8B-Instruct-RM-RB2",        8, "8b",   True),
     ("Skywork/Skywork-Reward-Gemma-2-27B",         27, "mid",  True),
     ("nicolinho/QRM-Gemma-2-27B",                  27, "mid",  True),
-    ("nvidia/Qwen-2.5-Nemotron-32B-Reward",        32, "mid",  False),
-    ("nvidia/Qwen-3-Nemotron-32B-Reward",          32, "mid",  False),
+    ("nvidia/Qwen-2.5-Nemotron-32B-Reward",        32, "mid",  True),
+    ("nvidia/Qwen-3-Nemotron-32B-Reward",          32, "mid",  True),
     ("allenai/Llama-3.1-70B-Instruct-RM-RB2",      70, "70b",  True),
-    ("nvidia/Llama-3.3-Nemotron-70B-Reward",       70, "70b",  False),
+    ("nvidia/Llama-3.3-Nemotron-70B-Reward",       70, "70b",  True),
 ]
 
 TIERS = ["small", "8b", "mid", "70b"]

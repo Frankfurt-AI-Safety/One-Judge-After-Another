@@ -446,3 +446,52 @@ def format_conversation(tokenizer: Any, prompt: str, response: str, force_pair: 
         formatted = formatted[len(tokenizer.bos_token):]
     return formatted
 
+
+# The pipeline tokenizes the formatted conversation with the tokenizer's defaults, which adds its special tokens
+# (e.g. BOS; `format_conversation` strips a BOS the template already has, so it is not doubled). That is how the
+# Skywork model cards and RewardBench score (``apply_chat_template(tokenize=False)``, then the tokenizer), and it is
+# kept by default. A model whose authors score the template's own token ids (``apply_chat_template(tokenize=True)``,
+# no special tokens on top) is switched with `use_template_tokens`; `scoring.backend.TEMPLATE_TOKENIZED` lists them.
+ADD_SPECIAL_TOKENS_ATTR = "_onejudge_add_special_tokens"
+_SAMPLE_CONVERSATION = ("Should this loan be approved?", "Approve.")
+
+
+def add_special_tokens(tokenizer: Any) -> bool:
+    """Whether the pipeline lets this tokenizer add its special tokens (default True; see `use_template_tokens`)."""
+    return getattr(tokenizer, ADD_SPECIAL_TOKENS_ATTR, True)
+
+
+def _template_ids(tokenizer: Any, prompt: str, response: str) -> List[int]:
+    conv = [{"role": "user", "content": prompt}, {"role": "assistant", "content": response}]
+    ids = tokenizer.apply_chat_template(conv, tokenize=True, add_generation_prompt=False)
+    if hasattr(ids, "keys"):                      # a BatchEncoding (newer transformers)
+        ids = ids["input_ids"]
+    if ids and isinstance(ids[0], list):
+        ids = ids[0]
+    return [int(i) for i in ids]
+
+
+def tokenization_vs_template(tokenizer: Any) -> str:
+    """How the pipeline's token ids for a sample conversation relate to the chat template's own
+    (``apply_chat_template(tokenize=True)``): ``"aligned"``, ``"extra_bos"`` (the tokenizer adds a BOS the template
+    lacks), ``"mismatch"`` (any other difference) or ``"pair_format"`` (no chat template). A diagnostic only."""
+    if uses_pair_format(tokenizer):
+        return "pair_format"
+    prompt, response = _SAMPLE_CONVERSATION
+    template = _template_ids(tokenizer, prompt, response)
+    pipeline = list(tokenizer(format_conversation(tokenizer, prompt, response),
+                              add_special_tokens=add_special_tokens(tokenizer))["input_ids"])
+    if pipeline == template:
+        return "aligned"
+    bos = getattr(tokenizer, "bos_token_id", None)
+    return "extra_bos" if (bos is not None and pipeline == [bos] + template) else "mismatch"
+
+
+def use_template_tokens(tokenizer: Any) -> None:
+    """Score this tokenizer's conversations as the chat template's own token ids: no special tokens added on
+    top. Raises if the formatted text, tokenized that way, still differs from the template's ids."""
+    setattr(tokenizer, ADD_SPECIAL_TOKENS_ATTR, False)
+    if tokenization_vs_template(tokenizer) != "aligned":
+        setattr(tokenizer, ADD_SPECIAL_TOKENS_ATTR, True)
+        raise ValueError("tokenizing the formatted conversation without special tokens does not reproduce the "
+                         "chat template's token ids")

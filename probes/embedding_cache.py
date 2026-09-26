@@ -96,6 +96,10 @@ def model_fingerprint(model: Any, tokenizer: Any) -> Dict[str, Any]:
         "padding_side": getattr(tokenizer, "padding_side", None),
         "head_digest": head.digest(),
     }
+    from scoring.dataset_base import add_special_tokens
+
+    if not add_special_tokens(tokenizer):   # added only when off, so every earlier fingerprint is unchanged
+        fp["add_special_tokens"] = False
     if head.gated:   # linear heads keep the exact earlier fingerprint, so their caches stay valid
         fp["head_kind"] = head.kind
         fp["gate_digest"] = head.gate_digest()
