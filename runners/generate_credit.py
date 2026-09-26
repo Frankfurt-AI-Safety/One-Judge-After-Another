@@ -37,7 +37,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from substrates.credit_clean import FACTORIAL_RULES, RECORD_RULES, apply_rules
 from substrates.credit_ingest import DEFAULT_RAW_PATH, GermanCreditRecord, load_german_credit
 from substrates.credit_render import TEMPLATES, render_profile
-from pairs.factorial import AXES, CREDIT_DESIGN, build_factorial_rows
+from pairs.factorial import CREDIT_DESIGN, build_factorial_rows
 from pairs.validate import Thresholds, validate_pair
 from pairs.manifest import write_manifest
 
@@ -45,7 +45,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
                     datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("gen-credit")
 
-DEFAULT_AXES = AXES + ("intersection",)
+DEFAULT_AXES = CREDIT_DESIGN.axes + ("intersection",)
 
 
 def build_dataset(

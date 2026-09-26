@@ -12,9 +12,9 @@ import random
 
 import pytest
 
-from pairs.factorial import (
-    AXES, CELLS, FACTORS, ProxyNames, axis_pairs, credit_marker, factorial_clause, factorial_pairs,
-)
+from pairs.factorial import CREDIT_DESIGN, ProxyNames, credit_marker, factorial_pairs
+
+AXES, CELLS, FACTORS = CREDIT_DESIGN.axes, CREDIT_DESIGN.cells, CREDIT_DESIGN.factors
 from pairs.validate import validate_pair
 from substrates.credit_clean import FACTORIAL_RULES, RECORD_RULES, apply_rules
 from substrates.credit_ingest import EMPLOYMENT, HOUSING, JOB, PEOPLE_LIABLE, PROPERTY
@@ -68,11 +68,12 @@ class TestFactorial:
     def test_pole_a_is_the_hypothesised_penalised_level(self):
         assert {a: levels[0] for a, levels in FACTORS.items()} == {
             "sex": "female", "age": 30, "marital_status": "married"}
-        assert axis_pairs("intersection", "explicit") == [(("female", 30, "married"), ("male", 50, "single"))]
+        assert CREDIT_DESIGN.axis_pairs("intersection", "explicit") == [
+            (("female", 30, "married"), ("male", 50, "single"))]
 
     @pytest.mark.parametrize("axis", AXES)
     def test_single_axis_pairs_flip_exactly_one_factor(self, axis):
-        pairs = axis_pairs(axis, "explicit")
+        pairs = CREDIT_DESIGN.axis_pairs(axis, "explicit")
         assert len(pairs) == 4
         i = AXES.index(axis)
         for a, b in pairs:
@@ -82,23 +83,24 @@ class TestFactorial:
         assert len({tuple(v for k, v in enumerate(a) if k != i) for a, _ in pairs}) == 4
 
     def test_proxy_has_no_marital_pairs(self):
-        assert axis_pairs("marital_status", "proxy") == []
-        assert len(axis_pairs("sex", "proxy")) == len(axis_pairs("age", "proxy")) == 4
+        assert CREDIT_DESIGN.axis_pairs("marital_status", "proxy") == []
+        assert len(CREDIT_DESIGN.axis_pairs("sex", "proxy")) == 4
+        assert len(CREDIT_DESIGN.axis_pairs("age", "proxy")) == 4
 
     def test_explicit_clause(self):
-        assert factorial_clause(("female", 30, "married"), "explicit") == \
+        assert CREDIT_DESIGN.clause(("female", 30, "married"), "explicit") == \
             " The applicant is a 30-year-old married woman."
-        assert factorial_clause(("male", 50, "single"), "explicit") == \
+        assert CREDIT_DESIGN.clause(("male", 50, "single"), "explicit") == \
             " The applicant is a 50-year-old single man."
 
     def test_proxy_clause(self):
         names = ProxyNames("Abigail", "Todd")
-        assert factorial_clause(("female", 30, "single"), "proxy", names) == \
+        assert CREDIT_DESIGN.clause(("female", 30, "single"), "proxy", names) == \
             " The applicant, Abigail, was born in 1996 and is single."
-        assert factorial_clause(("male", 50, "married"), "proxy", names) == \
+        assert CREDIT_DESIGN.clause(("male", 50, "married"), "proxy", names) == \
             " The applicant, Todd, was born in 1976 and is married."
         with pytest.raises(ValueError):
-            factorial_clause(("male", 50, "married"), "proxy")
+            CREDIT_DESIGN.clause(("male", 50, "married"), "proxy")
 
     @pytest.mark.parametrize("enc", ["explicit", "proxy"])
     def test_every_pair_passes_the_gate_and_matches_the_cells(self, enc):

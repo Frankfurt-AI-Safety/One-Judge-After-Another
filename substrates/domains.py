@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
 from pairs.factorial import (
-    AXES as CREDIT_FACTORIAL_AXES, CREDIT_DESIGN, EDUCATION_DESIGN, FactorialDesign, HIRING_DESIGN,
+    CREDIT_DESIGN, EDUCATION_DESIGN, FactorialDesign, HIRING_DESIGN,
     credit_marker, education_marker, hiring_marker,
 )
 from scoring.pair_dataset import ASSESSMENT_PROMPT, CreditDemographicDataset
@@ -68,7 +68,7 @@ CREDIT = DomainSpec(
     load_records=load_factorial_records,
     is_strong=lambda r: r.credit_good,
     # Derived from the factorial so the two lists cannot drift apart.
-    axes=CREDIT_FACTORIAL_AXES + ("intersection",),
+    axes=CREDIT_DESIGN.axes + ("intersection",),
     make_marker=credit_marker,
     factorial=CREDIT_DESIGN,
     quality_field="credit_good",

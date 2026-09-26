@@ -9,8 +9,8 @@ decision design reads the factorial's cells.jsonl.
 
 **factorial** (default) — sex × ethnicity × economic status as a 2×2×2, all 8 cells rendered per
 essay/template/encoding and the matched pairs cut from them (pairs/factorial.py). Sex and ethnicity
-share one carrier in the proxy encoding (the first name), so the proxy is the index-matched Haim name
-grid; the economic proxy is the school's free/reduced-price-lunch share.
+share one carrier in the proxy encoding (the first name), so the proxy is a Haim sex × ethnicity name
+grid, one name per cell; the economic proxy is the school's free/reduced-price-lunch share.
 
 **stage** — the single-axis 6th-grade-vs-doctoral-candidate contrast, plus `--include-ladder` for the
 monotonicity rungs against the same reference clause.

@@ -1,6 +1,6 @@
 """
 Tests for the education arm's sex × ethnicity × economic-status factorial: the design and its
-index-matched name grid (`pairs/factorial.py`), the substrate rules (`substrates/education_clean.py`)
+name grid (`pairs/factorial.py`), the substrate rules (`substrates/education_clean.py`)
 and the domain registry entry. The stage axis and its ladder — education's *other* design — are
 covered by `tests/test_education_stage.py`.
 """
@@ -86,15 +86,21 @@ class TestDesign:
 
 
 class TestNameGrid:
-    def test_grid_is_index_matched(self):
-        for seed in range(10):
-            names = ProxyNames.draw_grid(random.Random(seed))
-            i = FEMALE_NAMES.index(names.grid[("female", "white")])
-            assert names.grid[("male", "white")] == MALE_NAMES[i]
-            assert names.grid[("female", "black")] == BLACK_FEMALE_NAMES[i]
-            assert names.grid[("male", "black")] == BLACK_MALE_NAMES[i]
+    def test_grid_draws_one_name_per_cell_independently(self):
+        # Since 2026-09-26 the four names are drawn independently (they used to share one list index,
+        # which fixed ten arbitrary quadruples): every name meets every partner, so per-name effects
+        # can be separated. Each cell's name comes from its own pool.
+        pools = {("female", "white"): FEMALE_NAMES, ("male", "white"): MALE_NAMES,
+                 ("female", "black"): BLACK_FEMALE_NAMES, ("male", "black"): BLACK_MALE_NAMES}
+        grids = [ProxyNames.draw_grid(random.Random(seed)).grid for seed in range(2000)]
+        for g in grids:
+            assert all(g[key] in pool for key, pool in pools.items())
+        for a, b in [(("female", "white"), ("male", "white")), (("female", "black"), ("male", "black")),
+                     (("female", "white"), ("female", "black")), (("male", "white"), ("male", "black"))]:
+            # every one of the 10 x 10 name pairings of each sex or ethnicity contrast occurs
+            assert len({(g[a], g[b]) for g in grids}) == 100, (a, b)
 
-    def test_a_sex_swap_moves_one_step_and_holds_ethnicity(self):
+    def test_a_sex_swap_holds_ethnicity(self):
         pairs, _, _ = factorial_pairs(_rec(), "edu_v1", "proxy", render_essay, random.Random(3),
                                       content_label="essay_content", subject="student",
                                       design=EDUCATION_DESIGN)
@@ -121,11 +127,6 @@ class TestNameGrid:
         pair = ProxyNames.draw(random.Random(7))
         assert set(pair.as_exemplar()) == {"female_name", "male_name"}
         assert ProxyNames.from_exemplar(pair.as_exemplar()) == pair
-
-    def test_unequal_pools_cannot_be_index_matched(self, monkeypatch):
-        monkeypatch.setattr("pairs.factorial.BLACK_MALE_NAMES", ["Jamal"])
-        with pytest.raises(ValueError, match="equally long"):
-            ProxyNames.draw_grid(random.Random(0))
 
 
 class TestSubstrateRules:

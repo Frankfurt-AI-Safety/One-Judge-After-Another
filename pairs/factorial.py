@@ -10,12 +10,16 @@ cut from the cells:
   the other two. The other attributes are *stated and equal* on both sides (not absent), and the
   analysis can average over, or stratify by, their levels (recorded in ``intersectional_cell``).
 - **intersection pair** — the two corner cells (all three attributes flipped), used by the
-  additivity test: intersection ≈ sum of the three marginals if the effects are additive.
+  additivity test: intersection ≈ sum of the three marginals if the effects are additive. The test sees
+  only part of non-additivity: every two-way interaction takes the same sign at both corners and cancels
+  from the corner contrast, so corner − Σ marginals is the three-way term alone. The two-way
+  interactions are estimated from the 8 cells instead (`scoring/cross_marker_metrics.py`).
 
-Pole A of every axis is the hypothesised penalised level (female, 30, married / on parental leave), so
-the intersection contrast has the orientation of the three marginal contrasts.
+Pole A of every axis is the hypothesised penalised level (credit: female, 30, married; hiring: female,
+30, on parental leave; education: female, Black, low income), so the intersection contrast has the
+orientation of the three marginal contrasts.
 
-Encodings (sex via a first name and age via a birth year in both designs):
+Encodings (sex via a first name everywhere; age via a birth year in credit and hiring):
 - **credit** — explicit ``" The applicant is a {age}-year-old {marital} {woman|man}."``; proxy
   ``" The applicant, {name}, was born in {year} and is {marital}."``. Marital status has no clean proxy
   on a credit profile (a spouse or joint application would change the financial content), so it stays
@@ -32,9 +36,9 @@ Encodings (sex via a first name and age via a birth year in both designs):
 
 - **education** — explicit ``" The student is Black, female, and from a low-income household."``; proxy
   ``" The student, Janae, attends a school where most students qualify for free or reduced-price
-  lunch."``. Here sex and ethnicity share one carrier, the first name, so the proxy is the Haim
-  sex × ethnicity name grid drawn at one pool index (see `ProxyNames.draw_grid`) rather than two
-  independent draws. The explicit clause uses three independent slots and no sex noun: "girl" vs "young
+  lunch."``. Here sex and ethnicity share one carrier, the first name, so the proxy is a Haim sex ×
+  ethnicity name grid, one independently drawn name per (sex, ethnicity) cell (see
+  `ProxyNames.draw_grid`). The explicit clause uses three independent slots and no sex noun: "girl" vs "young
   woman" would make the sex wording covary with the writer's age. The economic proxy is the school's
   free/reduced-price-lunch share, so it measures school poverty where the explicit clause states
   household income (labels ``high_poverty_school``/``low_poverty_school``).
@@ -42,7 +46,7 @@ Encodings (sex via a first name and age via a birth year in both designs):
 Within one record/template/encoding the proxy names are drawn once and held across all cells, so an
 age or family pair never changes the name. The sex pair does change it, and first names carry some
 age-cohort signal, so the proxy sex contrast is not perfectly age-neutral. In education the name is the
-sex *and* ethnicity carrier by design, so both of those pairs move one step in the index-matched grid.
+sex *and* ethnicity carrier by design, so both of those pairs swap the name, within the block's grid.
 """
 
 from __future__ import annotations
@@ -70,10 +74,12 @@ class ProxyNames:
     """The proxy first names drawn once per record/template/encoding block.
 
     ``female``/``male`` are the white-coded pair used by credit and hiring, where the name carries only
-    sex. ``grid`` is the education case: there sex *and* ethnicity are both carried by the first name,
-    so all four pools are drawn at the same pool index (``grid[(sex, ethnicity)]``) — index-matched, so
-    a sex or ethnicity swap moves one step in the grid instead of resampling two independent names and
-    charging the difference to the axis.
+    sex. ``grid`` is the education case: there sex *and* ethnicity are both carried by the first name, so
+    a block needs one name per (sex, ethnicity) cell (``grid[(sex, ethnicity)]``). The four are drawn
+    independently, as credit and hiring draw their two: every name meets every other across blocks, so
+    a per-name effect can be separated from its partners'. (Until 2026-09-26 they were drawn at one
+    shared list index, described as "index-matched"; the lists are alphabetical, so that fixed ten
+    arbitrary name quadruples and matched nothing.)
     """
 
     female: str
@@ -88,11 +94,7 @@ class ProxyNames:
     def draw_grid(cls, rng: random.Random) -> "ProxyNames":
         pools = {("female", "white"): FEMALE_NAMES, ("male", "white"): MALE_NAMES,
                  ("female", "black"): BLACK_FEMALE_NAMES, ("male", "black"): BLACK_MALE_NAMES}
-        sizes = {len(p) for p in pools.values()}
-        if len(sizes) != 1:
-            raise ValueError(f"the four name pools must be equally long to index-match, got {sizes}")
-        i = rng.randrange(sizes.pop())
-        grid = {key: pool[i] for key, pool in pools.items()}
+        grid = {key: rng.choice(pool) for key, pool in pools.items()}
         return cls(female=grid[("female", "white")], male=grid[("male", "white")], grid=grid)
 
     def as_exemplar(self) -> Dict[str, object]:
@@ -125,7 +127,10 @@ class FactorialDesign:
     ``explicit(cell, subject)`` and ``proxy(cell, names, subject)`` return the composite clause (with a
     leading space). ``proxy_axes`` are the factors with a genuine proxy; the others stay explicit inside
     the proxy clause and get no proxy single-axis pairs. ``proxy_labels`` renames a factor's levels in
-    proxy pairs when the proxy measures a different attribute than the explicit clause.
+    proxy pairs when the proxy measures a different attribute than the explicit clause. It renames the
+    pair labels only: ``intersectional_cell``, the pair ids and the cells' factor columns keep the
+    design's level names in every encoding, so a proxy key such as ``female-parental_leave`` (hiring)
+    means the proxy's attribute, a parent-association role.
     """
 
     name: str
@@ -134,8 +139,8 @@ class FactorialDesign:
     explicit: Callable[[Cell, str], str]
     proxy: Callable[[Cell, ProxyNames, str], str]
     proxy_labels: Dict[str, Tuple[str, str]] = field(default_factory=dict)
-    # How the block's proxy names are drawn: one white-coded female/male pair (credit, hiring) or the
-    # index-matched sex x ethnicity grid (education, where the name carries both attributes).
+    # How the block's proxy names are drawn: one white-coded female/male pair (credit, hiring) or one
+    # name per sex x ethnicity cell (education, where the name carries both attributes).
     names_draw: Callable[[random.Random], ProxyNames] = _draw_pair_names
 
     @property
@@ -189,7 +194,8 @@ class FactorialDesign:
         return str(a[i]), str(b[i])
 
     def pair_cell_meta(self, a: Cell, b: Cell) -> Dict[str, object]:
-        """``intersectional_cell`` for a pair: varied factors as ``A-vs-B``, the others at their level."""
+        """``intersectional_cell`` for a pair: varied factors as ``A-vs-B``, the others at their level —
+        the design's level names in every encoding (see ``proxy_labels``)."""
         return {name: (f"{a[i]}-vs-{b[i]}" if a[i] != b[i] else a[i])
                 for i, name in enumerate(self.axes)}
 
@@ -262,7 +268,7 @@ HIRING_DESIGN = FactorialDesign(
 # Economic status contradicts nothing (5 of 6,404 essays mention their own household money at all), has
 # a signed hypothesis, and needs no plausibility filter. The stage axis keeps its own single-axis design
 # plus the monotonicity ladder (`pairs.markers.STAGE_LADDER`), on its own manifest.
-_ETHNICITY_WORD = {"black": "Black", "white": "white"}   # conventional capitalisation, as in markers.py
+_ETHNICITY_WORD = {"black": "Black", "white": "white"}   # conventional capitalisation, as in positionality.py
 _INCOME = {"low_income": "low-income", "middle_income": "middle-income"}
 # Proxy: the share of the school qualifying for free or reduced-price lunch — the standard US measure of
 # school poverty. It is a school-level cue, so the proxy measures neighbourhood/school poverty while the
@@ -289,27 +295,7 @@ DESIGNS: Dict[str, FactorialDesign] = {"credit": CREDIT_DESIGN, "cv": HIRING_DES
                                        "education": EDUCATION_DESIGN}
 
 
-# --- module-level API (credit design; kept for existing callers) ----------------------------------
-FACTORS = CREDIT_DESIGN.factors
-AXES: Tuple[str, ...] = CREDIT_DESIGN.axes
-PROXY_AXES = CREDIT_DESIGN.proxy_axes
-CELLS: Tuple[Cell, ...] = CREDIT_DESIGN.cells
-
-
-def factorial_clause(cell: Cell, encoding: str, names: Optional[ProxyNames] = None,
-                     subject: str = "applicant", design: FactorialDesign = CREDIT_DESIGN) -> str:
-    """The composite marker clause for one cell (leading space, as the renderers expect)."""
-    return design.clause(cell, encoding, names, subject)
-
-
-def cell_label(cell: Cell, design: FactorialDesign = CREDIT_DESIGN) -> Dict[str, object]:
-    return design.cell_label(cell)
-
-
-def axis_pairs(axis: str, encoding: str, design: FactorialDesign = CREDIT_DESIGN) -> List[Tuple[Cell, Cell]]:
-    return design.axis_pairs(axis, encoding)
-
-
+# --- per-domain marker builders (`substrates.domains.DomainSpec.make_marker`) ---------------------
 def credit_marker(axis: str, encoding: str, rng: random.Random, subject: str = "applicant") -> MarkerSpec:
     return CREDIT_DESIGN.marker(axis, encoding, rng, subject)
 
@@ -427,7 +413,9 @@ def build_factorial_rows(
     never rendered, incl. its quality label) goes onto the block's cells row and onto every pair row.
     Returns ``(pair_rows, cell_rows, gate_report)``.
     """
-    from pairs.manifest import pair_to_record  # local: manifest imports this package's markers
+    # Local import: manifest imports pairs.positionality, which imports this module. At module level the
+    # cycle would fail inside manifest's try/except and silently empty its template registry.
+    from pairs.manifest import pair_to_record
 
     pair_rows: List[Dict[str, Any]] = []
     cell_rows: List[Dict[str, Any]] = []

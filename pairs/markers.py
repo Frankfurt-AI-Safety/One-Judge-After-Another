@@ -37,8 +37,8 @@ if TYPE_CHECKING:  # type hint only: this module does not depend on a substrate 
 # pairs them with the surnames Becker / Washington; we use first names only.) Adopted 2026-09-16,
 # replacing an unvalidated starter set.
 # Credit and hiring carry sex with a white-coded name on both sides (race held fixed). Education draws
-# all four pools at one index (`pairs.factorial.ProxyNames.draw_grid`), so there the Black names carry
-# sex too, and a sex or ethnicity swap moves one step in the grid.
+# one name from each of the four pools (`pairs.factorial.ProxyNames.draw_grid`), so there the Black
+# names carry sex too.
 # ASSUMPTION: a name's sex (and ethnicity) signal dominates its age-cohort and class signals. What would
 # bias a contrast is a difference between the two pools' MEANS; checked at the pool level 2026-09-26
 # (`configs/name_pool_signals.yaml`, working notes of that date): the sex pools are balanced on cohort
