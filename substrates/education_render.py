@@ -8,7 +8,7 @@ single demographic-marker slot) to the **verbatim** essay body. The education-ar
   injected *only* here, so a marked A-vs-B pair differs by exactly the header clause (structural
   single-diff).
 - **The header also states the assignment**, the way the hiring header states the target role. Most
-  PERSUADE prompts are text-dependent — the essay argues about a source article, and 27% of them say
+  prompts are text-dependent — the essay argues about a source article, and 27% of them say
   "the article"/"the author" outright — so without the task the model is grading an answer to a
   question it cannot see, and "does it address the prompt" is a rubric dimension it cannot apply.
   The block is identical across an A/B pair, so it never disturbs the single-axis diff, and it is

@@ -47,7 +47,7 @@ _BODY = (
 
 def _rec(rid="essay-0") -> EssayRecord:
     return EssayRecord(source_record_id=rid, essay_text=_BODY, holistic_score=5.0,
-                       high_quality=True, source_dataset="persuade")
+                       high_quality=True, source_dataset="asap2")
 
 
 def _one(rec, axis, position, rng, **kw):

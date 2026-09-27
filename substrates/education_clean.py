@@ -8,27 +8,28 @@ factorial's cells.jsonl). They all go through
 `load_education_essays`, so every education result is on the same essays. That matters most for the
 A1-vs-A2 comparison: the two arms test the same attributes and differ only in whether the identity is
 incidental metadata or load-bearing for the argument, and different pools would confound that with
-population. (Until 2026-09-23 the factorial kept the whole corpus and the stage design a filtered
-subset; the factorial costs its 40% strong rate for 25%, but 900+ strong essays remain.)
+population. The corpus is ASAP 2.0 (`substrates/education_ingest.py`; since 2026-09-27, before that
+PERSUADE 2.0): the pool is 2,018 essays, 1,009 strong / 1,009 weak.
 
 The pool must fit the most demanding claim any design makes about the writer: a 6th-grade pupil and a
 doctoral candidate (stage), an adult standpoint such as "a retired teacher" (A2), and a household
 income level (factorial).
 
-Every essay is rendered at both poles, so the body must not contradict either. PERSUADE essays are
-written by pupils in grades 6–12, and the cues that pin a writer to school age come overwhelmingly
-from the *prompt* rather than from scattered phrasing: the six prompts that ask pupils about their own
-school life draw first-person pupil talk in 46–67% of essays, while the source-text prompts
-("The Face on Mars", "Exploring Venus", "Driverless cars", …) are essentially free of it (0–10%).
-Nothing about arguing over the electoral college presupposes a child wrote it.
+Every essay is rendered at both poles, so the body must not contradict either. The cues that pin a writer
+to school age come overwhelmingly from the *prompt* rather than from scattered phrasing: in PERSUADE 2.0, six
+prompts asking pupils about their own school life drew first-person pupil talk in 46–67% of essays, while
+the source-text prompts ("The Face on Mars", "Exploring Venus", "Driverless cars", …) are essentially free of
+it (0–10%). ASAP 2.0's seven prompts are all source-text prompts. Nothing about arguing over the electoral
+college presupposes a child wrote it.
 
 So the rules run in four steps, all reported through `substrates/rules.py`:
 
 1. **Prompt selection** (``prompt_presupposes_a_pupil``) — keep only the stage-neutral prompts. This
-   is selection, not plausibility: those essays are fine, they just cannot carry a doctoral pole.
+   is selection, not plausibility: those essays are fine, they just cannot carry a doctoral pole. On ASAP
+   2.0 it drops nothing; it guards against a corpus that has school-life prompts.
 2. **Cue rules** on the remaining bodies, as a safety net for the residual few percent: first-person
    school life, a named school stage, the writer's own grade, pupil self-reference, school routine,
-   and letters addressed to a school authority (PERSUADE contains many "Dear Principal" letters).
+   and letters addressed to a school authority ("Dear Principal").
    These matter for A2 as much as for stage: "As a retired teacher who has lived these realities
    firsthand" is incoherent on an essay that says "my teacher won't let us", and that is the
    `pos_control` pole, the axis whose job is to prove an effect is identity-specific.
@@ -39,8 +40,8 @@ So the rules run in four steps, all reported through `substrates/rules.py`:
 "college"/"university" mentions are deliberately *not* a rule: a pupil writing "when I go to college"
 is plausible, and so is a doctoral candidate mentioning a university.
 
-What this cannot fix is **register**: the pool's essays read like grades 8–10 (the real grade of
-1,344 of the 1,352 with a known grade) whatever the marker claims. The poles therefore do not rest on
+What this cannot fix is **register**: the pool's essays read like grades 8–10 (the real grade of 1,998 of
+its 2,018 essays; 20 are 6th-graders) whatever the marker claims. The poles therefore do not rest on
 the writers — the low pole, 6th grade, is where argument writing enters the curriculum (see
 `pairs.markers.STAGE_LADDER`) — and the true register sits between them, so both poles are
 counterfactual, in opposite directions. The stage axis is read together with the quality interaction
@@ -55,14 +56,13 @@ from pathlib import Path
 from typing import Collection, Dict, List, Optional, Tuple
 
 from substrates.education_ingest import (
-    DEFAULT_ASAP2_PATH, DEFAULT_PERSUADE_PATH, EssayRecord, load_asap2, load_persuade,
+    DEFAULT_ASAP2_PATH, EssayRecord, load_asap2,
 )
 from substrates.rules import Rule, apply_rules
 
-# PERSUADE prompts that do not presuppose a school pupil (source-text arguments and general policy
-# questions). The excluded six ask pupils about their own schooling: "Cell phones at school",
-# "Community service", "Mandatory extracurricular activities", "Grades for extracurricular
-# activities", "Distance learning", "Summer projects".
+# Prompts that do not presuppose a school pupil: ASAP 2.0's seven source-text prompts. (PERSUADE 2.0, the
+# corpus until 2026-09-27, also had "Seeking multiple opinions" and "Phones and driving" here, and six
+# prompts about the pupils' own schooling excluded by this list.)
 NEUTRAL_PROMPTS: frozenset = frozenset({
     "Does the electoral college work?",
     "Facial action coding system",
@@ -71,8 +71,6 @@ NEUTRAL_PROMPTS: frozenset = frozenset({
     '"A Cowboy Who Rode the Waves"',
     "Car-free cities",
     "The Face on Mars",
-    "Seeking multiple opinions",
-    "Phones and driving",
 })
 
 _OWN_SCHOOL_RE = re.compile(
@@ -140,13 +138,12 @@ ENDING_RULES: Tuple[Rule, ...] = (
 )
 
 # --- anonymisation placeholders (reported, not dropped) -----------------------------------------------------
-# PERSUADE's own anonymisation replaced names and places with tokens ("Generic_Name", "Generic_School",
-# "PROPER_NAME", "LOCATION_NAME", ...), unevenly by class (audit 2026-09-23, item 5.3: Generic_Name 21 strong /
-# 5 weak, PROPER_NAME 13 / 24 of 1,422 essays). Most PROPER_NAMEs were signatures, which the ending rule now
-# drops; in the 1,364-essay pool 31 essays keep a token (21 strong / 10 weak, 20 / 5 of them Generic_Name in
-# the text). They are kept: every contrast is within an essay, so a token cancels in it, and at 2% of essays
-# it cannot carry a between-essay comparison such as the AUC of the decision margin. `placeholder_report`
-# states the counts in every manifest.
+# The corpus's own anonymisation replaced a few names and places with tokens ("PROPER_NAME", "SCHOOL_NAME",
+# "LOCATION_NAME", ...; PERSUADE 2.0 also used "Generic_Name", unevenly by class: audit 2026-09-23, item 5.3).
+# Most PROPER_NAMEs are signatures, which the ending rule drops; in the 2,018-essay ASAP 2.0 pool 10 essays
+# keep a token (1 strong / 9 weak). They are kept: every contrast is within an essay, so a token cancels in
+# it, and at 0.5% of essays it cannot carry a between-essay comparison such as the AUC of the decision
+# margin. `placeholder_report` states the counts in every manifest.
 _PLACEHOLDER_RE = re.compile(r"\b(?:Generic_[A-Za-z]+|[A-Z]+_NAME)\b")
 
 
@@ -165,8 +162,7 @@ def placeholder_report(records: List[EssayRecord]) -> Dict[str, object]:
                        "weak": sum(not r.high_quality for r in records)}}
 
 
-_SOURCES = {"persuade": (load_persuade, DEFAULT_PERSUADE_PATH),
-            "asap2": (load_asap2, DEFAULT_ASAP2_PATH)}
+_SOURCES = {"asap2": (load_asap2, DEFAULT_ASAP2_PATH)}
 
 def stage_rules(prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS) -> Tuple[Rule, ...]:
     """The pupil-cue rules, with prompt selection first when `prompts` is given (None = cue rules only)."""
@@ -187,7 +183,7 @@ EDUCATION_RULES: Tuple[Rule, ...] = education_rules()
 def load_education_essays(
     path: str | Path | None = None,
     *,
-    source: str = "persuade",
+    source: str = "asap2",
     n: Optional[int] = None,
     report: Optional[Dict[str, object]] = None,
     prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS,
@@ -196,14 +192,14 @@ def load_education_essays(
 ) -> List[EssayRecord]:
     """The shared education pool: essays that fit every claim any education design makes.
 
-    `source` picks the corpus ("persuade" | "asap2"); `path` overrides its default location; `kwargs`
-    go to that loader (including its `seed`). `prompts` defaults to `NEUTRAL_PROMPTS` for both corpora
-    (ASAP 2.0's seven prompts are all among them); pass an explicit collection or None to override.
+    `source` picks the corpus (only "asap2" since 2026-09-27); `path` overrides its default location;
+    `kwargs` go to that loader (including its `seed`). `prompts` defaults to `NEUTRAL_PROMPTS`; pass an
+    explicit collection or None to override.
 
     `balance` (default on) equalises strong and weak essays **within each prompt**, so the quality label
     is independent of the prompt. Balancing the pool as a whole is not enough: after the pupil-voice rules
-    the label is so uneven across prompts ("Seeking multiple opinions" and "Phones and driving" 88% strong,
-    "A Cowboy Who Rode the Waves" 3%) that the prompt alone would predict it 67% of the time, and the
+    the label was so uneven across PERSUADE's prompts ("Seeking multiple opinions" and "Phones and driving"
+    88% strong, "A Cowboy Who Rode the Waves" 3%) that the prompt alone predicted it 67% of the time, and the
     rendered header names the assignment — the same leak the hiring role name had (76.5%). Per prompt
     the first ``min(strong, weak)`` essays of each class are kept, in the
     loader's seeded order, as matched strong/weak couples; `n` then keeps the first ``n // 2`` couples

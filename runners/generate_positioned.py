@@ -2,7 +2,7 @@
 """
 Generate the positioned-argument (A2) matched-pair dataset (education / standpoint-credibility).
 
-Pipeline: load real argumentative essays (PERSUADE 2.0) from the **shared education pool**
+Pipeline: load real argumentative essays (ASAP 2.0) from the **shared education pool**
 (`substrates/education_clean.load_education_essays` — the same essays as the A1 factorial and stage designs,
 so A1 and A2 are comparable) -> keep one **standpoint-fit group** (`--standpoint-fit`, decided 2026-09-27:
 ``plausible`` = the civic prompts where a standpoint is at least arguable, ``implausible`` = the control
@@ -16,8 +16,8 @@ is stored in the manifest ``encoding`` field so the existing loader/runners sele
 Every pair row's ``real_fields`` carries ``prompt_id`` and ``standpoint_fit``. One manifest per group.
 
 Usage:
-    python runners/generate_positioned.py --standpoint-fit plausible     # -> .../persuade_plausible
-    python runners/generate_positioned.py --standpoint-fit implausible   # -> .../persuade_implausible
+    python runners/generate_positioned.py --standpoint-fit plausible     # -> .../asap2_plausible
+    python runners/generate_positioned.py --standpoint-fit implausible   # -> .../asap2_implausible
 """
 
 from __future__ import annotations
@@ -47,12 +47,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
                     datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("gen-pos")
 
-SOURCES = ("persuade", "asap2")
+SOURCES = ("asap2",)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", choices=SOURCES, default="persuade")
+    ap.add_argument("--source", choices=SOURCES, default="asap2")
     ap.add_argument("--raw-path", default=None)
     ap.add_argument("--axes", default=",".join(POSITIONED_AXES))
     ap.add_argument("--positions", default="conclusion",
@@ -78,8 +78,6 @@ def main() -> None:
         ap.error("--n-per was replaced by --n-essays: every axis and position now uses the same essays "
                  "(as the A1 factorial does), and a factorial axis emits 4 pairs per essay")
 
-    if args.source != "persuade":
-        ap.error("A2 uses PERSUADE only (decided 2026-09-27); see pairs.positionality.STANDPOINT_FIT")
     out_dir = args.out_dir or Path(f"data/demographic/education_positioned/{args.source}_{args.standpoint_fit}")
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
     positions = [p.strip() for p in args.positions.split(",") if p.strip()]
@@ -100,8 +98,8 @@ def main() -> None:
     logger.info("Using %d %s essays; axes=%s positions=%s header=%s", len(records), args.source, axes,
                 positions, args.header_template)
 
-    def fields(rec):  # the record's real fields, plus what the standpoint-fit analysis groups by
-        return {**real_fields(rec), "prompt_id": rec.prompt_id, "standpoint_fit": standpoint_fit(rec)}
+    def fields(rec):  # the record's real fields (incl. prompt_id), plus its standpoint-fit group
+        return {**real_fields(rec), "standpoint_fit": standpoint_fit(rec)}
 
     thr = Thresholds(args.max_char_delta, args.max_token_delta, args.max_flesch_delta)
     out_records: List[Dict[str, Any]] = []

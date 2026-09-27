@@ -67,7 +67,7 @@ from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import DemographicBiasExperiment
 from probes.probe import build_probe_direction, get_rewards_both
 
-SOURCES = ("persuade", "asap2")
+SOURCES = ("asap2",)
 
 
 def _mean(xs: List[float]) -> float:
@@ -158,7 +158,7 @@ def run_axis(exp, cfg, dom, essays, axis, position, seed, variant=None,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, default=Path("configs/demographic_edupos_qwen06.yaml"))
-    ap.add_argument("--source", choices=SOURCES, default="persuade")
+    ap.add_argument("--source", choices=SOURCES, default="asap2")
     ap.add_argument("--raw-path", default=None)
     ap.add_argument("--axes", default=",".join(POSITIONED_AXES))
     ap.add_argument("--positions", default="conclusion",
@@ -182,8 +182,6 @@ def main() -> None:
     dom = get_domain(cfg.extra.get("domain", "education"))
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
     positions = [p.strip() for p in args.positions.split(",") if p.strip()]
-    if args.source != "persuade":
-        ap.error("A2 uses PERSUADE only (decided 2026-09-27); see pairs.positionality.STANDPOINT_FIT")
     # The shared education pool (the same essays as the A1 factorial and stage designs), narrowed to one
     # standpoint-fit group exactly as the positioned generator does.
     pool = load_education_essays(args.raw_path, source=args.source, seed=args.seed)

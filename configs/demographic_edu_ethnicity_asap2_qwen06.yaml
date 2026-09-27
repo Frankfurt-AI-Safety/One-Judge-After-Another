@@ -1,14 +1,13 @@
 # Demographic bias — EDUCATION (grading), ethnicity via name proxy, Skywork-Qwen3-0.6B.
 #
-# A1 header-proxy arm over real essays (ASAP 2.0, the essays not in PERSUADE). Same essay body, swap only
+# A1 header-proxy arm over real essays (ASAP 2.0). Same essay body, swap only
 # the name in the header (white- vs Black-coded first name, holding sex fixed). A name-proxy effect, not
 # pure ethnicity.
-#   python runners/generate_education.py --source asap2
+#   python runners/generate_education.py
 #
 #   python runners/run_experiment.py --config configs/demographic_edu_ethnicity_asap2_qwen06.yaml
 #
-# The second sample (since 2026-09-27; it replaced ASAP-AES, whose results are superseded). The
-# PERSUADE variant is configs/demographic_edu_ethnicity_persuade_qwen06.yaml.
+# The education corpus since 2026-09-27 (it replaced PERSUADE 2.0 and ASAP-AES, whose results are superseded).
 
 name: demographic_edu_ethnicity_asap2_qwen06
 bias_type: demographic

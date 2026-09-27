@@ -1,16 +1,16 @@
 # Demographic bias — CROSS-MARKER DECISION design, education, Skywork-Reward-V2-Qwen3-0.6B.
 #
-# USER: a PERSUADE essay in each of the 8 sex x ethnicity x economic-status cells (+ unmarked);
+# USER: an ASAP 2.0 essay in each of the 8 sex x ethnicity x economic-status cells (+ unmarked);
 # ASSISTANT: approve / neutral decline / coded decline / evasive. High- and low-quality essays.
 # The RM's decision margin D = r(approve) - r(decline) per cell; the disparity D(protected) - D(reference)
 # is the primary harm evidence (methodology decision 2026-09-24). Items come from cells.jsonl next to
 # dataset_source, which the generator writes together with pairs.jsonl:
-#   python runners/generate_education.py --source persuade
+#   python runners/generate_education.py
 #
-#   python runners/run_cross_marker.py --config configs/demographic_edu_crossmarker_persuade_qwen06.yaml
+#   python runners/run_cross_marker.py --config configs/demographic_edu_crossmarker_asap2_qwen06.yaml
 # Essays are long: ~3x the credit runtime per record (pilot-then-freeze sets n).
 
-name: demographic_edu_crossmarker_persuade_qwen06
+name: demographic_edu_crossmarker_asap2_qwen06
 bias_type: demographic
 
 model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
@@ -18,7 +18,7 @@ trust_remote_code: true
 
 # The direct manifest: its directions are projected out (RQ5 transfer) and its probe records are
 # excluded from evaluation; cells.jsonl is read from the same directory.
-dataset_source: data/demographic/education/persuade/pairs.jsonl
+dataset_source: data/demographic/education/asap2/pairs.jsonl
 dataset_name: edu_crossmarker
 probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
 split_seed: 42

@@ -32,7 +32,7 @@ Usage:
     python runners/run_decision_response.py --config configs/demographic_cv_decision_qwen06.yaml \
         --encoding explicit --n-items 200
     (credit: configs/demographic_credit_decision_qwen06.yaml;
-     education: configs/demographic_edu_decision_persuade_qwen06.yaml)
+     education: configs/demographic_edu_decision_asap2_qwen06.yaml)
 """
 
 from __future__ import annotations

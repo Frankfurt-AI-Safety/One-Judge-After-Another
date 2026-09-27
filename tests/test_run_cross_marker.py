@@ -64,7 +64,7 @@ class TestSettings:
 
     def test_config_files_parse(self):
         from scoring.experiment import ExperimentConfig
-        for name in ("credit_crossmarker_qwen06", "cv_crossmarker_qwen06", "edu_crossmarker_persuade_qwen06"):
+        for name in ("credit_crossmarker_qwen06", "cv_crossmarker_qwen06", "edu_crossmarker_asap2_qwen06"):
             cfg = ExperimentConfig.from_yaml(f"configs/demographic_{name}.yaml")
             s = resolve_settings(cfg.extra, {})
             assert s["directions"] == list(DIRECTION_SOURCES) and set(s["encodings"]) == {"explicit", "proxy"}

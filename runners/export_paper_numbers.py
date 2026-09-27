@@ -80,9 +80,8 @@ def collect(results_dir: Path) -> Tuple[Dict[str, str], List[str]]:
                 "eduEthnicityExplicit": ("ethnicity", "explicit"), "eduEthnicityProxy": ("ethnicity", "proxy"),
                 "eduGradeExplicit": ("grade_level", "explicit"), "eduGradeProxy": ("grade_level", "proxy")}
     edu_headline = {"eduSexExplicit", "eduGradeProxy"}  # also emit the nulled value for these two
-    # ASAP 2.0 (the essays not in PERSUADE) replaced ASAP-AES on 2026-09-27; the "Asap" macros retire with it
-    for tag, fname in (("AsapTwo", "battery_education_asap2_qwen06.json"),
-                       ("Persuade", "battery_education_persuade_qwen06.json")):
+    # ASAP 2.0 is the only essay corpus since 2026-09-27; the "Asap" and "Persuade" macros retire
+    for tag, fname in (("AsapTwo", "battery_education_asap2_qwen06.json"),):
         d = need(fname)
         if d:
             cells = {(c["axis"], c["encoding"]): c for c in d["cells"]}
@@ -96,10 +95,10 @@ def collect(results_dir: Path) -> Tuple[Dict[str, str], List[str]]:
     sp_axes = {"Sex": "pos_sex", "Race": "pos_race", "Class": "pos_class", "Origin": "pos_origin",
                "Intersection": "pos_intersection", "Control": "pos_control",
                "Hobby": "pos_ctrl_hobby", "Pet": "pos_ctrl_pet", "Region": "pos_ctrl_region"}
-    # PERSUADE only since 2026-09-27: the prompts where a standpoint is plausible (the A2 result) and the
-    # equally large control group from prompts where it is not (`pairs.positionality.STANDPOINT_FIT`)
-    for tag, fname in (("Persuade", "maineffect_edupos_persuade_plausible_qwen06.json"),
-                       ("PersuadeControl", "maineffect_edupos_persuade_implausible_qwen06.json")):
+    # ASAP 2.0, since 2026-09-27 in two groups: the prompts where a standpoint is plausible (the A2 result)
+    # and the equally large control group from prompts where it is not (`pairs.positionality.STANDPOINT_FIT`)
+    for tag, fname in (("AsapTwo", "maineffect_edupos_asap2_plausible_qwen06.json"),
+                       ("AsapTwoControl", "maineffect_edupos_asap2_implausible_qwen06.json")):
         d = need(fname)
         if d:
             by = {r["axis"]: r for r in d["results"]}

@@ -99,14 +99,14 @@ CV = DomainSpec(
 EDUCATION = DomainSpec(
     name="education",
     dataset_cls=EducationDemographicDataset,
-    default_pairs="data/demographic/education/persuade/pairs.jsonl",
+    default_pairs="data/demographic/education/asap2/pairs.jsonl",
     render_fn=render_essay,
     assessment_prompt=EDU_ASSESSMENT_PROMPT,
     template_ids=tuple(sorted(EDU_TEMPLATES)),
-    # Real essays are user-downloaded; load the PERSUADE corpus (raises with instructions if absent).
+    # Real essays are user-downloaded; load the ASAP 2.0 corpus (raises with instructions if absent).
     # The shared education pool (substrates/education_clean.py): the same essays for the factorial, the
     # stage design, the A2 positioned arm and the cross-marker design, so their results are comparable.
-    load_records=lambda: load_education_essays(source="persuade"),
+    load_records=lambda: load_education_essays(source="asap2"),
     is_strong=lambda r: r.high_quality,
     # sex × ethnicity × economic status as a full factorial. The **stage** axis (`grade_level`) and its
     # monotonicity ladder are a separate single-axis design on a separate manifest (same essays;

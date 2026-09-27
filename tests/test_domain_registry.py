@@ -81,5 +81,5 @@ class TestRegistry:
         try:
             recs = get_domain("education").load_records()
         except FileNotFoundError:
-            pytest.skip("PERSUADE corpus not downloaded (data/demographic/education/raw/)")
+            pytest.skip("ASAP 2.0 corpus not downloaded (data/demographic/education/raw/)")
         assert len(recs) > 0 and hasattr(recs[0], "high_quality")

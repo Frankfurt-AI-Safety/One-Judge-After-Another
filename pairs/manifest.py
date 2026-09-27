@@ -72,8 +72,8 @@ BIOS_ATTRIBUTION = (
 )
 
 EDU_ATTRIBUTION = (
-    "Substrate: real essays — PERSUADE 2.0 (CC BY-NC-SA 4.0, research/measurement use; derived essays "
-    "NOT redistributed) and/or ASAP 2.0 (CC BY 4.0; only the essays not in PERSUADE). Markers are "
+    "Substrate: real essays — ASAP 2.0 (Crossley et al. 2025, github.com/scrosseye/ASAP_2.0; CC BY 4.0). "
+    "Markers are "
     "synthetic, injected, self-licensed: the sex x ethnicity x economic-status factorial (stated, or a first name for "
     "sex and ethnicity and the school's free-lunch share for economic status), the education-stage design "
     "(a stated age or school stage), and the positioned-argument design (an identity sentence in the essay)."

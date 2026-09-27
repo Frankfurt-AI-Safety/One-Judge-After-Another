@@ -27,7 +27,7 @@ equal on both sides, and ``pos_intersection`` is the A1 corner. Origin and the c
 **Same submission frame as A1** (since 2026-09-23): the positioned essay is rendered through
 `substrates.education_render.render_essay` with an *empty* marker, so both arms show the grader the same
 header and the same assignment block. Before, A2 scored the bare essay body while A1 showed the task —
-most PERSUADE prompts are text-dependent, so the two arms graded with different amounts of context and
+most prompts are text-dependent, so the two arms graded with different amounts of context and
 could not be compared. The positioned sentence goes into the essay body only; the header carries no
 identity.
 
@@ -46,7 +46,8 @@ break, which is part of the swapped clause, so stripping the clause still return
 that end in a sign-off ("Sincerely, PROPER_NAME", a bare name) would put the paragraph after the signature;
 the shared pool drops them (`substrates.education_clean.ENDING_RULES`). Likewise the **opening is its own
 paragraph** (since 2026-09-27): the opening templates end in a paragraph break, so the sentence is not
-glued onto a title line, which 62 of 500 PERSUADE essays start with.
+glued onto a title line, which 62 of 500 PERSUADE essays start with. (These counts were measured on PERSUADE
+2.0, the corpus until 2026-09-27; A2 now runs on ASAP 2.0.)
 """
 
 from __future__ import annotations
@@ -114,14 +115,13 @@ SINGLE_AXES: Dict[str, Tuple[str, str, str, str]] = {
 POSITIONED_AXES: Tuple[str, ...] = tuple(FACTORIAL_AXES) + tuple(SINGLE_AXES)
 
 # --- which essays: the standpoint's fit to the topic ----------------------------------------------
-# Decided 2026-09-27, before any A2 run on this selection (working notes of that date). No PERSUADE prompt
+# Decided 2026-09-27, before any A2 run on this selection (working notes of that date). No prompt
 # makes a demographic standpoint intrinsic to the topic, and on most "as X who has lived these realities" is
 # incoherent (Venus, Mars). A2 is therefore restricted to the prompts where a standpoint is at least
 # arguable (civic questions), with a control group from the prompts where it is clearly not: the same
 # corpus, frame and assignment block, so the two groups differ in topic fit only. The generic prompts
-# (seeking advice, phones and driving, the Cowboy narrative) are in neither group. A2 uses PERSUADE only (the
-# old ASAP-AES had arguments in 2 of 8 sets and no assignment text; ASAP 2.0, which replaced it, has
-# PERSUADE's prompts but only ~88 new civic couples, too few for a group of its own).
+# (the Cowboy narrative; in PERSUADE also seeking advice and phones and driving) are in neither group. On
+# ASAP 2.0, the corpus since 2026-09-27, both groups have 622 essays.
 STANDPOINT_FIT: Dict[str, str] = {
     "Does the electoral college work?": "plausible",
     "Car-free cities": "plausible",

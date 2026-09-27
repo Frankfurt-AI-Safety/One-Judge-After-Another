@@ -355,7 +355,7 @@ passed `verify_score_path` (Skywork-Reward-V2-Llama-3.1-8B, 2026-09-25).
 
 **The pilot** (pilot-then-freeze; the rules are stated in the working notes, 2026-09-25, before any pilot run).
 `cluster/pilot.sh <lane>` runs one lane per GPU: `small` = Qwen3-0.6B, `8b` = Skywork-Reward-V2-Llama-3.1-8B.
-Each lane runs the probe-size curve (`runners/run_probe_curve.py`) for credit, hiring and PERSUADE, then the
+Each lane runs the probe-size curve (`runners/run_probe_curve.py`) for credit, hiring and education (ASAP 2.0), then the
 cross-marker design on the full credit and education pools and 600 + 600 hiring records. Expected: ~4 h for
 `small`, ~9–10 h for `8b`. The two lanes use both GPUs the workspace allows, so nothing else can run meanwhile.
 

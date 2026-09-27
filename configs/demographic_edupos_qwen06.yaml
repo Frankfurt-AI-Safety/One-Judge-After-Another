@@ -6,7 +6,7 @@
 # Generate first (corpus user-downloaded):
 #   python runners/generate_positioned.py --standpoint-fit plausible     # and --standpoint-fit implausible
 # Battery over all identity axes (the plausible group; the control group via
-# --dataset-source data/demographic/education_positioned/persuade_implausible/pairs.jsonl):
+# --dataset-source data/demographic/education_positioned/asap2_implausible/pairs.jsonl):
 #   python runners/run_battery.py --config configs/demographic_edupos_qwen06.yaml \
 #     --axes pos_sex,pos_race,pos_class,pos_origin,pos_intersection,pos_control --encodings conclusion
 
@@ -16,7 +16,7 @@ bias_type: demographic
 model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
 trust_remote_code: true
 
-dataset_source: data/demographic/education_positioned/persuade_plausible/pairs.jsonl
+dataset_source: data/demographic/education_positioned/asap2_plausible/pairs.jsonl
 dataset_name: edupos
 probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
 max_test_examples: 200

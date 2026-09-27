@@ -34,8 +34,8 @@ rsync -av --progress \
 # cells.jsonl (all 8 factorial texts per block) is what the cross-marker design reads; it must come from
 # the SAME generator run as pairs.jsonl (its cells are byte-identical to the ones the pairs were cut from),
 # so the two always travel together. Local embedding caches (artifacts/, gitignored) are never staged.
-# ~1.9 GB since 2026-09-24 (hiring 0.6 GB, PERSUADE 0.65 GB, ASAP-AES 0.35 GB, credit 0.1 GB; ASAP-AES was
-# replaced by the smaller ASAP 2.0 on 2026-09-27): every generator
+# ~1.9 GB on 2026-09-24 (hiring 0.6 GB, PERSUADE 0.65 GB, ASAP-AES 0.35 GB, credit 0.1 GB; both essay corpora
+# were replaced by ASAP 2.0 on 2026-09-27): every generator
 # emits the full factorial. Over a slow VPN it can be quicker to skip this block and rerun the generators on
 # the cluster from the staged raw corpora (about a minute each, deterministic from the seed).
 echo "==> generated matched pairs + factorial cells (~1.9 GB; regenerable, but skip the rebuild)"

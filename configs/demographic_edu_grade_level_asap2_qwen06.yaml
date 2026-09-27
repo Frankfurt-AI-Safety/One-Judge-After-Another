@@ -1,16 +1,15 @@
 # Demographic bias — EDUCATION (grading), grade_level (age proxy), Skywork-Qwen3-0.6B.
 #
-# A1 header-proxy arm over real essays (ASAP 2.0, the essays not in PERSUADE). Same essay body, swap only
+# A1 header-proxy arm over real essays (ASAP 2.0). Same essay body, swap only
 # the education-stage cue in the header (6th-grade pupil vs final-year doctoral candidate) as an
 # age/maturity proxy.
 # The stage design has its OWN manifest and population (stage-neutral prompts, no pupil cues),
 # separate from the sex x ethnicity x economic-status factorial in <source>/.
-#   python runners/generate_education.py --design stage --source asap2 --include-ladder
+#   python runners/generate_education.py --design stage --include-ladder
 #
 #   python runners/run_experiment.py --config configs/demographic_edu_grade_level_asap2_qwen06.yaml
 #
-# The second sample (since 2026-09-27; it replaced ASAP-AES, whose results are superseded). The
-# PERSUADE variant is configs/demographic_edu_grade_level_persuade_qwen06.yaml.
+# The education corpus since 2026-09-27 (it replaced PERSUADE 2.0 and ASAP-AES, whose results are superseded).
 
 name: demographic_edu_grade_level_asap2_qwen06
 bias_type: demographic

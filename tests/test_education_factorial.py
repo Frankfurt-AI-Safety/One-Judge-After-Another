@@ -201,10 +201,10 @@ class TestClassBalance:
     def _corpus(self, tmp_path, rows):
         import csv
 
-        path = tmp_path / "persuade.csv"
+        path = tmp_path / "asap2.csv"
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["essay_id_comp", "full_text", "holistic_essay_score", "prompt_name"])
+            w.writerow(["essay_id", "full_text", "score", "prompt_name"])
             for i, (prompt, score) in enumerate(rows):
                 w.writerow([f"e{i}", f"{_ESSAY_BODY} Essay number {i}.", score, prompt])
         return path
@@ -243,7 +243,7 @@ class TestClassBalance:
 
 
 def test_placeholder_report_counts_essays_per_token_and_class():
-    # Audit item 5.3: PERSUADE's anonymisation tokens are uneven by class; the report states it.
+    # Audit item 5.3: a corpus's anonymisation tokens can be uneven by class; the report states it.
     from substrates.education_clean import placeholder_report
 
     def rec(rid, strong, text):
@@ -267,10 +267,10 @@ def test_the_pool_loader_reports_placeholders_on_the_returned_essays(tmp_path):
 
     from substrates.education_clean import load_education_essays
 
-    path = tmp_path / "persuade.csv"
+    path = tmp_path / "asap2.csv"
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["essay_id_comp", "full_text", "holistic_essay_score", "prompt_name"])
+        w.writerow(["essay_id", "full_text", "score", "prompt_name"])
         w.writerow(["e0", f"{_ESSAY_BODY} Generic_Name agrees.", 6, "The Face on Mars"])
         w.writerow(["e1", _ESSAY_BODY, 1, "The Face on Mars"])
         w.writerow(["e2", f"{_ESSAY_BODY} PROPER_NAME agrees.", 1, "The Face on Mars"])

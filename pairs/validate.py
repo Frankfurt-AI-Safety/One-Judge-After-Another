@@ -11,8 +11,8 @@ Deterministic checks, no model involved:
    flag and a manifest key).
 3. **Readability parity** — |ΔFlesch reading ease| of the two full texts within bound (``textstat``, a
    required dependency: a gate that skipped the check would pass pairs without saying so). Measured on the
-   whole text, it loosens as items grow: in the essay builds one clause moves the score by at most 2.5
-   points (the retired ASAP-AES corpus, essays from 63 words) and under 1 on PERSUADE's longer essays,
+   whole text, it loosens as items grow: in the essay builds on the earlier corpora one clause moved the
+   score by at most 2.5 points (ASAP-AES, essays from 63 words) and under 1 on PERSUADE's longer essays,
    against a bound of 8.
 
 The generators gate block by block: a block (one record × template × encoding of a factorial, one stage

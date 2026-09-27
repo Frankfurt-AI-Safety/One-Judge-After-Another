@@ -15,19 +15,19 @@ grid, one name per cell; the economic proxy is the school's free/reduced-price-l
 **stage** — the single-axis 6th-grade-vs-doctoral-candidate contrast, plus `--include-ladder` for the
 monotonicity rungs against the same reference clause.
 
-Both: load real essays (PERSUADE 2.0, or the ASAP 2.0 essays not in PERSUADE) -> strong/weak `high_quality` from the holistic score
--> render as a gradable submission with a neutral header -> inject the marker clause -> Tier-1
-structural gate -> write manifest. Approach A1 (header proxies over real essays); the essay body is
+Both: load real essays (ASAP 2.0; PERSUADE 2.0 until 2026-09-27) -> strong/weak `high_quality` from the
+holistic score -> render as a gradable submission with a neutral header -> inject the marker clause ->
+Tier-1 structural gate -> write manifest. Approach A1 (header proxies over real essays); the essay body is
 held byte-identical, so only the marker differs.
 
 The corpora are user-downloaded (not committed) into data/demographic/education/raw/ — see the module
 docstrings in substrates/education_ingest.py for the exact download instructions.
 
 Usage:
-    python runners/generate_education.py --source persuade          # factorial -> <source>/
+    python runners/generate_education.py                            # factorial -> <source>/ (asap2)
     python runners/generate_education.py --design stage --include-ladder   # -> <source>_stage/
     python runners/run_battery.py --config configs/<edu cfg> \
-        --dataset-source data/demographic/education/persuade_stage/pairs.jsonl \
+        --dataset-source data/demographic/education/asap2_stage/pairs.jsonl \
         --axes grade_level,stage_grade12,stage_undergrad,stage_masters,stage_doctorate
 """
 
@@ -56,7 +56,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
                     datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("gen-edu")
 
-SOURCES = ("persuade", "asap2")
+SOURCES = ("asap2",)
 
 
 def main() -> None:
@@ -65,7 +65,7 @@ def main() -> None:
                     help="factorial: sex x ethnicity x economic status, all 8 cells per essay (the "
                          "domain's main manifest). stage: the single-axis 6th-grade-vs-doctorate "
                          "contrast (+ --include-ladder), on its own manifest. Same essay pool.")
-    ap.add_argument("--source", choices=SOURCES, default="persuade")
+    ap.add_argument("--source", choices=SOURCES, default="asap2")
     ap.add_argument("--raw-path", default=None, help="Override the corpus file path (else the default).")
     ap.add_argument("--axes", default=None,
                     help="Default: the factorial's axes + intersection, or grade_level for --design stage.")
@@ -76,7 +76,8 @@ def main() -> None:
     ap.add_argument("--templates", default=",".join(sorted(EDU_TEMPLATES)))
     ap.add_argument("--n-per", type=int, default=None,
                     help="--design stage only: target clean pairs per (axis, encoding). Default 500.")
-    ap.add_argument("--n-essays", type=int, default=1500, help="Essays to sample from the corpus")
+    ap.add_argument("--n-essays", type=int, default=None,
+                    help="Cap on essays (default: the whole shared pool, the essays every education design uses)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="Default: data/demographic/education/<source>[_stage]")

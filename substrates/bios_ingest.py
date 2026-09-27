@@ -33,7 +33,7 @@ validation gate *cannot* catch a bad scrub (it compares the two poles to each ot
 `runners/validate_bios_scrub.py`, which probes the *real* gender label out of scrubbed activations.
 
 Privacy: these are biographies of identifiable real people. Raw and derived text stay uncommitted,
-as with PERSUADE/ASAP 2.0 — only aggregate metrics are shared.
+as with the essays (ASAP 2.0) — only aggregate metrics are shared.
 """
 
 from __future__ import annotations

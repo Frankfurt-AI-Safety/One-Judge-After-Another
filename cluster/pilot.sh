@@ -11,7 +11,7 @@
 #   det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config resources.slots=2 \
 #     --config idle_timeout=12h --config description=pilot_70b bash cluster/pilot.sh 70b
 #
-# Per lane: the probe-size curve for credit, hiring and PERSUADE, then the cross-marker design on the full
+# Per lane: the probe-size curve for credit, hiring and education (ASAP 2.0), then the cross-marker design on the full
 # credit and education pools and 600 + 600 hiring records. Each step writes
 # artifacts/results/demographic/pilot/<step>_<lane>.json and logs to $PFSS/pilot_logs/<step>_<lane>.log.
 # A step whose JSON exists is skipped, so resubmitting a lane resumes it; a failing step is logged and the
@@ -37,7 +37,7 @@ mkdir -p "$OUT" "$LOGS"
 
 CREDIT=configs/demographic_credit_crossmarker_qwen06.yaml
 HIRING=configs/demographic_cv_crossmarker_qwen06.yaml
-EDUCATION=configs/demographic_edu_crossmarker_persuade_qwen06.yaml
+EDUCATION=configs/demographic_edu_crossmarker_asap2_qwen06.yaml
 
 step() {  # step <name> <runner> <args...>
   local name=$1 runner=$2

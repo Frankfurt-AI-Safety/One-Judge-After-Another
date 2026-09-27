@@ -39,7 +39,7 @@ def _fake_record(rid="essay-test", high_quality=True) -> EssayRecord:
         essay_text=_ESSAY_BODY,
         holistic_score=6.0 if high_quality else 1.0,
         high_quality=high_quality,
-        source_dataset="persuade",
+        source_dataset="asap2",
     )
 
 
@@ -96,16 +96,6 @@ class TestRender:
 
 # --------------------------------------------------------------------------- ingest
 class TestIngest:
-    def test_redaction_tags_fully_neutralised(self):
-        from substrates.education_ingest import _clean
-
-        cleaned = _clean("Dear @PERSON@, I met @PERSON1 in @LOCATION1@ on @DATE2.")
-        assert "@" not in cleaned
-        assert cleaned == "Dear someone, I met someone in someone on someone."
-        # adjacent tags (`<@PERCENT1@NUM1>`) collapse to one replacement
-        assert _clean("over <@PERCENT1@NUM1> of the @CAPS1 @CAPS2.") == \
-            "over <someone> of the someone someone."
-
     def test_paragraph_breaks_survive_cleaning(self):
         from substrates.education_ingest import _clean
 
@@ -115,135 +105,77 @@ class TestIngest:
         assert _clean("A hard-wrapped\nparagraph.") == "A hard-wrapped paragraph."
         assert _clean("  padded \t text  ") == "padded text"
 
-    def test_persuade_keeps_the_assignment(self, tmp_path):
-        from substrates.education_ingest import load_persuade
-
-        task = "Write an explanatory essay about limiting car usage."
-        rows = [["e1", _ESSAY_BODY, 6, "Car-free cities", task]]
-        path = self._write_persuade(tmp_path, [
-            "essay_id_comp", "full_text", "holistic_essay_score", "prompt_name", "assignment"], rows)
-        (rec,) = load_persuade(path, min_chars=0)
-        assert rec.assignment == task and rec.prompt_id == "Car-free cities"
-
-    def _write_persuade(self, tmp_path, header, rows):
+    @staticmethod
+    def _write(tmp_path, header, rows):
         import csv
 
-        path = tmp_path / "persuade.csv"
+        path = tmp_path / "asap2.csv"
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(header)
             w.writerows(rows)
         return path
 
-    def test_persuade_dedups_discourse_rows_by_id(self, tmp_path):
-        from substrates.education_ingest import load_persuade
+    _HEADER = ["essay_id", "score", "full_text", "prompt_name", "assignment", "gender", "race_ethnicity",
+               "grade_level", "ell_status", "economically_disadvantaged"]
 
-        rows = [["e1", _ESSAY_BODY, 6]] * 3 + [["e2", _ESSAY_BODY + " Extra.", 1]]
-        path = self._write_persuade(tmp_path, ["essay_id", "full_text", "holistic_essay_score"], rows)
-        recs = load_persuade(path, min_chars=0)
-        assert sorted(r.source_record_id for r in recs) == ["persuade-e1", "persuade-e2"]
+    def test_asap2_keeps_the_assignment_and_the_rubric(self, tmp_path):
+        from substrates.education_ingest import load_asap2
 
-    def test_persuade_dedups_by_text_without_id_column(self, tmp_path):
-        # Regression: the per-row fallback key used to make every discourse row its own essay.
-        from substrates.education_ingest import load_persuade
+        task = "Write an explanatory essay about limiting car usage."
+        rows = [["X1", 6, _ESSAY_BODY, "Car-free cities", task, "F", "White", 10, "No", "Yes"],
+                ["X2", 2, _ESSAY_BODY + " B.", "Car-free cities", task, "M", "White", 10, "No", "Yes"],
+                ["X3", 5, _ESSAY_BODY + " C.", "Car-free cities", task, "M", "White", 10, "No", "Yes"]]
+        recs = load_asap2(self._write(tmp_path, self._HEADER, rows), min_chars=0)
+        by = {r.source_record_id: r for r in recs}
+        assert by["asap2-X1"].assignment == task and by["asap2-X1"].prompt_id == "Car-free cities"
+        assert by["asap2-X1"].high_quality and by["asap2-X3"].high_quality and not by["asap2-X2"].high_quality
+        assert {r.source_dataset for r in recs} == {"asap2"}
 
-        rows = [[_ESSAY_BODY, 6]] * 3 + [[_ESSAY_BODY + " Extra.", 1]]
-        path = self._write_persuade(tmp_path, ["full_text", "holistic_essay_score"], rows)
-        recs = load_persuade(path, min_chars=0)
-        assert len(recs) == 2
-        assert len({r.source_record_id for r in recs}) == 2
+    def test_asap2_keeps_real_demographics_off_the_essay_body(self, tmp_path):
+        from substrates.education_ingest import load_asap2, real_fields
 
-    def test_persuade_prefers_essay_id_comp_over_the_lossy_essay_id(self, tmp_path):
-        # Regression: the lookup used to scan the FILE's column order, so it picked `essay_id` —
-        # 661 of whose values are Excel-mangled to scientific notation, one of them covering two
-        # different essays, which the dedup then merged.
-        from substrates.education_ingest import load_persuade
-
-        rows = [["5.88E+12", "AA994A6CAF65", _ESSAY_BODY, 6],
-                ["5.88E+12", "7B1B9534D51A", _ESSAY_BODY + " A different essay.", 1]]
-        path = self._write_persuade(
-            tmp_path, ["essay_id", "essay_id_comp", "full_text", "holistic_essay_score"], rows)
-        recs = load_persuade(path, min_chars=0)
-        assert sorted(r.source_record_id for r in recs) == \
-            ["persuade-7B1B9534D51A", "persuade-AA994A6CAF65"]
-
-    def test_persuade_keeps_real_demographics_off_the_essay_body(self, tmp_path):
-        from substrates.education_ingest import load_persuade
-
-        rows = [["e1", _ESSAY_BODY, 6, "F", "Black/African American", "8", "Yes", "Driverless cars"]]
-        path = self._write_persuade(tmp_path, [
-            "essay_id_comp", "full_text", "holistic_essay_score", "gender", "race_ethnicity",
-            "grade_level", "ell_status", "prompt_name"], rows)
-        (rec,) = load_persuade(path, min_chars=0)
-        assert (rec.raw_sex, rec.raw_ethnicity, rec.raw_grade_level) == \
-            ("F", "Black/African American", "8")
-        assert rec.extra["ell_status"] == "Yes" and rec.prompt_id == "Driverless cars"
+        rows = [["X1", 6, _ESSAY_BODY, "Driverless cars", "Task.", "F", "Black/African American", 8, "Yes",
+                 "Economically disadvantaged"]]
+        (rec,) = load_asap2(self._write(tmp_path, self._HEADER, rows), min_chars=0)
+        assert (rec.raw_sex, rec.raw_ethnicity, rec.raw_grade_level) == ("F", "Black/African American", "8")
+        assert rec.extra == {"ell_status": "Yes", "economically_disadvantaged": "Economically disadvantaged"}
         # The real attributes must never reach the text the model sees.
         assert "Black" not in rec.essay_text and rec.essay_text == _ESSAY_BODY
+        # ... but they, and the prompt, go onto every pair row for the validity checks and the breakdown
+        fields = real_fields(rec)
+        assert fields["prompt_id"] == "Driverless cars" and fields["ethnicity"] == "Black/African American"
 
-    def test_persuade_blank_demographics_become_none(self, tmp_path):
-        from substrates.education_ingest import load_persuade
+    def test_asap2_blank_demographics_become_none(self, tmp_path):
+        from substrates.education_ingest import load_asap2
 
-        rows = [["e1", _ESSAY_BODY, 6, "", " ", ""]]
-        path = self._write_persuade(tmp_path, [
-            "essay_id_comp", "full_text", "holistic_essay_score", "gender", "race_ethnicity",
-            "grade_level"], rows)
-        (rec,) = load_persuade(path, min_chars=0)
+        rows = [["X1", 6, _ESSAY_BODY, "Driverless cars", "Task.", "", " ", "", "", ""]]
+        (rec,) = load_asap2(self._write(tmp_path, self._HEADER, rows), min_chars=0)
         assert (rec.raw_sex, rec.raw_ethnicity, rec.raw_grade_level) == (None, None, None)
         assert rec.extra == {}
 
-    def test_persuade_report_counts_every_drop_reason(self, tmp_path):
-        from substrates.education_ingest import load_persuade
+    def test_asap2_report_counts_every_drop_reason(self, tmp_path):
+        from substrates.education_ingest import load_asap2
 
-        rows = ([["e1", _ESSAY_BODY, 6]] * 2            # one essay, one duplicate discourse row
-                + [["e2", _ESSAY_BODY, 4]]              # middle score
-                + [["e3", "short", 6]]                  # too short
-                + [["e4", _ESSAY_BODY, "n/a"]])         # unparsable score
-        path = self._write_persuade(
-            tmp_path, ["essay_id_comp", "full_text", "holistic_essay_score"], rows)
+        rows = ([["X1", 6, _ESSAY_BODY]] * 2               # a repeated id
+                + [["X2", 4, _ESSAY_BODY]]                 # middle score
+                + [["X3", 6, "short"]]                     # too short
+                + [["X4", "n/a", _ESSAY_BODY]]             # unparsable score
+                + [["", 6, _ESSAY_BODY]])                  # missing id
         report = {}
-        recs = load_persuade(path, min_chars=100, report=report)
+        recs = load_asap2(self._write(tmp_path, ["essay_id", "score", "full_text"], rows), min_chars=100,
+                          report=report)
         assert len(recs) == 1
-        assert report["n_rows"] == 5 and report["n_essays"] == 4 and report["kept"] == 1
-        assert report["dropped"] == {"duplicate_row": 1, "too_short": 1, "too_long": 0,
+        assert report["n_rows"] == 6 and report["n_essays"] == 4 and report["kept"] == 1
+        assert report["dropped"] == {"missing_or_repeated_id": 2, "too_short": 1, "too_long": 0,
                                      "unparsable_score": 1, "middle_score": 1}
         assert report["strong"] == 1 and report["returned"] == 1
 
-    def test_asap2_drops_persuade_essays_and_keeps_the_rubric_and_demographics(self, tmp_path):
-        # ASAP 2.0 re-publishes PERSUADE essays under other ids; only the new ones form the second sample.
+    def test_missing_file_explains_the_download(self, tmp_path):
         from substrates.education_ingest import load_asap2
 
-        other = _ESSAY_BODY.replace("public libraries", "parks").replace("libraries deserve", "parks deserve")
-        p_dir, a_dir = tmp_path / "p", tmp_path / "a"
-        p_dir.mkdir(), a_dir.mkdir()
-        persuade = self._write_persuade(p_dir, ["essay_id_comp", "full_text", "holistic_essay_score"],
-                                        [["p1", _ESSAY_BODY, 3]])      # a middle score: still excluded
-        header = ["essay_id", "score", "full_text", "prompt_name", "assignment", "gender", "race_ethnicity",
-                  "grade_level", "ell_status", "economically_disadvantaged"]
-        asap2 = self._write_persuade(a_dir, header, [
-            ["X1", 6, "  " + _ESSAY_BODY, "Car-free cities", "Write an essay.", "F", "White", 10, "No", "Yes"],
-            ["X2", 5, other, "Car-free cities", "Write an essay.", "M", "Black/African American", 8, "No",
-             "Not economically disadvantaged"],
-            ["X3", 2, other + " Again.", "Exploring Venus", "Evaluate the article.", "F", "White", 6, "Yes", ""],
-            ["X4", 4, other + " Middle.", "Exploring Venus", "Evaluate the article.", "M", "White", 6, "No", ""],
-        ])
-        report = {}
-        recs = load_asap2(asap2, persuade_path=persuade, min_chars=0, report=report)
-        assert sorted(r.source_record_id for r in recs) == ["asap2-X2", "asap2-X3"]
-        assert report["dropped"]["in_persuade"] == 1 and report["dropped"]["middle_score"] == 1
-        by = {r.source_record_id: r for r in recs}
-        assert by["asap2-X2"].high_quality and not by["asap2-X3"].high_quality   # PERSUADE's cut-offs
-        x2 = by["asap2-X2"]
-        assert (x2.source_dataset, x2.prompt_id, x2.assignment) == ("asap2", "Car-free cities", "Write an essay.")
-        assert (x2.raw_sex, x2.raw_ethnicity, x2.raw_grade_level) == ("M", "Black/African American", "8")
-        assert x2.extra["economically_disadvantaged"] == "Not economically disadvantaged"
-
-    def test_asap2_needs_the_persuade_file(self, tmp_path):
-        from substrates.education_ingest import load_asap2
-
-        asap2 = self._write_persuade(tmp_path, ["essay_id", "score", "full_text"], [["X1", 6, _ESSAY_BODY]])
-        with pytest.raises(FileNotFoundError, match="PERSUADE"):
-            load_asap2(asap2, persuade_path=tmp_path / "missing.csv", min_chars=0)
+        with pytest.raises(FileNotFoundError, match="scrosseye/ASAP_2.0"):
+            load_asap2(tmp_path / "raw" / "missing.csv")
 
 
 # --------------------------------------------------------------------------- stage marker

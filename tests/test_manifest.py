@@ -113,7 +113,7 @@ def test_positioned_pairs_also_hash_their_essay_shell(tmp_path):
     from substrates.education_ingest import EssayRecord
 
     rec = EssayRecord(source_record_id="essay-0", essay_text="One. Two. Three. Four.", holistic_score=5.0,
-                      high_quality=True, source_dataset="persuade")
+                      high_quality=True, source_dataset="asap2")
     pair = make_positioned_pairs(rec, "pos_sex", "conclusion", random.Random(0), header_template="edu_v2")[0]
     row = pair_to_record(pair, "p0", seed=1, domain="education")
     assert row["provenance"]["template_hash"] == _template_hash(pair.template_id)

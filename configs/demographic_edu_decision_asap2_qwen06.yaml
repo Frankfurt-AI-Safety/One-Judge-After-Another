@@ -1,21 +1,21 @@
-# Demographic bias — DECISION-RESPONSE arm (blatant verdict: the floor), education (PERSUADE 2.0), Skywork-Reward-V2-Qwen3-0.6B.
+# Demographic bias — DECISION-RESPONSE arm (blatant verdict: the floor), education (ASAP 2.0), Skywork-Reward-V2-Qwen3-0.6B.
 #
 # Not the harm evidence: that is the cross-marker decision design (configs/*_crossmarker_*.yaml).
 #
 # USER presents a student's essay (header marker: sex / ethnicity / grade level) and asks whether it
 # should pass (pass/fail keeps the decision binary like hiring and credit); the RM scores fair vs
 # discriminatory vs neutral vs evasive verdicts. High-quality essays only. Generate the pairs (for the
-# probe direction) with: python runners/generate_education.py --source persuade
+# probe direction) with: python runners/generate_education.py
 #
-#   python runners/run_decision_response.py --config configs/demographic_edu_decision_persuade_qwen06.yaml
+#   python runners/run_decision_response.py --config configs/demographic_edu_decision_asap2_qwen06.yaml
 
-name: demographic_edu_decision_persuade_qwen06
+name: demographic_edu_decision_asap2_qwen06
 bias_type: demographic
 
 model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
 trust_remote_code: true
 
-dataset_source: data/demographic/education/persuade/pairs.jsonl
+dataset_source: data/demographic/education/asap2/pairs.jsonl
 dataset_name: edu_decision
 probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
 max_test_examples: 200
