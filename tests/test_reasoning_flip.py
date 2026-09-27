@@ -69,7 +69,7 @@ class TestBuilder:
         for premise in ("parental_leave", "intersection", "commute"):
             item = build_reasoning_item(_rec(), premise, render_bio, random.Random(1))
             rep = verdict_length_report(item["cells"], keys=REASONING_CELLS)
-            assert rep["max_token_delta"] <= 12, f"{premise}: {rep}"
+            assert rep["max_word_delta"] <= 12, f"{premise}: {rep}"
 
     def test_deterministic(self):
         a = build_reasoning_item(_rec(), "intersection", render_bio, random.Random(3))

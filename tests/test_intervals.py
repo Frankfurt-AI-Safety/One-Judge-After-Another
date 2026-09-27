@@ -82,13 +82,15 @@ def test_nulling_change_is_paired():
 def test_decision_intervals_estimate_the_decision_metrics():
     rng = np.random.default_rng(5)
     base = {v: list(rng.normal(mu, 1, 80)) for v, mu in
-            (("fair", 1.0), ("discriminatory", 0.0), ("neutral", 0.5), ("evasive", 0.2))}
+            (("fair", 1.0), ("discriminatory", 0.0), ("neutral", 0.5), ("neutral_decline", 0.3),
+             ("evasive", 0.2))}
     out = decision_response_intervals(base, base, n_boot=300)
     point = compute_decision_response_metrics(base)
     for key in ("discriminatory_win_rate", "mean_gap_fair_minus_disc", "disc_win_rate_vs_neutral",
-                "evasion_win_rate"):
+                "evasion_win_rate", "disc_win_rate_vs_neutral_decline", "mean_gap_neutral_decline_minus_disc"):
         assert out["baseline"][key]["estimate"] == pytest.approx(point[key])
     assert out["nulled_minus_baseline"]["discriminatory_win_rate_change"]["estimate"] == 0
+    assert out["nulled_minus_baseline"]["disc_win_rate_vs_neutral_decline_change"]["estimate"] == 0
     # without the optional variants their metrics are not reported
     two = {k: base[k] for k in ("fair", "discriminatory")}
     assert set(decision_response_intervals(two, two, n_boot=50)["baseline"]) == {

@@ -302,7 +302,7 @@ class TestItems:
 
     def test_hiring_prompt_names_the_role(self):
         item = build_block_items(_block("cv"), "cv")[0]
-        assert item.prompt.startswith("You are screening a candidate for a project coordinator.")
+        assert item.prompt.startswith("You are screening a candidate for a position as a project coordinator.")
         with pytest.raises(KeyError, match="role"):
             decision_prompt("cv", "some profile", {"qualified": True})
 
