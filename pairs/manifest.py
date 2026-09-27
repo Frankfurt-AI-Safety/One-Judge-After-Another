@@ -73,8 +73,8 @@ BIOS_ATTRIBUTION = (
 
 EDU_ATTRIBUTION = (
     "Substrate: real essays — PERSUADE 2.0 (CC BY-NC-SA 4.0, research/measurement use; derived essays "
-    "NOT redistributed) and/or ASAP-AES (Kaggle 2012 Hewlett competition terms). Markers are synthetic, "
-    "injected, self-licensed: the sex x ethnicity x economic-status factorial (stated, or a first name for "
+    "NOT redistributed) and/or ASAP 2.0 (CC BY 4.0; only the essays not in PERSUADE). Markers are "
+    "synthetic, injected, self-licensed: the sex x ethnicity x economic-status factorial (stated, or a first name for "
     "sex and ethnicity and the school's free-lunch share for economic status), the education-stage design "
     "(a stated age or school stage), and the positioned-argument design (an identity sentence in the essay)."
 )

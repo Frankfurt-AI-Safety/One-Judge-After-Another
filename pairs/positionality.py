@@ -13,9 +13,12 @@ swapped unit (not just the short identity phrase), the shared single-slot Tier-1
 stripping the sentence from each side yields the identical essay body. For the ``random``/``middle``
 positions the insertion index is chosen **once** and reused for both poles, so the remainders still match.
 
-Identity phrases are intentionally *not* length-matched (they legitimately differ); the generator relaxes the
-Tier-1 char-delta bound for this arm. A ``neutral`` rendering (no positionality) is provided so a follow-up
-can measure the clause's *main effect* separately from the identity *difference*.
+The two identity phrases of a pair are close in length, so length hardly enters the A-B gap: the factorial
+phrases differ by at most 3 characters, the single axes by at most 8 characters and 1 word (``pos_origin``'s
+pole B length-matched on 2026-09-27). All pass the Tier-1 gate at its default bounds. A ``neutral`` rendering
+(no positionality) is provided so a follow-up can measure the clause's *main effect* separately from the
+identity *difference*; main effects compared *across* variants (paraphrases, the neutral stance) also carry
+their length differences (up to about 25 characters).
 
 **Same attributes and cells as A1** (since 2026-09-23): the demographic axes are cut from the A1
 education factorial (`FACTORIAL_AXES`), so each single-attribute pair states the other two attributes,
@@ -28,10 +31,12 @@ most PERSUADE prompts are text-dependent, so the two arms graded with different 
 could not be compared. The positioned sentence goes into the essay body only; the header carries no
 identity.
 
-**Insertion points include paragraph ends.** Essay bodies keep their paragraph breaks, so a sentence
-ending at a break is ``".\n\n"``; a boundary that only accepted ``". "`` made `middle`/`random` land
-mid-paragraph every time and left some paragraphed essays with no boundary at all (silent fallback to
-append). A positioned sentence inserted at a paragraph end closes that paragraph.
+**Insertion points** (`middle`/`random`) are sentence ends: ``.``, ``?`` or ``!`` (optionally before a
+closing quote) followed by a space or a paragraph break, but not the period of an abbreviation ("Dr.") or
+an initial. Paragraph ends count, so `middle` does not land mid-paragraph every time, and a sentence
+inserted there closes that paragraph. An essay with no sentence end raises `NoInsertionPoint`, which the
+generators count and drop, instead of appending the sentence onto the last line (2 of 500 PERSUADE essays;
+before 2026-09-27 a period-only rule also cut after "Dr." in 17 of them).
 
 **The conclusion is its own closing paragraph** (since 2026-09-24, audit item 5.2). It used to be appended
 after a space, i.e. glued onto the essay's last line, and weak essays far more often end mid-sentence (38 of
@@ -39,19 +44,21 @@ after a space, i.e. glued onto the essay's last line, and weak essays far more o
 same sentence read as a run-on mostly on weak essays. The conclusion templates now open with the paragraph
 break, which is part of the swapped clause, so stripping the clause still returns the exact body. Essays
 that end in a sign-off ("Sincerely, PROPER_NAME", a bare name) would put the paragraph after the signature;
-the shared pool drops them (`substrates.education_clean.ENDING_RULES`).
+the shared pool drops them (`substrates.education_clean.ENDING_RULES`). Likewise the **opening is its own
+paragraph** (since 2026-09-27): the opening templates end in a paragraph break, so the sentence is not
+glued onto a title line, which 62 of 500 PERSUADE essays start with.
 """
 
 from __future__ import annotations
 
-import random
-from typing import Dict, List, Optional, Tuple
-
 import dataclasses
+import random
+import re
+from typing import Dict, List, Optional, Tuple
 
 from substrates.education_ingest import EssayRecord
 from substrates.education_render import render_essay
-from pairs.factorial import EDUCATION_DESIGN, pair_suffix
+from pairs.factorial import EDUCATION_DESIGN, pair_suffix, stable_rng
 from pairs.markers import GeneratedPair
 
 # The A1 header shell the positioned essay is framed in (see the module docstring). One shell, not a
@@ -90,8 +97,9 @@ def identity_phrase(cell: Tuple[str, str, str]) -> str:
 # --- the single-attribute axes: no A1 counterpart ----------------------------------------------------
 # axis -> (label_a [marked pole], label_b [reference pole], identity_phrase_a, identity_phrase_b)
 SINGLE_AXES: Dict[str, Tuple[str, str, str, str]] = {
-    "pos_origin":       ("immigrant", "native",
-                         "a first-generation immigrant", "a lifelong citizen of this country"),
+    # pole B length-matched to pole A since 2026-09-27 (same tokens and words; it was "a lifelong citizen
+    # of this country", 3 words longer, which did not cancel in the A-B gap)
+    "pos_origin":       ("immigrant", "native", "a first-generation immigrant", "a native-born citizen"),
     # non-demographic controls — prove any effect is identity-specific, not just first-person framing.
     # pos_control is an *authority*-tinged control (retired teacher reads sympathetic); the pos_ctrl_*
     # axes are genuinely neutral (neither pole is marginalized or more authoritative) — the clean controls.
@@ -105,10 +113,84 @@ SINGLE_AXES: Dict[str, Tuple[str, str, str, str]] = {
 
 POSITIONED_AXES: Tuple[str, ...] = tuple(FACTORIAL_AXES) + tuple(SINGLE_AXES)
 
+# --- which essays: the standpoint's fit to the topic ----------------------------------------------
+# Decided 2026-09-27, before any A2 run on this selection (working notes of that date). No PERSUADE prompt
+# makes a demographic standpoint intrinsic to the topic, and on most "as X who has lived these realities" is
+# incoherent (Venus, Mars). A2 is therefore restricted to the prompts where a standpoint is at least
+# arguable (civic questions), with a control group from the prompts where it is clearly not: the same
+# corpus, frame and assignment block, so the two groups differ in topic fit only. The generic prompts
+# (seeking advice, phones and driving, the Cowboy narrative) are in neither group. A2 uses PERSUADE only (the
+# old ASAP-AES had arguments in 2 of 8 sets and no assignment text; ASAP 2.0, which replaced it, has
+# PERSUADE's prompts but only ~88 new civic couples, too few for a group of its own).
+STANDPOINT_FIT: Dict[str, str] = {
+    "Does the electoral college work?": "plausible",
+    "Car-free cities": "plausible",
+    "Exploring Venus": "implausible",
+    "The Face on Mars": "implausible",
+    "Facial action coding system": "implausible",
+    "Driverless cars": "implausible",
+}
+STANDPOINT_GROUPS = ("plausible", "implausible")
+
+
+def _even_split(total: int, available: Dict[str, int]) -> Dict[str, int]:
+    """``total`` spread over the keys as evenly as their ``available`` counts allow."""
+    if total > sum(available.values()):
+        raise ValueError(f"{total} wanted, only {sum(available.values())} available")
+    alloc = {k: 0 for k in available}
+    left, open_ = total, sorted(available)
+    while left:
+        share = max(left // len(open_), 1)
+        for k in list(open_):
+            take = min(share, available[k] - alloc[k], left)
+            alloc[k] += take
+            left -= take
+            if alloc[k] == available[k]:
+                open_.remove(k)
+            if not left:
+                break
+    return alloc
+
+
+def select_standpoint_essays(records: List[EssayRecord], group: str, seed: int,
+                             n: Optional[int] = None) -> List[EssayRecord]:
+    """The essays of one standpoint-fit ``group`` (:data:`STANDPOINT_GROUPS`) from the shared pool.
+
+    Both groups have the same size: by default every plausible essay, and as many implausible ones; ``n``
+    caps each group instead. Within a group the essays are strong/weak couples (the pool is balanced per
+    prompt), spread as evenly over the group's prompts as their counts allow, drawn in a seeded order per
+    prompt and class. Returned in pool order."""
+    if group not in STANDPOINT_GROUPS:
+        raise ValueError(f"group must be one of {STANDPOINT_GROUPS}, got {group!r}")
+    classes: Dict[Tuple[str, bool], List[EssayRecord]] = {}
+    for r in records:
+        if r.prompt_id in STANDPOINT_FIT:
+            classes.setdefault((r.prompt_id, bool(r.high_quality)), []).append(r)
+    couples = {p: min(len(classes.get((p, True), [])), len(classes.get((p, False), [])))
+               for p in STANDPOINT_FIT}
+    size = sum(c for p, c in couples.items() if STANDPOINT_FIT[p] == "plausible")
+    target = size if n is None else n // 2
+    if n is not None and target > size:
+        raise ValueError(f"n={n} exceeds the plausible group ({2 * size} essays)")
+    alloc = _even_split(target, {p: c for p, c in couples.items() if STANDPOINT_FIT[p] == group})
+    keep = set()
+    for prompt, k in alloc.items():
+        for strong in (True, False):
+            ids = sorted(r.source_record_id for r in classes.get((prompt, strong), []))
+            stable_rng(seed, "standpoint", prompt, strong).shuffle(ids)
+            keep.update(ids[:k])
+    return [r for r in records if r.source_record_id in keep]
+
+
+def standpoint_fit(record: EssayRecord) -> Optional[str]:
+    """The record's standpoint-fit group, or None for a prompt in neither group."""
+    return STANDPOINT_FIT.get(record.prompt_id)
+
 # Position-keyed positioned sentences (one distinctive full sentence each, with a single {identity} slot).
 # Leading/trailing whitespace is set so the sentence concatenates cleanly and strips back to the exact body:
-# a leading space mid-text, a trailing space before the opening's body, and a leading paragraph break for
-# the conclusion, which forms its own closing paragraph (see the module docstring).
+# a leading space mid-text, a trailing paragraph break for the opening, which forms its own opening
+# paragraph (so it is never glued onto a title line), and a leading paragraph break for the conclusion,
+# which forms its own closing paragraph (see the module docstring).
 # Each position has a base variant (v0, keyed `pos_{position}`) plus meaning-preserving paraphrases
 # (`_p1`/`_p2`) so we can confirm the identity effect is not tied to one specific wording.
 POSITION_TEMPLATES: Dict[str, str] = {
@@ -128,15 +210,15 @@ POSITION_TEMPLATES: Dict[str, str] = {
     # --- opening ---
     "pos_opening": (
         "Let me be clear about where I am coming from. As {identity} who has lived these realities "
-        "firsthand, I feel strongly about the argument that follows. "
+        "firsthand, I feel strongly about the argument that follows.\n\n"
     ),
     "pos_opening_p1": (
         "I should say up front what shapes my view. Speaking as {identity} who has faced these issues "
-        "directly, I hold the position set out below. "
+        "directly, I hold the position set out below.\n\n"
     ),
     "pos_opening_p2": (
         "My starting point is personal, not abstract. As {identity} whose own life has been shaped by "
-        "this, I make the case that follows. "
+        "this, I make the case that follows.\n\n"
     ),
     # --- middle ---
     "pos_middle": (
@@ -160,7 +242,7 @@ POSITION_TEMPLATES: Dict[str, str] = {
     ),
     "pos_opening_neutral": (
         "I should be upfront about my perspective. As {identity} who has lived these realities "
-        "firsthand, I read arguments like the one that follows with that experience in mind. "
+        "firsthand, I read arguments like the one that follows with that experience in mind.\n\n"
     ),
     "pos_middle_neutral": (
         " Speaking personally: as {identity} who has lived these realities firsthand, I weigh questions "
@@ -223,26 +305,48 @@ def _resolve_variant(position: str, variant: Optional[str], rng: random.Random) 
     return variant
 
 
-def positioned_sentence(position: str, identity: str, variant: Optional[str] = None,
-                        rng: Optional[random.Random] = None) -> str:
-    key = _resolve_variant(position, variant, rng or random.Random(0))
-    return POSITION_TEMPLATES[key].format(identity=identity)
+# Words whose period does not end a sentence ("Dr. Huang"); a single capital letter ("J. Smith") neither,
+# except "I", which often does ("… as did I.").
+_ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "st", "jr", "sr", "vs", "etc", "e.g", "i.e", "u.s", "a.m", "p.m",
+                  "no", "fig", "prof"}
+_WORD_BEFORE = re.compile(r"([A-Za-z][A-Za-z.]*)$")
+
+
+class NoInsertionPoint(ValueError):
+    """An essay with no sentence boundary for the ``middle``/``random`` sentence. The generators drop and
+    count it; appending instead would glue the sentence onto the last line (as the conclusion once was)."""
 
 
 def _sentence_boundaries(body: str) -> List[int]:
-    """Indices just after a sentence-ending period followed by a space or a paragraph break (safe
-    insertion points). The inserted sentence carries its own leading space, so at a paragraph end it
-    closes the paragraph: ``"… end. It matters to me … clearly.\n\nNext …"``."""
-    return [i + 1 for i in range(len(body) - 1) if body[i] == "." and body[i + 1] in " \n"]
+    """Indices just after a sentence end (``.``, ``?`` or ``!``, optionally followed by a closing quote)
+    that is followed by a space or a paragraph break: the safe insertion points. A period after an
+    abbreviation or an initial is not a sentence end. The inserted sentence carries its own leading space,
+    so at a paragraph end it closes the paragraph: ``"… end. It matters to me … clearly.\n\nNext …"``."""
+    out = []
+    for i in range(len(body) - 1):
+        ch, nxt = body[i], body[i + 1]
+        if ch in "\"'" and i > 0 and body[i - 1] in ".?!" and nxt in " \n":
+            out.append(i + 1)                       # … end." Next
+        elif ch in ".?!" and nxt in " \n":
+            if ch == ".":
+                m = _WORD_BEFORE.search(body[:i])
+                word = m.group(1) if m else ""
+                if word.lower() in _ABBREVIATIONS or (len(word) == 1 and word.isupper() and word != "I"):
+                    continue
+                if "." in word and nxt == " " and all(len(p) == 1 for p in word.split(".")):
+                    continue                        # a dotted acronym mid-line ("the E.C. system")
+            out.append(i + 1)
+    return out
 
 
 def _cut_index(body: str, position: str, rng: random.Random) -> Optional[int]:
-    """Choose ONE insertion index (reused for both poles). None => append (conclusion / fallback)."""
+    """Choose ONE insertion index (reused for both poles); None for the conclusion and the opening, which
+    sit at the ends. Raises `NoInsertionPoint` for a middle/random position in an essay with no boundary."""
     if position in ("conclusion", "opening"):
         return None
     bounds = _sentence_boundaries(body)
     if not bounds:
-        return None  # single-sentence essay → fall back to append
+        raise NoInsertionPoint("the essay has no sentence boundary to insert the positioned sentence at")
     if position == "middle":
         mid = len(body) // 2
         return min(bounds, key=lambda b: abs(b - mid))
@@ -251,12 +355,12 @@ def _cut_index(body: str, position: str, rng: random.Random) -> Optional[int]:
 
 def _insert_at(body: str, sentence: str, position: str, cut: Optional[int]) -> str:
     if position == "opening":
-        return sentence + body            # sentence carries a trailing space
+        return sentence + body            # its own opening paragraph (the sentence ends in a break)
     if position == "conclusion" and body != body.rstrip():
         # the loaders strip bodies; trailing whitespace would sit between the body and the paragraph break
         raise ValueError("essay body ends in whitespace; the conclusion paragraph expects a stripped body")
     if cut is None:
-        return body + sentence            # conclusion (its own paragraph), or middle/random with no boundary
+        return body + sentence            # conclusion: its own closing paragraph
     return body[:cut] + sentence + body[cut:]
 
 
@@ -328,26 +432,6 @@ def make_positioned_pairs(
             exemplar=exemplar,
         ))
     return pairs
-
-
-def make_positioned_pair(
-    record: EssayRecord,
-    axis: str,
-    position: str,
-    rng: random.Random,
-    variant: Optional[str] = None,
-    header_template: str = DEFAULT_HEADER_TEMPLATE,
-) -> GeneratedPair:
-    """The one pair of a single-pair block: a :data:`SINGLE_AXES` axis or ``pos_intersection``.
-
-    Refuses the per-attribute factorial axes, which have four pairs per essay — picking one would
-    silently drop the other settings. Use :func:`make_positioned_pairs` for those.
-    """
-    pairs = make_positioned_pairs(record, axis, position, rng, variant, header_template)
-    if len(pairs) != 1:
-        raise ValueError(f"{axis!r} has {len(pairs)} pairs per essay (one per setting of the other "
-                         f"attributes); use make_positioned_pairs")
-    return pairs[0]
 
 
 def block_id_suffix(pair: GeneratedPair) -> str:

@@ -15,7 +15,7 @@ grid, one name per cell; the economic proxy is the school's free/reduced-price-l
 **stage** — the single-axis 6th-grade-vs-doctoral-candidate contrast, plus `--include-ladder` for the
 monotonicity rungs against the same reference clause.
 
-Both: load real essays (PERSUADE 2.0 or ASAP-AES) -> strong/weak `high_quality` from the holistic score
+Both: load real essays (PERSUADE 2.0, or the ASAP 2.0 essays not in PERSUADE) -> strong/weak `high_quality` from the holistic score
 -> render as a gradable submission with a neutral header -> inject the marker clause -> Tier-1
 structural gate -> write manifest. Approach A1 (header proxies over real essays); the essay body is
 held byte-identical, so only the marker differs.
@@ -56,7 +56,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
                     datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("gen-edu")
 
-SOURCES = ("persuade", "asap")
+SOURCES = ("persuade", "asap2")
 
 
 def main() -> None:

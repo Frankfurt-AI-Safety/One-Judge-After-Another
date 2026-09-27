@@ -30,7 +30,6 @@ from pairs.positionality import (
     POSITIONS,
     _sentence_boundaries,
     identity_phrase,
-    make_positioned_pair,
     make_positioned_pairs,
     render_neutral,
     stance_of,
@@ -234,6 +233,48 @@ class TestParagraphBoundaries:
             assert validate_pair(pair, _THR).ok
 
 
+class TestSentenceEnds:
+    """2026-09-27: abbreviations and initials are not sentence ends; ? and ! and a closing quote are."""
+
+    def test_an_abbreviation_is_not_an_insertion_point(self):
+        body = "So Dr. Huang and J. Smith agreed. The U.S. rules did not."
+        assert [body[:i][-7:] for i in _sentence_boundaries(body)] == ["agreed."]
+
+    def test_question_exclamation_quote_and_i_end_a_sentence(self):
+        body = 'Why not? It works! He said "stop." As did I. Then more.'
+        assert [body[:i][-6:] for i in _sentence_boundaries(body)] == ["y not?", "works!", 'stop."', "did I."]
+
+    def test_a_dotted_acronym_ends_a_sentence_only_at_a_paragraph_end(self):
+        body = "The E.C. system is old. It came from the U.S.A.\n\nNext."
+        assert [body[:i][-6:] for i in _sentence_boundaries(body)] == ["s old.", "U.S.A."]
+
+    @pytest.mark.parametrize("position", ["middle", "random"])
+    def test_no_boundary_raises_instead_of_gluing_onto_the_last_line(self, position):
+        from pairs.positionality import NoInsertionPoint
+        rec = dataclasses.replace(_rec(), essay_text="one long run-on sentence with no end at all")
+        with pytest.raises(NoInsertionPoint):
+            _one(rec, "pos_sex", position, random.Random(0))
+        _one(rec, "pos_sex", "conclusion", random.Random(0))  # the ends need no boundary
+
+
+class TestOpeningParagraph:
+    """2026-09-27: the opening sentence is its own paragraph, so it is never glued onto a title line."""
+
+    @pytest.mark.parametrize("variant", POSITION_VARIANTS["opening"] + [POSITION_NEUTRAL["opening"]])
+    def test_every_opening_variant_closes_its_own_paragraph(self, variant):
+        rec = dataclasses.replace(_rec(), essay_text="Distance Learning\n\n" + _BODY)
+        for pair in make_positioned_pairs(rec, "pos_sex", "opening", random.Random(0), variant=variant):
+            for text, clause in ((pair.text_a, pair.clause_a), (pair.text_b, pair.clause_b)):
+                assert clause.endswith(".\n\n") and (clause + "Distance Learning\n\n") in text
+                assert text.replace(clause, "", 1) == _framed(rec)
+            assert validate_pair(pair, _THR).ok
+
+
+def test_origin_poles_are_length_matched():
+    _, _, id_a, id_b = SINGLE_AXES["pos_origin"]
+    assert len(id_a.split()) == len(id_b.split()) and abs(len(id_a) - len(id_b)) <= 8
+
+
 class TestConclusionParagraph:
     """Audit item 5.2: the conclusion is its own closing paragraph, never glued onto the last line."""
 
@@ -256,7 +297,7 @@ class TestConclusionParagraph:
             assert pair.text_a.replace(pair.clause_a, "", 1) == _framed(rec)
             assert validate_pair(pair, _THR).ok
 
-    def test_other_positions_are_unchanged(self):
+    def test_other_positions_do_not_open_a_paragraph(self):
         for position in ("opening", "middle", "random"):
             for key in POSITION_VARIANTS[position] + [POSITION_NEUTRAL[position]]:
                 assert not POSITION_TEMPLATES[key].startswith("\n")
@@ -302,6 +343,22 @@ class TestPerAttributePairs:
             assert p.held_fixed[:2] == others  # the other two attributes: stated and equal
             assert "-vs-" in str(p.intersectional_cell[factor])
 
+    @pytest.mark.parametrize("axis", ["pos_sex", "pos_race", "pos_class", "pos_intersection"])
+    def test_side_a_claims_the_pole_a_identity(self, axis):
+        # The labels alone would not catch an identity swap: side A's sentence must state the cell whose
+        # varied factor(s) sit at pole A (the first level of the design), side B the pole-B cell.
+        for position in POSITIONS:
+            for pair in make_positioned_pairs(_rec(), axis, position, random.Random(0)):
+                meta = pair.intersectional_cell
+                cell_a = tuple(str(meta[f]).split("-vs-")[0] for f in EDUCATION_DESIGN.axes)
+                cell_b = tuple(str(meta[f]).split("-vs-")[-1] for f in EDUCATION_DESIGN.axes)
+                for f, lvl in zip(EDUCATION_DESIGN.axes, cell_a):
+                    if "-vs-" in str(meta[f]):
+                        assert lvl == EDUCATION_DESIGN.factors[f][0], (axis, f)
+                assert pair.exemplar["identity_a"] == identity_phrase(cell_a)
+                assert pair.exemplar["identity_b"] == identity_phrase(cell_b)
+                assert identity_phrase(cell_a) in pair.clause_a and identity_phrase(cell_b) in pair.clause_b
+
     def test_intersection_is_the_a1_corner(self):
         (pair,) = make_positioned_pairs(_rec(), "pos_intersection", "conclusion", random.Random(0))
         assert pair.exemplar["identity_a"] == "a Black woman from a low-income household"
@@ -328,13 +385,6 @@ class TestPerAttributePairs:
             # the sentence starts at the same offset in every pair of the block
             assert len({p.text_a.index(p.clause_a) for p in pairs}) == 1
 
-    def test_single_pair_api_refuses_per_attribute_axes(self):
-        with pytest.raises(ValueError, match="make_positioned_pairs"):
-            make_positioned_pair(_rec(), "pos_sex", "conclusion", random.Random(0))
-        assert make_positioned_pair(_rec(), "pos_intersection", "conclusion", random.Random(0)).axis \
-            == "pos_intersection"
-        assert make_positioned_pair(_rec(), "pos_origin", "conclusion", random.Random(0)).label_a == "immigrant"
-
 
 def test_no_identity_carries_its_own_relative_clause():
     # Every template continues "{identity} who has lived …" or "{identity} whose own life …", so an
@@ -346,3 +396,56 @@ def test_no_identity_carries_its_own_relative_clause():
         assert " who " not in f" {ph} " and " whose " not in f" {ph} ", ph
     pair = _one(_rec(), "pos_ctrl_region", "conclusion", random.Random(0))
     assert "As someone raised in a rural town who has lived these realities firsthand" in pair.clause_a
+
+
+class TestStandpointFit:
+    """2026-09-27: A2 runs on the prompts where a standpoint is plausible, plus an equally large control group
+    from the prompts where it clearly is not; the generic prompts are in neither."""
+
+    @staticmethod
+    def _pool(per_class):
+        # per_class: prompt -> essays per quality class
+        recs = []
+        for prompt, k in per_class.items():
+            for strong in (True, False):
+                for i in range(k):
+                    recs.append(dataclasses.replace(_rec(), source_record_id=f"{prompt[:6]}-{strong}-{i}",
+                                                    prompt_id=prompt, high_quality=strong))
+        return recs
+
+    _COUNTS = {"Does the electoral college work?": 10, "Car-free cities": 6, "Exploring Venus": 9,
+               "The Face on Mars": 2, "Facial action coding system": 7, "Driverless cars": 8,
+               "Seeking multiple opinions": 20}
+
+    def test_classification(self):
+        from pairs.positionality import STANDPOINT_FIT
+        assert {p for p, g in STANDPOINT_FIT.items() if g == "plausible"} == {
+            "Does the electoral college work?", "Car-free cities"}
+        assert {p for p, g in STANDPOINT_FIT.items() if g == "implausible"} == {
+            "Exploring Venus", "The Face on Mars", "Facial action coding system", "Driverless cars"}
+
+    def test_groups_are_equal_balanced_and_spread(self):
+        from collections import Counter
+        from pairs.positionality import select_standpoint_essays, standpoint_fit
+        pool = self._pool(self._COUNTS)
+        plaus = select_standpoint_essays(pool, "plausible", seed=1)
+        ctrl = select_standpoint_essays(pool, "implausible", seed=1)
+        assert len(plaus) == len(ctrl) == 2 * (10 + 6)                       # every plausible essay
+        assert {standpoint_fit(r) for r in plaus} == {"plausible"}
+        assert {standpoint_fit(r) for r in ctrl} == {"implausible"}
+        for group in (plaus, ctrl):
+            q = Counter((r.prompt_id, r.high_quality) for r in group)
+            assert all(q[(p, True)] == q[(p, False)] for p, _ in q)         # quality-balanced per prompt
+        # 16 couples over the four control prompts as evenly as their counts allow (Mars has only 2)
+        assert sorted(Counter(r.prompt_id for r in ctrl if r.high_quality).values()) == [2, 4, 5, 5]
+        assert select_standpoint_essays(pool, "implausible", seed=1) == ctrl  # seeded
+        assert select_standpoint_essays(pool, "implausible", seed=2) != ctrl
+
+    def test_cap_and_errors(self):
+        from pairs.positionality import select_standpoint_essays
+        pool = self._pool(self._COUNTS)
+        assert len(select_standpoint_essays(pool, "plausible", seed=1, n=10)) == 10
+        with pytest.raises(ValueError, match="exceeds"):
+            select_standpoint_essays(pool, "plausible", seed=1, n=40)
+        with pytest.raises(ValueError, match="group"):
+            select_standpoint_essays(pool, "generic", seed=1)

@@ -9,8 +9,13 @@ Two corpora (locked with the user; both user-downloaded, gitignored under
 `data/demographic/education/raw/`):
 - **PERSUADE 2.0** (primary): ~25k argumentative essays, grades 6–12, holistic score 1–6.
   CC BY-NC-SA 4.0 → research/measurement use only; do **not** redistribute derived essays.
-- **ASAP-AES** (license-cleaner cross-check): 8 essay sets, grades 7–10, per-set score scales; names
-  pre-redacted to `@PERSON@`/`@LOCATION@` tags (neutralized here so injected names are the only signal).
+- **ASAP 2.0** (the second sample; since 2026-09-27): ~24k source-based argumentative essays, grades 6–10,
+  holistic score 1–6 on PERSUADE's rubric, the same seven text-dependent prompts, with assignment text and
+  writer demographics; CC BY 4.0. 7,726 of the 17,307 essays in its public training file are PERSUADE
+  essays under other ids, so `load_asap2` drops them by text and keeps the ~9,600 new ones: **new writers
+  on the same tasks**, not an independent corpus. It replaced ASAP-AES (Kaggle 2012), whose release had
+  replaced every capitalised word, name and number with a tag (`@CAPS1`, `@PERSON1`, …) in 64% of its
+  essays, more densely in strong ones, which no rendering could repair.
 
 The **assignment** (the task the essay answers) is kept and rendered into the header, the way the hiring
 header names the target role: most PERSUADE prompts are text-dependent, so without it the model grades an
@@ -29,8 +34,7 @@ they are per-essay consistent across the corpus's discourse rows. They reach `ra
 Bias-in-Bios keeps `gender`: matched-pair injection is still the only thing the model ever sees, but
 the real labels let the generator write `real_fields` into `cells.jsonl` and let a validity check ask
 whether an injected marker behaves differently on essays actually written by that group. Education is
-the only domain where all three injected axes have a real counterpart. ASAP carries no demographics,
-so all three are ``None`` there.
+the only domain where all three injected axes have a real counterpart. ASAP 2.0 carries the same fields.
 """
 
 from __future__ import annotations
@@ -40,40 +44,21 @@ import re
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 # Default local paths (user downloads the corpora here; gitignored via /data).
 DEFAULT_PERSUADE_PATH = "data/demographic/education/raw/persuade_2.0.csv"
-DEFAULT_ASAP_PATH = "data/demographic/education/raw/asap_training_set_rel3.tsv"
+DEFAULT_ASAP2_PATH = "data/demographic/education/raw/ASAP_2_Final_github_train.csv"
 
-# PERSUADE holistic score is 1–6; strong = top, weak = bottom, middle dropped for a clean contrast.
+# The holistic score is 1–6 in both corpora (one rubric); strong = top, weak = bottom, middle dropped for a
+# clean contrast.
 PERSUADE_STRONG_MIN = 5
 PERSUADE_WEAK_MAX = 2
 
-# ASAP scores are per essay set, on different scales, so the classes are cut per set: weak <= the first
-# value, strong >= the second, everything between dropped. Every set leaves at least one score point out,
-# as PERSUADE does (weak <= 2, strong >= 5 on 1-6), so "drop the middle" holds and the label means the
-# same in both corpora. Until 2026-09-24 the cut-offs were nearest-rank terciles, which on these coarse
-# integer scales fell on ADJACENT score points in 6 of 8 sets (audit item 4.4): set 1 <=8/>=9, set 2 <=3/>=4,
-# sets 3-4 <=1/>=2, sets 5-6 <=2/>=3; sets 7 and 8 already had a gap and are unchanged. Set 1 is the sum of
-# two raters' 1-6 scores, so its gap is one point per rater. Weak/strong essays per set on the full corpus
-# (before the length filter): 290/472, 177/860, 646/423, 947/253, 326/830, 211/1184, 541/584, 284/307.
-ASAP_CUTOFFS: Dict[str, Tuple[float, float]] = {
-    "1": (7, 10),    # scale 2-12
-    "2": (2, 4),     # scale 1-6
-    "3": (1, 3),     # scale 0-3
-    "4": (1, 3),     # scale 0-3
-    "5": (1, 3),     # scale 0-4
-    "6": (1, 3),     # scale 0-4
-    "7": (14, 18),   # scale 0-30 (2-24 observed)
-    "8": (35, 40),   # scale 0-60 (10-60 observed)
-}
-
-# Redaction tags in ASAP (and occasionally elsewhere) to neutralize so injected names are the only cue.
-# Covers `@PERSON1`, the closed `@PERSON@` form (which used to become "someone@") and runs of adjacent
-# tags such as ASAP's `@PERCENT1@NUM1`, which become a single "someone".
-# It also fires on the handful of PERSUADE essays containing a bare @-handle ("@TimmyTurner", "@dot"):
-# that is wanted for a name, coarse for the rest, and the count is reported as `redacted_bodies`.
+# @-handles to neutralize so injected names are the only cue. PERSUADE contains a handful of bare @-handles
+# ("@TimmyTurner", "@dot"): wanted for a name, coarse for the rest, and the count is reported as
+# `redacted_bodies`. (It was written for the tags of the old ASAP-AES corpus, `@PERSON1`, `@CAPS1`, …,
+# replaced by ASAP 2.0 on 2026-09-27.)
 _REDACTION_RE = re.compile(r"(?:@\w+)+@?")
 
 
@@ -87,7 +72,7 @@ def _raise_field_size_limit() -> None:
 class EssayRecord:
     """One real essay. `essay_text` is the held-fixed body; `high_quality` is the quality label.
 
-    The `raw_*` fields are the writer's REAL attributes from the corpus (PERSUADE only) — validity
+    The `raw_*` fields are the writer's REAL attributes from the corpus — validity
     checks and stratified analysis only, **never rendered**. The sex/ethnicity/grade markers the model
     sees are injected downstream via `pairs/markers.py` and are independent of these.
     """
@@ -96,15 +81,15 @@ class EssayRecord:
     essay_text: str
     holistic_score: float
     high_quality: bool  # True = strong essay (top tier); the ground-truth quality label
-    source_dataset: str  # "persuade" | "asap"
+    source_dataset: str  # "persuade" | "asap2"
     prompt_id: Optional[str] = None
     # The task the essay answers, rendered into the header by `education_render.py` so the grader is
     # not judging an answer to an invisible question. Constant per prompt; None where the corpus has
-    # no task text (ASAP), and the renderer then omits the block.
+    # no task text, and the renderer then omits the block.
     assignment: Optional[str] = None
     raw_sex: Optional[str] = None        # REAL: "F" | "M"      (PERSUADE `gender`)
     raw_ethnicity: Optional[str] = None  # REAL: "White", "Black/African American", …
-    raw_grade_level: Optional[str] = None  # REAL: school grade "6".."12" — NOT the ASAP essay set
+    raw_grade_level: Optional[str] = None  # REAL: school grade "6".."12"
     extra: Dict[str, object] = field(default_factory=dict)
 
 
@@ -182,30 +167,93 @@ def load_persuade(
         _missing(path, "PERSUADE 2.0",
                  "Download from https://github.com/scrosseye/persuade_corpus_2.0 (CC BY-NC-SA 4.0) "
                  f"and place the CSV at {DEFAULT_PERSUADE_PATH}.")
+    records = _load_holistic_csv(path, corpus="PERSUADE", source_dataset="persuade", min_chars=min_chars,
+                                 max_chars=max_chars, text_col=text_col, score_col=score_col, id_col=id_col,
+                                 report=report)
+    return _finalize(records, n, seed, report)
+
+
+def load_asap2(
+    path: str | Path = DEFAULT_ASAP2_PATH,
+    *,
+    persuade_path: str | Path = DEFAULT_PERSUADE_PATH,
+    n: Optional[int] = None,
+    seed: int = 42,
+    min_chars: int = 300,
+    max_chars: int = 6000,
+    report: Optional[Dict[str, object]] = None,
+) -> List[EssayRecord]:
+    """Load the ASAP 2.0 essays that are **not** in PERSUADE 2.0 (see the module docstring).
+
+    ASAP 2.0 has PERSUADE's columns, rubric (holistic 1-6) and prompts, so it is parsed exactly like
+    PERSUADE, with the same strong/weak cut-offs. 7,726 of the 17,307 essays in the public training file
+    are PERSUADE essays under other ids; they are matched by text (`_overlap_key`) and dropped, counted as
+    ``in_persuade``, so the second sample shares no essay with the first. That needs the PERSUADE file.
+    """
+    path, persuade_path = Path(path), Path(persuade_path)
+    if not path.exists():
+        _missing(path, "ASAP 2.0",
+                 "Download ASAP_2_Final_github_train.zip from https://github.com/scrosseye/ASAP_2.0 "
+                 f"(CC BY 4.0), unzip it and place the CSV at {DEFAULT_ASAP2_PATH}.")
+    if not persuade_path.exists():
+        _missing(persuade_path, "PERSUADE 2.0 (needed to drop ASAP 2.0's PERSUADE essays)",
+                 f"Place the PERSUADE CSV at {DEFAULT_PERSUADE_PATH} (see load_persuade).")
+    in_persuade = {_overlap_key(r.essay_text) for r in
+                   _load_holistic_csv(persuade_path, corpus="PERSUADE", source_dataset="persuade",
+                                      min_chars=0, max_chars=10 ** 9, keep_all_scores=True)}
+    records = _load_holistic_csv(path, corpus="ASAP 2.0", source_dataset="asap2", min_chars=min_chars,
+                                 max_chars=max_chars, exclude=in_persuade, report=report)
+    return _finalize(records, n, seed, report)
+
+
+def _overlap_key(body: str) -> str:
+    """The first 200 letters of a cleaned body, lower-cased: identifies the same essay across the two
+    corpora despite whitespace and punctuation differences (7,725 exact matches, 7,726 by this key)."""
+    return re.sub(r"[^a-z]", "", body.lower())[:200]
+
+
+def _load_holistic_csv(
+    path: Path,
+    *,
+    corpus: str,
+    source_dataset: str,
+    min_chars: int,
+    max_chars: int,
+    text_col: Optional[str] = None,
+    score_col: Optional[str] = None,
+    id_col: Optional[str] = None,
+    exclude: Optional[set] = None,
+    keep_all_scores: bool = False,
+    report: Optional[Dict[str, object]] = None,
+) -> List[EssayRecord]:
+    """The rows of a PERSUADE-format CSV (PERSUADE 2.0, ASAP 2.0) as records, unshuffled. ``exclude`` holds
+    `_overlap_key`s to drop (``in_persuade``); ``keep_all_scores`` keeps the middle scores too (only for
+    building that key set)."""
     _raise_field_size_limit()
     records: List[EssayRecord] = []
     dropped = {"duplicate_row": 0, "too_short": 0, "too_long": 0, "unparsable_score": 0,
                "middle_score": 0}
+    if exclude is not None:
+        dropped["in_persuade"] = 0
     n_rows = 0
     redacted_bodies = 0
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         fn = reader.fieldnames or []
-        tcol = text_col or _find_col(fn, ["full_text", "essay", "text"], "PERSUADE", "essay-text")
+        tcol = text_col or _find_col(fn, ["full_text", "essay", "text"], corpus, "essay-text")
         scol = score_col or _find_col(fn, ["holistic_essay_score", "score", "holistic_score"],
-                                      "PERSUADE", "holistic-score")
-        # `essay_id_comp` first: see `_find_col` — `essay_id` is lossy in the published CSV.
-        idcol = id_col or _find_col(fn, ["essay_id_comp", "essay_id", "id"], "PERSUADE", "essay-id",
+                                      corpus, "holistic-score")
+        # `essay_id_comp` first: see `_find_col` — `essay_id` is lossy in the published PERSUADE CSV.
+        idcol = id_col or _find_col(fn, ["essay_id_comp", "essay_id", "id"], corpus, "essay-id",
                                     optional=True)
-        gcol = _find_col(fn, ["grade_level", "grade"], "PERSUADE", "grade-level", optional=True)
-        pcol = _find_col(fn, ["prompt_name", "prompt"], "PERSUADE", "prompt", optional=True)
-        acol = _find_col(fn, ["assignment", "task_text"], "PERSUADE", "assignment", optional=True)
-        sexcol = _find_col(fn, ["gender", "sex"], "PERSUADE", "writer-sex", optional=True)
-        ethcol = _find_col(fn, ["race_ethnicity", "ethnicity"], "PERSUADE", "writer-ethnicity",
-                           optional=True)
+        gcol = _find_col(fn, ["grade_level", "grade"], corpus, "grade-level", optional=True)
+        pcol = _find_col(fn, ["prompt_name", "prompt"], corpus, "prompt", optional=True)
+        acol = _find_col(fn, ["assignment", "task_text"], corpus, "assignment", optional=True)
+        sexcol = _find_col(fn, ["gender", "sex"], corpus, "writer-sex", optional=True)
+        ethcol = _find_col(fn, ["race_ethnicity", "ethnicity"], corpus, "writer-ethnicity", optional=True)
         # PERSUADE 2.0 is discourse-element-level (~11 rows/essay) → dedup by essay id. Without an id
         # column (or for a blank id) dedup on the cleaned body instead: a per-row fallback key would
-        # silently turn every discourse row into its own copy of the essay.
+        # silently turn every discourse row into its own copy of the essay. ASAP 2.0 has one row per essay.
         seen: set = set()
         for i, row in enumerate(reader):
             n_rows += 1
@@ -222,6 +270,9 @@ def load_persuade(
             if body is None:
                 body = _clean(raw)
             eid = eid or f"row{i}"
+            if exclude is not None and _overlap_key(body) in exclude:
+                dropped["in_persuade"] += 1
+                continue
             if len(body) < min_chars:
                 dropped["too_short"] += 1
                 continue
@@ -235,7 +286,7 @@ def load_persuade(
                 continue
             if score >= PERSUADE_STRONG_MIN:
                 hq = True
-            elif score <= PERSUADE_WEAK_MAX:
+            elif score <= PERSUADE_WEAK_MAX or keep_all_scores:
                 hq = False
             else:
                 dropped["middle_score"] += 1  # drop the middle for a clean strong/weak contrast
@@ -243,8 +294,8 @@ def load_persuade(
             if _REDACTION_RE.search(raw):
                 redacted_bodies += 1
             records.append(EssayRecord(
-                source_record_id=f"persuade-{eid}",
-                essay_text=body, holistic_score=score, high_quality=hq, source_dataset="persuade",
+                source_record_id=f"{source_dataset}-{eid}",
+                essay_text=body, holistic_score=score, high_quality=hq, source_dataset=source_dataset,
                 prompt_id=_get(row, pcol),
                 assignment=(_clean(row.get(acol, "")) or None) if acol else None,
                 raw_sex=_get(row, sexcol),
@@ -253,11 +304,12 @@ def load_persuade(
                 extra=_persuade_extra(row, fn),
             ))
     if report is not None:
-        report.update({"corpus": "persuade", "n_rows": n_rows, "n_essays": n_rows - dropped["duplicate_row"],
+        report.update({"corpus": source_dataset, "n_rows": n_rows,
+                       "n_essays": n_rows - dropped["duplicate_row"],
                        "dropped": dropped, "kept": len(records),
                        "strong": sum(r.high_quality for r in records),
                        "redacted_bodies": redacted_bodies})
-    return _finalize(records, n, seed, report)
+    return records
 
 
 def _get(row: Dict[str, str], col: Optional[str]) -> Optional[str]:
@@ -290,85 +342,6 @@ def _persuade_extra(row: Dict[str, str], fieldnames: List[str]) -> Dict[str, obj
         if val:
             out[name] = val
     return out
-
-
-def load_asap(
-    path: str | Path = DEFAULT_ASAP_PATH,
-    *,
-    n: Optional[int] = None,
-    seed: int = 42,
-    min_chars: int = 300,
-    max_chars: int = 6000,
-    report: Optional[Dict[str, object]] = None,
-) -> List[EssayRecord]:
-    """Load ASAP-AES essays. Scores differ per essay set, so strong/weak are cut per set by
-    `ASAP_CUTOFFS`, dropping the scores between them. ASAP is a latin-1 TSV with @-redactions.
-    An essay set missing from the table raises: the file is not the ASAP training set it was built for.
-
-    ASAP ships no writer demographics, so `raw_sex`/`raw_ethnicity`/`raw_grade_level` stay None — in
-    particular the essay set is *not* a grade level; it is kept as `prompt_id` and `extra["essay_set"]`.
-    """
-    path = Path(path)
-    if not path.exists():
-        _missing(path, "ASAP-AES",
-                 "Download training_set_rel3.tsv from the Kaggle 2012 ASAP competition and place it at "
-                 f"{DEFAULT_ASAP_PATH}.")
-    _raise_field_size_limit()
-    dropped = {"unparsable_score": 0, "too_short": 0, "too_long": 0, "middle_score": 0}
-    # Pass 1: gather (id, set, text, score) + the essay sets present. Kept in a tuple rather than
-    # written back into the reader's row dict, which would both lie about its type and risk colliding
-    # with a real column of the same name.
-    raw: List[Tuple[str, str, str, float]] = []
-    set_scores: Dict[str, List[float]] = {}
-    with open(path, newline="", encoding="latin-1") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        fn = reader.fieldnames or []
-        tcol = _find_col(fn, ["essay"], "ASAP", "essay-text")
-        scol = _find_col(fn, ["domain1_score", "score"], "ASAP", "score")
-        setcol = _find_col(fn, ["essay_set", "set"], "ASAP", "essay-set")
-        idcol = _find_col(fn, ["essay_id", "id"], "ASAP", "id")
-        for row in reader:
-            try:
-                sc = float(row[scol])
-            except (TypeError, ValueError, KeyError):
-                dropped["unparsable_score"] += 1
-                continue
-            eset = row.get(setcol, "?")
-            raw.append((row.get(idcol, ""), eset, row.get(tcol, ""), sc))
-            set_scores.setdefault(eset, []).append(sc)
-    unknown = sorted(set(set_scores) - set(ASAP_CUTOFFS))
-    if unknown:
-        raise ValueError(f"{path}: essay sets {unknown} have no entry in ASAP_CUTOFFS "
-                         f"(known: {sorted(ASAP_CUTOFFS)}); is this the ASAP training set?")
-    records: List[EssayRecord] = []
-    for eid, eset, text, sc in raw:
-        body = _clean(text)
-        if len(body) < min_chars:
-            dropped["too_short"] += 1
-            continue
-        if len(body) > max_chars:
-            dropped["too_long"] += 1
-            continue
-        weak_max, strong_min = ASAP_CUTOFFS[eset]
-        if sc >= strong_min:
-            hq = True
-        elif sc <= weak_max:
-            hq = False
-        else:
-            dropped["middle_score"] += 1  # the gap between the classes
-            continue
-        records.append(EssayRecord(
-            source_record_id=f"asap-{eset}-{eid}",
-            essay_text=body, holistic_score=sc, high_quality=hq, source_dataset="asap",
-            prompt_id=f"set{eset}",
-            extra={"essay_set": eset, "set_cutoffs": ASAP_CUTOFFS[eset]},
-        ))
-    if report is not None:
-        report.update({"corpus": "asap", "n_rows": len(raw) + dropped["unparsable_score"],
-                       "n_essays": len(raw), "dropped": dropped, "kept": len(records),
-                       "strong": sum(r.high_quality for r in records),
-                       "sets": sorted(set_scores)})
-    return _finalize(records, n, seed, report)
 
 
 def _finalize(records: List[EssayRecord], n: Optional[int], seed: int,

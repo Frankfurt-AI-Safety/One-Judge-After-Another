@@ -84,7 +84,7 @@ class TestRender:
         assert a.replace(" The student is a woman.", "") == b.replace(" The student is a man.", "")
 
     def test_assignment_block_is_omitted_when_absent(self):
-        # ASAP has no task text; the header must not carry an empty "Assignment:" label.
+        # A record without task text: the header must not carry an empty "Assignment:" label.
         assert "Assignment" not in render_essay(_fake_record(), "edu_v1")
 
     def test_empty_body_raises(self):
@@ -102,7 +102,7 @@ class TestIngest:
         cleaned = _clean("Dear @PERSON@, I met @PERSON1 in @LOCATION1@ on @DATE2.")
         assert "@" not in cleaned
         assert cleaned == "Dear someone, I met someone in someone on someone."
-        # ASAP writes adjacent tags (`<@PERCENT1@NUM1>`); they collapse to one replacement
+        # adjacent tags (`<@PERCENT1@NUM1>`) collapse to one replacement
         assert _clean("over <@PERCENT1@NUM1> of the @CAPS1 @CAPS2.") == \
             "over <someone> of the someone someone."
 
@@ -209,49 +209,41 @@ class TestIngest:
                                      "unparsable_score": 1, "middle_score": 1}
         assert report["strong"] == 1 and report["returned"] == 1
 
-    @staticmethod
-    def _write_asap(tmp_path, rows):
-        import csv
+    def test_asap2_drops_persuade_essays_and_keeps_the_rubric_and_demographics(self, tmp_path):
+        # ASAP 2.0 re-publishes PERSUADE essays under other ids; only the new ones form the second sample.
+        from substrates.education_ingest import load_asap2
 
-        path = tmp_path / "asap.tsv"
-        with open(path, "w", newline="", encoding="latin-1") as f:
-            w = csv.writer(f, delimiter="\t")
-            w.writerow(["essay_id", "essay_set", "essay", "domain1_score"])
-            w.writerows(rows)
-        return path
-
-    def test_asap_cutoffs_leave_a_gap(self, tmp_path):
-        # Audit item 4.4: the tercile cut-offs fell on adjacent score points in 6 of 8 sets, so "strong"
-        # and "weak" could differ by one point. The per-set table drops the scores between the classes.
-        from substrates.education_ingest import load_asap
-
-        rows = ([[f"2{i}", "2", _ESSAY_BODY, score] for i, score in enumerate([1, 2, 3, 4, 5, 6])]
-                + [[f"3{i}", "3", _ESSAY_BODY, score] for i, score in enumerate([0, 1, 2, 3])])
+        other = _ESSAY_BODY.replace("public libraries", "parks").replace("libraries deserve", "parks deserve")
+        p_dir, a_dir = tmp_path / "p", tmp_path / "a"
+        p_dir.mkdir(), a_dir.mkdir()
+        persuade = self._write_persuade(p_dir, ["essay_id_comp", "full_text", "holistic_essay_score"],
+                                        [["p1", _ESSAY_BODY, 3]])      # a middle score: still excluded
+        header = ["essay_id", "score", "full_text", "prompt_name", "assignment", "gender", "race_ethnicity",
+                  "grade_level", "ell_status", "economically_disadvantaged"]
+        asap2 = self._write_persuade(a_dir, header, [
+            ["X1", 6, "  " + _ESSAY_BODY, "Car-free cities", "Write an essay.", "F", "White", 10, "No", "Yes"],
+            ["X2", 5, other, "Car-free cities", "Write an essay.", "M", "Black/African American", 8, "No",
+             "Not economically disadvantaged"],
+            ["X3", 2, other + " Again.", "Exploring Venus", "Evaluate the article.", "F", "White", 6, "Yes", ""],
+            ["X4", 4, other + " Middle.", "Exploring Venus", "Evaluate the article.", "M", "White", 6, "No", ""],
+        ])
         report = {}
-        recs = load_asap(self._write_asap(tmp_path, rows), min_chars=0, report=report)
-        labels = {(r.prompt_id, r.holistic_score): r.high_quality for r in recs}
-        assert labels == {("set2", 1.0): False, ("set2", 2.0): False, ("set2", 4.0): True,
-                          ("set2", 5.0): True, ("set2", 6.0): True,
-                          ("set3", 0.0): False, ("set3", 1.0): False, ("set3", 3.0): True}
-        assert report["dropped"]["middle_score"] == 2          # set 2's 3 and set 3's 2
-        assert {r.extra["set_cutoffs"] for r in recs} == {(2, 4), (1, 3)}
-        # The essay set is a prompt, not a grade: ASAP carries no writer demographics at all.
-        assert {(r.raw_sex, r.raw_ethnicity, r.raw_grade_level) for r in recs} == {(None, None, None)}
-        assert {r.extra["essay_set"] for r in recs} == {"2", "3"}
+        recs = load_asap2(asap2, persuade_path=persuade, min_chars=0, report=report)
+        assert sorted(r.source_record_id for r in recs) == ["asap2-X2", "asap2-X3"]
+        assert report["dropped"]["in_persuade"] == 1 and report["dropped"]["middle_score"] == 1
+        by = {r.source_record_id: r for r in recs}
+        assert by["asap2-X2"].high_quality and not by["asap2-X3"].high_quality   # PERSUADE's cut-offs
+        x2 = by["asap2-X2"]
+        assert (x2.source_dataset, x2.prompt_id, x2.assignment) == ("asap2", "Car-free cities", "Write an essay.")
+        assert (x2.raw_sex, x2.raw_ethnicity, x2.raw_grade_level) == ("M", "Black/African American", "8")
+        assert x2.extra["economically_disadvantaged"] == "Not economically disadvantaged"
 
-    def test_asap_unknown_set_raises(self, tmp_path):
-        from substrates.education_ingest import load_asap
+    def test_asap2_needs_the_persuade_file(self, tmp_path):
+        from substrates.education_ingest import load_asap2
 
-        path = self._write_asap(tmp_path, [["90", "9", _ESSAY_BODY, 3]])
-        with pytest.raises(ValueError, match="ASAP_CUTOFFS"):
-            load_asap(path, min_chars=0)
-
-    def test_every_asap_set_leaves_a_score_point_out(self):
-        from substrates.education_ingest import ASAP_CUTOFFS
-
-        assert sorted(ASAP_CUTOFFS, key=int) == [str(s) for s in range(1, 9)]
-        for weak_max, strong_min in ASAP_CUTOFFS.values():
-            assert strong_min - weak_max >= 2   # integer scores: at least one value between the classes
+        asap2 = self._write_persuade(tmp_path, ["essay_id", "score", "full_text"], [["X1", 6, _ESSAY_BODY]])
+        with pytest.raises(FileNotFoundError, match="PERSUADE"):
+            load_asap2(asap2, persuade_path=tmp_path / "missing.csv", min_chars=0)
 
 
 # --------------------------------------------------------------------------- stage marker

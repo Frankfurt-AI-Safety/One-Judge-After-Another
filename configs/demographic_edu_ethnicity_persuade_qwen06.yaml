@@ -6,8 +6,7 @@
 #
 #   python runners/run_experiment.py --config configs/demographic_edu_ethnicity_persuade_qwen06.yaml
 #
-# NOTE: PERSUADE variant. Not yet run through run_experiment.py; the committed single-axis results
-# are the ASAP ones (configs/demographic_edu_ethnicity_qwen06.yaml).
+# NOTE: PERSUADE variant. The ASAP 2.0 variant is configs/demographic_edu_ethnicity_asap2_qwen06.yaml.
 
 name: demographic_edu_ethnicity_persuade_qwen06
 bias_type: demographic

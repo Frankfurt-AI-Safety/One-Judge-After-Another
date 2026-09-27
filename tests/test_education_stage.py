@@ -57,7 +57,7 @@ class TestStageRules:
         assert len(kept) == 1
 
     def test_prompt_selection_is_optional(self):
-        # ASAP has essay-set numbers instead of prompt names, so it runs the cue rules only.
+        # Prompt selection can be switched off (None = the cue rules only).
         assert stage_rules(None) == TEXT_RULES
         kept, _ = apply_rules([_rec(prompt="set2")], stage_rules(None))
         assert len(kept) == 1

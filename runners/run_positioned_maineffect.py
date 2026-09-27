@@ -21,10 +21,14 @@ Read across axes: if the demographic `identity_gap` is large while the *genuinel
 large gap, it is generic persona-sensitivity. `main_fx` says whether the RM simply likes (or dislikes) a
 personal-experience appeal regardless of who makes it.
 
+Run it once per standpoint-fit group (`--standpoint-fit plausible|implausible`, decided 2026-09-27): the
+plausible group is the result, the implausible one the control for whether the effect needs a topic where a
+standpoint could matter.
+
 Usage:
     python runners/run_positioned_maineffect.py --config configs/demographic_edupos_qwen06.yaml \
-        --source persuade --axes pos_sex,pos_race,pos_class,pos_origin,pos_intersection,\
-pos_control,pos_ctrl_hobby,pos_ctrl_pet,pos_ctrl_region --n-essays 200 --position conclusion
+        --standpoint-fit plausible --axes pos_sex,pos_race,pos_class,pos_origin,pos_intersection,\
+pos_control,pos_ctrl_hobby,pos_ctrl_pet,pos_ctrl_region --n-essays 200 --positions conclusion
 """
 
 from __future__ import annotations
@@ -51,8 +55,11 @@ from pairs.positionality import (
     POSITION_VARIANTS,
     POSITIONS,
     STANCES,
+    STANDPOINT_GROUPS,
+    NoInsertionPoint,
     make_positioned_pairs,
     render_neutral,
+    select_standpoint_essays,
     stance_of,
     variants_for,
 )
@@ -60,7 +67,7 @@ from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import DemographicBiasExperiment
 from probes.probe import build_probe_direction, get_rewards_both
 
-SOURCES = ("persuade", "asap")
+SOURCES = ("persuade", "asap2")
 
 
 def _mean(xs: List[float]) -> float:
@@ -95,10 +102,16 @@ def run_axis(exp, cfg, dom, essays, axis, position, seed, variant=None,
     # Same header as the pairs, so main_fx measures the positioned sentence, not the frame.
     neutral = [fmt(render_neutral(rec, header_template)) for rec in essays]
     a, b, owner, cells, probe_pairs, identities = [], [], [], [], [], []
+    no_insertion_point = 0
     for i, rec in enumerate(essays):
         rng = stable_rng(seed, rec.source_record_id, axis, position, variant)
-        for pair in make_positioned_pairs(rec, axis, position, rng, variant=variant,
-                                          header_template=header_template):
+        try:
+            pairs = make_positioned_pairs(rec, axis, position, rng, variant=variant,
+                                          header_template=header_template)
+        except NoInsertionPoint:  # middle/random in an essay with no sentence boundary: no pairs
+            no_insertion_point += 1
+            continue
+        for pair in pairs:
             a.append(fmt(pair.text_a))
             b.append(fmt(pair.text_b))
             owner.append(i)
@@ -125,7 +138,7 @@ def run_axis(exp, cfg, dom, essays, axis, position, seed, variant=None,
     disp = variant or f"pos_{position}"
     return {
         "axis": axis, "position": position, "variant": disp, "stance": stance_of(disp),
-        "n": n, "n_pairs": m,
+        "n": n, "n_pairs": m, "n_no_insertion_point": no_insertion_point,
         "probe_accuracy": meta.get("probe_accuracy"),
         # the first pair's identities, plus every distinct pair for the per-attribute axes
         "identity_a": identities[0][0], "identity_b": identities[0][1],
@@ -157,7 +170,10 @@ def main() -> None:
                          "both=base-endorse vs neutral head-to-head. neutral/both ignore --paraphrase.")
     ap.add_argument("--header-template", choices=sorted(EDU_TEMPLATES), default=DEFAULT_HEADER_TEMPLATE,
                     help="A1 submission shell for the neutral and positioned texts alike.")
-    ap.add_argument("--n-essays", type=int, default=200)
+    ap.add_argument("--standpoint-fit", choices=STANDPOINT_GROUPS, default="plausible",
+                    help="Which essays (pairs.positionality.STANDPOINT_FIT): the prompts where a standpoint is "
+                         "plausible, or the control group; the same selection as generate_positioned.py")
+    ap.add_argument("--n-essays", type=int, default=200, help="Cap per group (balanced by quality)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
@@ -166,9 +182,14 @@ def main() -> None:
     dom = get_domain(cfg.extra.get("domain", "education"))
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
     positions = [p.strip() for p in args.positions.split(",") if p.strip()]
-    # The shared education pool: the same essays as the A1 factorial and stage designs.
-    essays = load_education_essays(args.raw_path, source=args.source, n=args.n_essays, seed=args.seed)
-    out = args.out or Path(f"artifacts/results/demographic/maineffect_edupos_{args.source}_qwen06.json")
+    if args.source != "persuade":
+        ap.error("A2 uses PERSUADE only (decided 2026-09-27); see pairs.positionality.STANDPOINT_FIT")
+    # The shared education pool (the same essays as the A1 factorial and stage designs), narrowed to one
+    # standpoint-fit group exactly as the positioned generator does.
+    pool = load_education_essays(args.raw_path, source=args.source, seed=args.seed)
+    essays = select_standpoint_essays(pool, args.standpoint_fit, args.seed, n=args.n_essays)
+    out = args.out or Path(f"artifacts/results/demographic/"
+                           f"maineffect_edupos_{args.source}_{args.standpoint_fit}_qwen06.json")
 
     exp = DemographicBiasExperiment(cfg)
     exp.load_model()
@@ -210,6 +231,7 @@ def main() -> None:
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"model": cfg.model_path, "source": args.source,
+                               "standpoint_fit": args.standpoint_fit, "n_essays": len(essays),
                                "positions": positions, "stance": args.stance, "paraphrase": args.paraphrase,
                                "results": results}, indent=2))
     print(f"saved → {out}")

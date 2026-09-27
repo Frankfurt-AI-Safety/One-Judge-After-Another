@@ -55,7 +55,7 @@ from pathlib import Path
 from typing import Collection, Dict, List, Optional, Tuple
 
 from substrates.education_ingest import (
-    DEFAULT_ASAP_PATH, DEFAULT_PERSUADE_PATH, EssayRecord, load_asap, load_persuade,
+    DEFAULT_ASAP2_PATH, DEFAULT_PERSUADE_PATH, EssayRecord, load_asap2, load_persuade,
 )
 from substrates.rules import Rule, apply_rules
 
@@ -166,15 +166,10 @@ def placeholder_report(records: List[EssayRecord]) -> Dict[str, object]:
 
 
 _SOURCES = {"persuade": (load_persuade, DEFAULT_PERSUADE_PATH),
-            "asap": (load_asap, DEFAULT_ASAP_PATH)}
-
-# `prompts` default differs per corpus, and None is a meaningful value, so it needs a sentinel.
-_PER_SOURCE = object()
-
+            "asap2": (load_asap2, DEFAULT_ASAP2_PATH)}
 
 def stage_rules(prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS) -> Tuple[Rule, ...]:
-    """The pupil-cue rules, with prompt selection first when `prompts` is given (None = cue rules only,
-    which is all ASAP can do: its `prompt_id` is an essay-set number, not a prompt name)."""
+    """The pupil-cue rules, with prompt selection first when `prompts` is given (None = cue rules only)."""
     if not prompts:
         return TEXT_RULES
     keep = frozenset(prompts)
@@ -195,22 +190,22 @@ def load_education_essays(
     source: str = "persuade",
     n: Optional[int] = None,
     report: Optional[Dict[str, object]] = None,
-    prompts: Optional[Collection[str]] = _PER_SOURCE,  # type: ignore[assignment]
+    prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS,
     balance: bool = True,
     **kwargs,
 ) -> List[EssayRecord]:
     """The shared education pool: essays that fit every claim any education design makes.
 
-    `source` picks the corpus ("persuade" | "asap"); `path` overrides its default location; `kwargs`
-    go to that loader (including its `seed`). `prompts` defaults to `NEUTRAL_PROMPTS` for PERSUADE and
-    to None for ASAP (which has no prompt names); pass an explicit collection or None to override.
+    `source` picks the corpus ("persuade" | "asap2"); `path` overrides its default location; `kwargs`
+    go to that loader (including its `seed`). `prompts` defaults to `NEUTRAL_PROMPTS` for both corpora
+    (ASAP 2.0's seven prompts are all among them); pass an explicit collection or None to override.
 
     `balance` (default on) equalises strong and weak essays **within each prompt**, so the quality label
     is independent of the prompt. Balancing the pool as a whole is not enough: after the pupil-voice rules
     the label is so uneven across prompts ("Seeking multiple opinions" and "Phones and driving" 88% strong,
     "A Cowboy Who Rode the Waves" 3%) that the prompt alone would predict it 67% of the time, and the
     rendered header names the assignment — the same leak the hiring role name had (76.5%). Per prompt
-    (per essay set for ASAP) the first ``min(strong, weak)`` essays of each class are kept, in the
+    the first ``min(strong, weak)`` essays of each class are kept, in the
     loader's seeded order, as matched strong/weak couples; `n` then keeps the first ``n // 2`` couples
     (an odd `n` rounds down), so a capped sample is balanced overall and within every prompt. If `report`
     is a dict it is filled with the loader's own counts plus ``education_rules``, ``balance`` and
@@ -219,8 +214,6 @@ def load_education_essays(
     if source not in _SOURCES:
         raise ValueError(f"source must be one of {sorted(_SOURCES)}, got {source!r}")
     loader, default_path = _SOURCES[source]
-    if prompts is _PER_SOURCE:
-        prompts = NEUTRAL_PROMPTS if source == "persuade" else None
     records = loader(path or default_path, report=report, **kwargs)
     kept, rules_report = apply_rules(records, education_rules(prompts))
     if report is not None:
