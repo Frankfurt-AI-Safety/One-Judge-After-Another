@@ -76,6 +76,18 @@ class TestResponses:
     def test_responses_name_no_attribute(self, domain):
         assert response_violations(domain) == {}
 
+    @pytest.mark.parametrize("domain", DOMAINS)
+    def test_decision_request_names_no_attribute(self, domain):
+        from pairs.cross_marker import frame_violations
+        assert frame_violations(domain) == set()
+
+    def test_frame_check_catches_a_category_word(self, monkeypatch):
+        import pairs.cross_marker as cm
+        frame = dataclasses.replace(DECISION_FRAMES["credit"],
+                                    prompt="Consider the applicant's age. {profile} Should this loan be approved?")
+        monkeypatch.setitem(cm.DECISION_FRAMES, "credit", frame)
+        assert cm.frame_violations("credit") == {"age"}
+
     def test_lexicon_covers_values_names_and_categories(self):
         credit = attribute_words("credit")
         assert {"woman", "married", "single", "30", "1996", "gender", "age"} <= credit
@@ -103,11 +115,30 @@ class TestResponses:
 
     @pytest.mark.parametrize("domain", DOMAINS)
     def test_pools_are_parallel_and_close_in_length(self, domain):
+        # every response within 15 characters of the blatant arm's evasive verdict (the fixed paraphrase 0)
         pool = DECISION_RESPONSES[domain]
         assert pool.size == 3
-        for i in range(pool.size):
-            words = [len(pool.text(k, i).split()) for k in ("approve", "decline", "coded", "overt")]
-            assert max(words) - min(words) <= 8, (domain, i, words)
+        target = len(DECISION_FRAMES[domain].evasive)
+        for kind in RESPONSE_TYPES:
+            for i in range(pool.size):
+                assert abs(len(pool.text(kind, i)) - target) <= 15, (domain, kind, i)
+
+    @pytest.mark.parametrize("model", ["Skywork/Skywork-Reward-V2-Llama-3.1-8B",
+                                       "Skywork/Skywork-Reward-V2-Qwen3-0.6B",
+                                       "Skywork/Skywork-Reward-Gemma-2-27B-v0.2"])
+    def test_pools_are_token_matched(self, model):
+        # the unit an RM's length preference acts on; skipped where the tokenizer is not cached
+        transformers = pytest.importorskip("transformers")
+        try:
+            tok = transformers.AutoTokenizer.from_pretrained(model, local_files_only=True)
+        except (OSError, ValueError):
+            pytest.skip(f"{model} tokenizer not cached")
+        n = lambda text: len(tok(text, add_special_tokens=False)["input_ids"])
+        for domain in DOMAINS:
+            pool, target = DECISION_RESPONSES[domain], n(DECISION_FRAMES[domain].evasive)
+            for kind in RESPONSE_TYPES:
+                for i in range(pool.size):
+                    assert abs(n(pool.text(kind, i)) - target) <= 2, (model, domain, kind, i)
 
     @pytest.mark.parametrize("domain", DOMAINS)
     def test_decisions_are_the_frames_decisions(self, domain):
@@ -160,6 +191,35 @@ class TestBlocks:
         row = _cell_rows("credit", [_record("credit", "a")], encodings=("explicit",))[0]
         row["cells"][0]["text"] = row["cells"][0]["text"].replace(row["cells"][0]["clause"], "")
         with pytest.raises(BlockMismatch):
+            block_from_row(row, DESIGNS["credit"])
+
+    def _row(self):
+        return _cell_rows("credit", [_record("credit", "a")], encodings=("explicit",))[0]
+
+    def test_missing_factor_is_a_mismatch(self, tmp_path):
+        # dropped and counted like any other broken block, not a crash of the whole run
+        rows = [self._row(), _cell_rows("credit", [_record("credit", "b")], encodings=("explicit",))[0]]
+        del rows[1]["cells"][2]["sex"]
+        path = tmp_path / "cells.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        report = {}
+        assert [b.record_id for b in load_cell_blocks(path, DESIGNS["credit"], report)] == ["a"]
+        assert report["n_dropped_mismatch"] == 1 and "lacks the factor" in report["dropped_examples"][0]
+
+    def test_duplicate_cell_is_a_mismatch(self):
+        row = self._row()
+        row["cells"][1] = dict(row["cells"][0])
+        with pytest.raises(BlockMismatch, match="twice"):
+            block_from_row(row, DESIGNS["credit"])
+
+    def test_clause_moved_to_another_slot_is_a_mismatch(self):
+        # the remainders still agree, but one cell carries its clause at the end of the document
+        row = self._row()
+        entry = row["cells"][3]
+        body = entry["text"].replace(entry["clause"], "", 1)
+        assert not entry["text"].endswith(entry["clause"])
+        entry["text"] = body + entry["clause"]
+        with pytest.raises(BlockMismatch, match="positions"):
             block_from_row(row, DESIGNS["credit"])
 
     def test_missing_file_explains_regeneration(self, tmp_path):
