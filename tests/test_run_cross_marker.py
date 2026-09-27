@@ -327,3 +327,54 @@ def test_end_to_end_on_a_tiny_model(manifest, monkeypatch):
     # the placement check runs on both sides of every column
     pc = placement_check(drows, rows, CREDIT_DESIGN, "explicit", reward_key="null_prompt:sex", n_boot=20)
     assert {"direct_gap", "prompt_effect", "did"} <= set(pc["strong"]["axes"]["sex"])
+
+
+def test_nulling_moves_the_disparity_by_the_predicted_amount(manifest, monkeypatch):
+    # The ΔDiD identity of probes/cross_marker_directions.py on the real reward path: projecting out u at
+    # strength α changes the D-disparity by −α (w·u)(Δ_int·u), and did_share is the fraction removed at α = 1.
+    # float32 model, so the identity holds to float precision rather than bf16 rounding.
+    monkeypatch.setenv("ONEJUDGE_EMBED_CACHE", "off")
+    from pairs.cross_marker import load_cell_blocks
+    from probes import cross_marker_directions as cmd
+    from probes.heads import get_head
+    from probes.probe import embed_states
+
+    model, tok = _model().float(), _tokenizer()
+    directions, probe_ids, meta = direct_directions(
+        model, tok, DOM, str(manifest), ["explicit"], probe_size=8, split_seed=42, batch_size=8,
+        device="cpu", max_length=1024, probe_records=4)
+    settings = resolve_settings({}, {"n_strong": 6, "n_weak": 6, "n_folds": 3, "alphas": [0.0, 0.5, 1.0]})
+    fmt = lambda p, r: format_conversation(tok, p, r)
+    blocks = load_cell_blocks(manifest.parent / "cells.jsonl", CREDIT_DESIGN)
+    selected, _ = select_records(blocks, quality_field="credit_good", encodings=["explicit"],
+                                 templates=list(DOM.template_ids), exclude=probe_ids, n_strong=6, n_weak=6,
+                                 seed=42, fits=block_fits("credit", settings, fmt, token_counter(tok), 1024))
+    rows, convs = build_rows(selected, "credit", "credit_good", fmt, settings)
+    _, geometry, sweep, _ = score_encoding(
+        model, tok, "explicit", CREDIT_DESIGN, rows, convs, [], [], directions["explicit"], settings,
+        batch_size=16, max_length=1024, show_progress=False,
+        direct_reliability={k.split("/")[1]: v["reliability"] for k, v in meta.items()})
+    h, _ = embed_states(model, tok, convs, batch_size=16, max_length=1024, show_progress=False)
+    index = cmd.state_index(rows)
+    strong = sorted({r["record_id"] for r in rows if r["strong"]})
+    w = get_head(model).effective_weights().reshape(-1)
+    for axis in ("sex", "age", "intersection"):
+        u = cmd.unit(directions["explicit"][axis])
+        delta = cmd.record_contrasts(h, index, strong, "interaction", CREDIT_DESIGN, "explicit", axis).mean(0)
+        base = sweep[f"direct:{axis}"]["0.0"]["disparity"]
+        assert base == pytest.approx(float(w @ delta), abs=1e-5)
+        for alpha in (0.5, 1.0):
+            moved = sweep[f"direct:{axis}"][str(alpha)]["disparity"] - base
+            assert moved == pytest.approx(-alpha * float(w @ u) * float(delta @ u), abs=1e-5)
+        # a ratio over a small disparity: float32 errors of 1e-5 become ~0.3% here
+        removed = -(sweep[f"direct:{axis}"]["1.0"]["disparity"] - base) / base
+        assert geometry["did_share"][axis][f"direct:{axis}"] == pytest.approx(removed, rel=1e-2)
+    # the geometry reads every cosine against its ceiling; the direct directions' come from their probe records
+    names = geometry["directions"]
+    assert set(geometry["reliability"]) == set(names)
+    i, j = names.index("direct:sex"), names.index("prompt:sex")
+    rel = geometry["reliability"]
+    expect = cmd.cosine_ceiling(rel["direct:sex"], rel["prompt:sex"])
+    got = geometry["cosine_ceiling"][i][j]
+    assert (got != got and expect != expect) or got == pytest.approx(expect)
+    assert rel["direct:sex"] == meta["explicit/sex"]["reliability"] or rel["direct:sex"] != rel["direct:sex"]

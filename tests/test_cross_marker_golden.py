@@ -83,7 +83,9 @@ def _mechanism(manifest):
     drows, dconvs = build_direct_rows(selected, CREDIT_DESIGN, "credit_good", dom.assessment_prompt, fmt)
     columns, geometry, sweep, _ = score_encoding(model, tok, "explicit", CREDIT_DESIGN, rows, convs, drows,
                                                  dconvs, directions["explicit"], settings, batch_size=16,
-                                                 max_length=1024, show_progress=False)
+                                                 max_length=1024, show_progress=False,
+                                                 direct_reliability={k.split("/")[1]: v["reliability"]
+                                                                     for k, v in meta.items()})
     return {"columns": columns,
             "rewards": {c: [r[c] for r in rows] for c in columns},
             "direct_rewards": {c: [r[c] for r in drows] for c in columns},

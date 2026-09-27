@@ -18,8 +18,9 @@ Mechanism layer (`probes/cross_marker_directions.py`), all from one embedding pa
   (overt vs neutral decline). The latter are **cross-fitted** (records in ``n_folds`` quality-stratified
   folds; each fold nulled with the direction fitted on the others);
 - **cross-nulling**: every direction projected out, every metric recomputed (one reward column each);
-- **geometry**: cosines between all directions, each direction's split-half reliability ceiling, its
-  head alignment, and the share of each axis's decision disparity it carries;
+- **geometry**: cosines between all directions, each read against its ceiling √(rel_a · rel_b) (``rel`` =
+  full-sample reliability, the split-half cosine stepped up by Spearman–Brown), each direction's head
+  alignment, and the share of each axis's decision disparity it carries;
 - **α-sweep**: the own-axis D-disparity at each ``alphas`` value, for the direct, prompt and interaction
   directions;
 - **placement check**: the same records' byte-identical cells with the marker in the RESPONSE (the direct
@@ -33,8 +34,8 @@ Mechanism layer (`probes/cross_marker_directions.py`), all from one embedding pa
 
 Items come from the generator's ``cells.jsonl`` next to the config's ``dataset_source`` (the direct
 manifest). Every record in any direct probe split is excluded from evaluation; a record is evaluated only
-if all its requested blocks fit ``max_length`` untruncated (right truncation would cut the response, which
-carries the decision). Settings: ``extra.cross_marker`` in the config, overridden by the CLI.
+if all its requested blocks fit ``max_length`` (the forward pass refuses a longer input rather than cut the
+response, which carries the decision). Settings: ``extra.cross_marker`` in the config, overridden by the CLI.
 
 Outputs (no texts — the corpora's licences): ``<out>.json`` (settings, selection, probe metadata, metrics,
 placement check, geometry, α-sweep), ``<out>_rewards.jsonl`` and ``<out>_direct_rewards.jsonl`` (one row
@@ -319,7 +320,7 @@ def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodin
     same for every axis (the split ignores the axis), so the union is those records."""
     import torch
 
-    from probes.cross_marker_directions import split_half_cosine
+    from probes.cross_marker_directions import full_sample_reliability, split_half_cosine
     from probes.probe import build_probe_direction, embed_states
 
     directions: Dict[str, Dict[str, Any]] = {}
@@ -344,11 +345,13 @@ def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodin
             contrasts = record_contrast_matrix(pairs, pos, neg)
             directions.setdefault(encoding, {})[axis] = probe
             probe_ids |= ids
+            half = split_half_cosine(contrasts, reliability_seed)
             meta[f"{encoding}/{axis}"] = {"n_pairs": len(pairs), "n_records": len(ids),
                                           "split": ds.split_report(),
                                           "probe_accuracy": m.get("probe_accuracy"),
                                           "separation": m.get("separation"),
-                                          "split_half_cosine": split_half_cosine(contrasts, reliability_seed)}
+                                          "split_half_cosine": half,
+                                          "reliability": full_sample_reliability(half)}
     return directions, probe_ids, meta
 
 
@@ -362,11 +365,13 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
                    rows: List[Dict[str, Any]], convs: List[Any], direct_rows: List[Dict[str, Any]],
                    direct_convs: List[Any], direct_dirs: Mapping[str, Any], settings: Dict[str, Any], *,
                    batch_size: int, max_length: int, show_progress: bool = True,
-                   timer: Optional[PhaseTimer] = None
+                   timer: Optional[PhaseTimer] = None, direct_reliability: Optional[Mapping[str, float]] = None
                    ) -> Tuple[List[str], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Score one encoding: add every reward column to its ``rows`` and ``direct_rows`` in place, and
     return ``(columns, geometry, alpha_sweep, directions)``. See the module docstring for the variants.
-    ``timer`` books the forward pass to ``embed`` and everything after it to ``mechanism``."""
+    ``timer`` books the forward pass to ``embed`` and everything after it to ``mechanism``.
+    ``direct_reliability`` (axis -> full-sample reliability, from `direct_directions`) completes the
+    geometry's reliabilities and cosine ceilings for the direct directions (NaN without it)."""
     import torch
 
     from probes import cross_marker_directions as cmd
@@ -448,7 +453,11 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
     # their mean over this encoding's rows, and did_from_states only approximates the reward-based disparity
     w = head.effective_weights(gx).mean(0)
     names = list(directions)
-    reliability = {n: cmd.split_half_cosine(contrasts[n], settings["seed"]) for n in contrasts}
+    split_half = {n: cmd.split_half_cosine(contrasts[n], settings["seed"]) for n in contrasts}
+    # full-sample reliability of every direction (the direct ones from their probe records)
+    reliability = {n: cmd.full_sample_reliability(split_half[n]) if n in split_half
+                   else float((direct_reliability or {}).get(n.split(":", 1)[1], float("nan")))
+                   for n in names}
     # Δ_int over the headline group (strong records), so w·Δ_int reproduces the reported D-disparity
     group_ids = [r for r in record_ids if strong[r]] or record_ids
     delta_int = {axis: cmd.record_contrasts(hx, index, group_ids, "interaction", design, encoding,
@@ -456,7 +465,10 @@ def score_encoding(model: Any, tokenizer: Any, encoding: str, design: FactorialD
     geometry = {
         "directions": names,
         "cosine": [[cmd.cosine(directions[a], directions[b]) for b in names] for a in names],
-        "split_half_cosine": reliability,
+        "split_half_cosine": split_half,
+        # read a cosine against its ceiling √(rel_a · rel_b), not against a split-half value
+        "reliability": reliability,
+        "cosine_ceiling": [[cmd.cosine_ceiling(reliability[a], reliability[b]) for b in names] for a in names],
         "head_alignment": {n: cmd.head_alignment(w, directions[n]) for n in names},
         "did_share": {axis: {n: cmd.did_share(w, delta_int[axis], directions[n]) for n in names}
                       for axis in axes},
@@ -614,13 +626,15 @@ def print_report(summary: Dict[str, Any]) -> None:
         if geo:
             names = geo["directions"]
             cos = {(a, b): geo["cosine"][i][j] for i, a in enumerate(names) for j, b in enumerate(names)}
-            rel = {**geo["split_half_cosine"], **{f"direct:{k.split('/')[1]}": v["split_half_cosine"]
-                                                   for k, v in summary["probe_directions"].items()
-                                                   if k.startswith(encoding + "/")}}
-            print(f"  geometry (reliability = split-half cosine; share = part of the DiD the direction carries)")
+            ceil = {(a, b): geo["cosine_ceiling"][i][j] for i, a in enumerate(names) for j, b in enumerate(names)}
+            rel = geo["reliability"]
+            print(f"  geometry (rel = full-sample reliability; cos x/c = cosine / its ceiling √(rel·rel); "
+                  f"share = part of the DiD the direction carries)")
             for axis in d["disparity"]:
                 dn, pn, iname = f"direct:{axis}", f"prompt:{axis}", f"interaction:{axis}"
-                c = lambda a, b: f"{cos[(a, b)]:+.2f}" if (a, b) in cos else "—"
+                c = lambda a, b: (f"{cos[(a, b)]:+.2f}/{ceil[(a, b)]:.2f}" if (a, b) in cos and
+                                  ceil[(a, b)] == ceil[(a, b)] else f"{cos[(a, b)]:+.2f}/—" if (a, b) in cos
+                                  else "—")
                 r = lambda n: f"{rel[n]:.2f}" if n in rel and rel[n] == rel[n] else "—"
                 share = geo["did_share"].get(axis, {})
                 sh = lambda n: f"{share[n]:+.2f}" if n in share and share[n] == share[n] else "—"
@@ -780,7 +794,8 @@ def main() -> None:
         columns, geometry[encoding], sweeps[encoding], saved[encoding] = score_encoding(
             model, tok, encoding, design, rows, convs, direct_rows, direct_convs,
             direct_dirs.get(encoding, {}), settings, batch_size=cfg.batch_size, max_length=cfg.max_length,
-            timer=timer)
+            timer=timer, direct_reliability={a: probe_meta[f"{encoding}/{a}"]["reliability"]
+                                             for a in direct_dirs.get(encoding, {})})
         all_columns += [c for c in columns if c not in all_columns]
         enc_rows = [r for r in rows if r["encoding"] == encoding]
         enc_direct = [r for r in direct_rows if r["encoding"] == encoding]

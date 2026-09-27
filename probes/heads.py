@@ -14,11 +14,16 @@ separate step. Two kinds:
 unprojected forward pass and held fixed. The gate is therefore a second pathway from the prompt to the
 reward that nulling ``h`` does not touch — in the direct-scoring arms the gate never sees the marker (it is in
 the response); in the cross-marker design it does (it is in the prompt), and the runner reports how much of
-each disparity runs through it (``gate_fixed``).
+each disparity runs through it (``gate_fixed``); in the blatant decision-response arm it does too (the
+applicant is in the user turn), but that arm only compares responses to the same prompt, which share one
+gate, so the gate cannot carry the marker into any of its comparisons (working notes 2026-09-24/26).
 
-Every ``score`` reproduces the model's own arithmetic kernel for kernel (`nn.Linear` / ``F.linear`` in the
-state dtype, the quantile mean in the model dtype, the gate product in float32), so the pipeline's reward
-equals the model's score; `probes.probe.verify_score_path` checks that at every load.
+Every ``score`` uses the model's own operations (`nn.Linear` / ``F.linear`` in the state dtype, the quantile
+mean in the model dtype, the gate product in float32). It is not bit-identical to the model's score: the HF
+sequence-classification heads apply ``score`` to the whole ``[batch, seq, d]`` tensor and then gather, the
+pipeline to the gathered ``[n, d]`` states, and GEMMs of different shapes may round differently in bf16.
+`probes.probe.verify_score_path` checks at every load that the two agree within its tolerance. Baseline and
+nulled rewards share this one path, so the difference never enters a contrast.
 """
 
 from __future__ import annotations
@@ -36,6 +41,14 @@ def _digest(*tensors: torch.Tensor) -> str:
         # reshape(-1): 0-dim tensors (BatchNorm's num_batches_tracked) cannot be byte-viewed; same bytes otherwise
         h.update(t.detach().to("cpu").contiguous().reshape(-1).view(torch.uint8).numpy().tobytes())
     return h.hexdigest()[:16]
+
+
+def _check_gates(gates: torch.Tensor, n: int, num_objectives: int) -> None:
+    """One gate row per state and one column per objective: a [n, 1] tensor would otherwise broadcast
+    against the [n, objectives] expected rewards and silently score g·Σ_k instead of Σ_k g_k·."""
+    if tuple(gates.shape) != (n, num_objectives):
+        raise ValueError(f"gates of shape {tuple(gates.shape)} for {n} states and {num_objectives} objectives; "
+                         f"expected ({n}, {num_objectives})")
 
 
 class LinearHead:
@@ -60,7 +73,7 @@ class LinearHead:
         return self.layer.weight.detach().float().cpu().reshape(1, -1)
 
     def digest(self) -> str:
-        return _digest(self.layer.weight)[:16]
+        return _digest(self.layer.weight)
 
     def to_saved(self) -> Dict[str, Any]:
         return {"weight": self.layer.weight.detach().cpu(),
@@ -91,8 +104,7 @@ class QuantileGatedHead:
         if gates is None:
             raise ValueError("a gated head (QRM) scores a state only together with its text's gate: embed with "
                              "probes.probe.embed_with_gates and pass gates= to rewards_from_hidden")
-        if gates.shape[0] != h.shape[0]:
-            raise ValueError(f"{gates.shape[0]} gates for {h.shape[0]} states")
+        _check_gates(gates, h.shape[0], self.num_objectives)
         expected = self.regression(h).reshape(-1, self.num_objectives, self.num_quantiles).mean(dim=2)
         return torch.sum(expected.float() * gates.to(expected.device).float(), dim=-1)
 
@@ -134,10 +146,12 @@ def get_head(model: Any) -> Any:
 
 def score_saved(saved: Dict[str, Any], h: torch.Tensor, gates: Optional[torch.Tensor] = None) -> torch.Tensor:
     """Rewards from a head stored by `to_saved` (offline, CPU; ``h`` already in the model's dtype) — the
-    same kernels as the online heads, so offline equals online."""
+    same kernels as the online heads, so offline equals online. Only the offline path uses it
+    (`probes.embedding_cache.offline_rewards`), which only the tests need."""
     if saved.get("kind") == QuantileGatedHead.kind:
         if gates is None:
-            raise ValueError("offline scoring of a gated head needs the texts' gates (cache.lookup_gates)")
+            raise ValueError("offline scoring of a gated head needs the texts' gates (embedding_cache.lookup_gates)")
+        _check_gates(gates, h.shape[0], saved["num_objectives"])
         w = saved["regression_weight"].to(h.dtype)
         expected = F.linear(h, w).reshape(-1, saved["num_objectives"], saved["num_quantiles"]).mean(dim=2)
         return torch.sum(expected.float() * gates.float(), dim=-1)

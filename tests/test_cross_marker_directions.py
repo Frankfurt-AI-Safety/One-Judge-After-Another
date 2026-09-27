@@ -10,8 +10,8 @@ import pytest
 from pairs.cross_marker import RESPONSE_TYPES
 from pairs.factorial import CREDIT_DESIGN as D
 from probes.cross_marker_directions import (
-    cosine, cross_fitted, did_share, fold_assignment, head_alignment, record_contrasts,
-    split_half_cosine, state_index, unit,
+    cosine, cosine_ceiling, cross_fitted, did_share, fold_assignment, full_sample_reliability, head_alignment,
+    record_contrasts, split_half_cosine, state_index, unit,
 )
 
 DIM = 16
@@ -120,3 +120,46 @@ def test_degenerate_direction_has_undefined_geometry():
     nan = lambda x: x != x
     assert nan(cosine(zero, E_SEX)) and nan(did_share(E_SEX, E_SEX, zero))
     assert nan(head_alignment(E_SEX, zero)["cos_w_u"])
+
+
+# --------------------------------------------------------------------------- reliability and ceilings
+def _fits(n, noise, seed, signal):
+    """n per-record contrasts: a shared signal plus independent isotropic noise."""
+    g = torch.Generator().manual_seed(seed)
+    return signal + noise * torch.randn(n, signal.shape[0], generator=g)
+
+
+def test_full_sample_reliability_predicts_how_two_full_fits_agree():
+    signal = torch.zeros(400)
+    signal[0] = 1.0
+    n, noise = 100, 0.15                                  # |s|² = 1, σ²/n = 0.09: rel ≈ 0.92, split-half ≈ 0.85
+    rho = split_half_cosine(_fits(n, noise, 0, signal), seed=0)
+    observed = sum(cosine(_fits(n, noise, 2 * k + 1, signal).mean(0), _fits(n, noise, 2 * k + 2, signal).mean(0))
+                   for k in range(20)) / 20
+    assert full_sample_reliability(rho) == pytest.approx(observed, abs=0.03)
+    assert rho < observed - 0.03                          # the raw split-half understates a full fit
+
+
+def test_the_cosine_ceiling_is_what_two_fits_of_one_signal_reach():
+    signal, other = torch.zeros(400), torch.zeros(400)
+    signal[0], other[1] = 1.0, 1.0
+    rel = {}
+    for name, noise in (("a", 0.1), ("b", 0.3)):
+        rel[name] = full_sample_reliability(split_half_cosine(_fits(100, noise, 10, signal), seed=0))
+    ceiling = cosine_ceiling(rel["a"], rel["b"])
+    same = sum(cosine(_fits(100, 0.1, 20 + k, signal).mean(0), _fits(100, 0.3, 40 + k, signal).mean(0))
+               for k in range(20)) / 20
+    assert ceiling == pytest.approx(same, abs=0.03)
+    assert rel["b"] < ceiling < rel["b"] ** 0.5            # rel_b <= √(rel_a·rel_b) <= √rel_b, as rel_b < rel_a <= 1
+    unrelated = sum(cosine(_fits(100, 0.1, 60 + k, signal).mean(0), _fits(100, 0.3, 80 + k, other).mean(0))
+                    for k in range(20)) / 20
+    assert abs(unrelated) < 0.1                            # different signals stay far below the ceiling
+
+
+def test_reliability_edge_cases():
+    nan = lambda x: x != x
+    assert full_sample_reliability(0.6) == pytest.approx(0.75)
+    assert nan(full_sample_reliability(float("nan"))) and nan(full_sample_reliability(-0.2))
+    assert nan(full_sample_reliability(0.0))
+    assert cosine_ceiling(0.99, 0.75) == pytest.approx(0.8617, abs=1e-4)
+    assert nan(cosine_ceiling(float("nan"), 0.9)) and nan(cosine_ceiling(0.9, -0.1))

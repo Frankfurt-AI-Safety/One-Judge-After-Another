@@ -159,7 +159,7 @@ def test_embedding_cache_keeps_the_gates(tmp_path, monkeypatch):
     assert cache.misses == misses and torch.equal(h1, h2) and torch.equal(g1, g2)   # served from the cache
     # offline, without the model: the same rewards from the stored head, states and gates
     offline = ec.open_cache(cache.directory)
-    states, gates = offline.lookup(texts, 256), offline.lookup_gates(texts, 256)
+    states, gates = ec.lookup(offline, texts, 256), ec.lookup_gates(offline, texts, 256)
     u = torch.randn(h1.shape[1])
     base, nulled = rewards_from_hidden(model, h1, dtype, u, gates=g1)
     assert torch.equal(ec.offline_rewards(offline, states, gates=gates), base)
@@ -168,7 +168,7 @@ def test_embedding_cache_keeps_the_gates(tmp_path, monkeypatch):
         ec.offline_rewards(offline, states)
 
 
-def test_linear_models_keep_their_fingerprint(tmp_path, monkeypatch):
+def test_linear_models_have_no_gate_fields(tmp_path, monkeypatch):
     from tests.test_embedding_cache import _model as linear_model, _tokenizer as linear_tokenizer
 
     monkeypatch.delenv(ec.ENV_VAR, raising=False)

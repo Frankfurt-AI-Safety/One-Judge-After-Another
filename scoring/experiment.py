@@ -24,7 +24,7 @@ import yaml
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from scoring.dataset_base import ProbeDataset
-from probes.probe import build_probe_direction, get_rewards_with_nulling, get_rewards_both
+from probes.probe import build_probe_direction, get_rewards_both
 
 logger = logging.getLogger(__name__)
 

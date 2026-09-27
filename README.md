@@ -23,21 +23,27 @@ Review in the following order: substrates -> pairs -> probes -> scoring -> runne
 |---|---|---|---|---|
 | 1 | `substrates/` | real corpora → records, and how a record becomes text | 3,855 lines | **done** (2026-09-24) |
 | 2 | `pairs/` | the factorial marker designs, the validation gate, the manifest, the decision responses | 2,254 lines | **done** (2026-09-27) |
-| 3 | `probes/` | **the mechanistic core**: difference-of-means, null-space projection, LEACE | 1,275 lines | not yet |
+| 3 | `probes/` | **the mechanistic core**: difference-of-means, null-space projection, LEACE | 1,418 lines | **done** (2026-09-27) |
 | 4 | `scoring/` | model loading, dataset plumbing, experiment orchestration, metrics | 3,037 lines | not yet |
 | 5 | `runners/` | CLI entry points — one per experiment arm | 3,420 lines | not yet |
 | 6 | `cluster/` | hessian.AI 42 cluster deployment | 591 lines | not yet |
 | — | `tests/` `configs/` | read alongside the stage they cover | 5,219 lines | with their stage |
 
-**Review status.** `substrates/` (finished 2026-09-24, including the class-imbalance audit's substrate items)
-and `pairs/` (finished 2026-09-27) have been reviewed line by line. During the `pairs/` session the education
-corpus became ASAP 2.0 only, which rewrote `substrates/education_ingest.py` and `education_clean.py` (with
-tests; see the working notes of 2026-09-27). The remaining folders have changed a lot since the prototype —
-the cross-marker mechanism layer, the audit fixes, the embedding cache — and every change came with tests,
-but none of them has had its own review session yet. Treat their code as unverified.
+**Review status.** `substrates/` (finished 2026-09-24, including the class-imbalance audit's substrate items),
+`pairs/` (finished 2026-09-27) and `probes/` (finished 2026-09-27) have been reviewed line by line. During the
+`pairs/` session the education corpus became ASAP 2.0 only, which rewrote `substrates/education_ingest.py` and
+`education_clean.py` (with tests; see the working notes of 2026-09-27). The `probes/` session changed what the
+pipeline does in three places worth knowing before any run: an input longer than `max_length` is refused
+(`InputTooLong`) instead of truncated; the embedding cache's fingerprint names the environment (device, GPU,
+attention implementation, library versions), which invalidated every earlier cache once; and the cross-marker
+geometry reads each cosine against its ceiling √(rel_a · rel_b) from full-sample reliabilities. It also made small
+edits in `runners/run_cross_marker.py`, `run_reasoning_erasure.py` and `scoring/experiment.py`, covered by
+tests. The remaining folders have changed a lot since the prototype — the cross-marker mechanism layer, the
+audit fixes — and every change came with tests, but none of them has had its own review session yet. Treat
+their code as unverified.
 
 `probes/` is small and load-bearing: it is where the actual intervention lives, and where a
-subtle error would be least visible in the results. Worth the most attention per line.
+subtle error would be least visible in the results.
 
 ## The pipeline in one pass
 

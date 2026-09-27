@@ -122,8 +122,18 @@ def test_max_length_is_part_of_the_key(cached):
     model, tok, _ = cached
     count = _Counter.attach(model)
     get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
-    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=3, show_progress=False)
-    assert count.n == 2 * len(TEXTS)  # truncation changes the state, so no reuse
+    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=64, show_progress=False)
+    # Inputs are never truncated (so the state no longer depends on max_length), but the key keeps it: existing
+    # caches stay valid, at the cost of re-embedding a text scored under another max_length.
+    assert count.n == 2 * len(TEXTS)
+
+
+def test_an_over_long_input_is_refused_not_truncated(cached):
+    from probes.probe import InputTooLong
+
+    model, tok, _ = cached
+    with pytest.raises(InputTooLong, match="max_length=3"):
+        get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=3, show_progress=False)
 
 
 def test_cache_persists_for_a_new_process(cached, monkeypatch):
@@ -156,12 +166,12 @@ def test_offline_rewards_reproduce_the_online_ones_without_the_model(cached):
                                     show_progress=False)
     (directory,) = [d for d in root.iterdir() if d.is_dir()]
     cache = ec.open_cache(directory)
-    states = cache.lookup(TEXTS, max_length=32)
+    states = ec.lookup(cache, TEXTS, max_length=32)
     assert cache.state_dtype == torch.bfloat16
     assert torch.equal(ec.offline_rewards(cache, states), base)
     assert torch.equal(ec.offline_rewards(cache, states, probe, alpha=1.0), nulled)
     with pytest.raises(KeyError):
-        cache.lookup(["never embedded text"], max_length=32)
+        ec.lookup(cache, ["never embedded text"], max_length=32)
 
 
 def test_a_different_model_never_shares_states(cached):
@@ -216,3 +226,65 @@ def test_score_path_check_accepts_a_last_token_model_and_refuses_deberta():
         deberta.classifier.weight.mul_(50)
     with pytest.raises(ScorePathMismatch, match="does not reproduce"):
         verify_score_path(deberta, _tokenizer(), max_length=32)
+
+
+# --------------------------------------------------------------------------- chunks, crashes, guards, environment
+def test_chunked_embedding_writes_a_shard_per_chunk_and_the_same_bits(cached, monkeypatch):
+    import probes.probe as pp
+
+    model, tok, root = cached
+    monkeypatch.setattr(pp, "FLUSH_EVERY", 3)             # rounded up to whole batches of 2: chunks of 4
+    chunked = get_embeddings(model, tok, TEXTS, batch_size=2, device="cpu", max_length=32, show_progress=False)
+    monkeypatch.setenv(ec.ENV_VAR, "off")
+    plain = _model()
+    ec.attach(plain, tok, None)
+    whole = get_embeddings(plain, tok, TEXTS, batch_size=2, device="cpu", max_length=32, show_progress=False)
+    assert torch.equal(chunked, whole)
+    (directory,) = [d for d in root.iterdir() if d.is_dir()]
+    assert len(list(directory.glob("shard-*.pt"))) == 2    # 6 texts: 4 + 2
+
+
+def test_a_crashed_run_keeps_the_chunks_it_finished(cached, monkeypatch):
+    import probes.probe as pp
+
+    model, tok, root = cached
+    monkeypatch.setattr(pp, "FLUSH_EVERY", 2)
+    calls = {"n": 0}
+
+    def crash_on_second_chunk(module, args, kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("killed")
+    handle = get_base_model(model).register_forward_pre_hook(crash_on_second_chunk, with_kwargs=True)
+    with pytest.raises(RuntimeError, match="killed"):
+        get_embeddings(model, tok, TEXTS, batch_size=2, device="cpu", max_length=32, show_progress=False)
+    handle.remove()
+    fresh = _model()                                      # the resubmitted job
+    ec.attach(fresh, tok, str(root))
+    count = _Counter.attach(fresh)
+    get_embeddings(fresh, tok, TEXTS, batch_size=2, device="cpu", max_length=32, show_progress=False)
+    assert count.n == len(TEXTS) - 2                      # the first chunk came from disk
+
+
+def test_put_refuses_keys_and_states_that_do_not_line_up(tmp_path):
+    cache = ec.EmbeddingCache(tmp_path / "c", {"model_path": "m"})
+    with pytest.raises(ValueError, match="3 keys for 2 states"):
+        cache.put(["a", "b", "c"], torch.zeros(2, 4))
+    cache.put(["a", "b"], torch.zeros(2, 4))
+    cache.put(["a"], torch.ones(1, 4))                    # a repeated key: stored once, first wins
+    assert len(cache) == 2 and torch.equal(cache.get("a"), torch.zeros(4))
+
+
+def test_the_fingerprint_names_the_environment(cached, monkeypatch):
+    model, tok, root = cached
+    env = ec.model_fingerprint(model, tok)["environment"]
+    assert env["device"] == "cpu" and env["torch"] == torch.__version__
+    assert set(env) == {"device", "device_name", "attn_implementation", "torch", "transformers"}
+    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    monkeypatch.setattr(torch, "__version__", "0.0-another-torch")   # a library upgrade: a cache of its own
+    other = _model()
+    ec.attach(other, tok, str(root))
+    count = _Counter.attach(other)
+    get_embeddings(other, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    assert count.n == len(TEXTS)
+    assert len([d for d in root.iterdir() if d.is_dir()]) == 2

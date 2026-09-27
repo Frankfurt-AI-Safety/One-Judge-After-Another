@@ -1,7 +1,7 @@
 # Mechanistic-analysis extras (reasoning low/high-complexity test).
 #   pip install -r requirements-analysis.txt
 #
-# Used by experiments/run_reasoning_erasure.py + src/nb/nullbias/erasure.py:
+# Used by probes/erasure.py, via runners/run_reasoning_erasure.py and runners/validate_bios_scrub.py:
 #   - concept-erasure: LEACE (Belrose et al. 2023), provably-optimal linear concept erasure.
 #   - scikit-learn:     LogisticRegression (linear probe) + MLPClassifier (non-linear probe).
 -r requirements.txt

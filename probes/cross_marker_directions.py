@@ -2,25 +2,34 @@
 Directions fitted on the cross-marker decision design's own hidden states — the mechanism layer's second
 source of directions next to the direct arm's (`probes/probe.py::build_probe_direction`).
 
-The reward is linear in the pooled state, r = w·h + b, so every reward effect is the head reading a
-difference of states, and projecting out a unit direction u changes the decision disparity by exactly
+For a linear head the reward is linear in the pooled state, r = w·h + b, so every reward effect is the head
+reading a difference of states, and projecting out a unit direction u at strength α changes the decision
+disparity (D(A) − D(B), the metrics' main effect: mean over pole-A cells − mean over pole-B cells) by exactly
 
-    ΔDiD = −(w·u)(Δ_int·u),     Δ_int = (h(A, approve) − h(A, decline)) − (h(B, approve) − h(B, decline)).
+    ΔDiD = −α (w·u)(Δ_int·u),     Δ_int = (h(A, approve) − h(A, decline)) − (h(B, approve) − h(B, decline)).
 
-A direction only removes the disparity if the head reads it (w·u ≠ 0) *and* it carries the interaction
-(Δ_int·u ≠ 0). The direct arm's direction can therefore be reward-relevant and still leave the decision
-bias untouched. Three directions are fitted here, per record as a difference of states under the same
-record and template, then averaged over records:
+(For a gated head, QRM, w is each text's effective head ``gate @ R̄``, and the runner's geometry uses their
+mean, so there the identity is approximate.) A direction only removes the disparity if the head reads it
+(w·u ≠ 0) *and* it carries the interaction (Δ_int·u ≠ 0). The direct arm's direction can therefore be
+reward-relevant and still leave the decision bias untouched. Three directions are fitted here, per record as a
+difference of states under the same record and template, then averaged over records; each points to pole A
+(``prompt``, ``interaction``) or to the overt decline (``unfair``), which the signed geometry (cosines, w·u)
+depends on:
 
 - ``prompt``      (per axis) — h(A-prompt, resp) − h(B-prompt, resp), every response: the attribute of the
                   person being judged, as the final token represents it with the marker in the prompt;
 - ``interaction`` (per axis) — Δ_int above: the part of the state that produces the decision disparity;
-- ``unfair``      (one per domain) — h(c, overt) − h(c, decline) under the same prompt, every cell: the
-                  RM's representation of an openly attribute-based decision against a neutral one.
+- ``unfair``      (one per encoding) — h(c, overt) − h(c, decline) under the same prompt, every cell and the
+                  unmarked control: the RM's representation of an openly attribute-based decision against a
+                  neutral one.
 
-Directions are compared with the direct arm's by cosine, each against a split-half reliability ceiling
-(a direction fitted on few records is mostly the records' own content, so a raw cosine means little
-without it), and by head alignment. Nulling uses **cross-fitting**: records are split into folds
+Directions are compared with the direct arm's by cosine and by head alignment. A direction fitted on few
+records is partly the records' own content, so a cosine is read against its **ceiling**: with each record's
+contrast = signal + independent noise, a direction fitted on n records has reliability rel = the expected
+cosine between two independent n-record fits, and the cosine between two directions is at most
+√(rel_a · rel_b) (it equals that when their signals coincide). ``split_half_cosine`` measures the reliability
+of *half* samples; `full_sample_reliability` steps it up to n records (Spearman–Brown), and `cosine_ceiling`
+combines two. Nulling uses **cross-fitting**: records are split into folds
 (stratified by quality), and each fold's rewards are nulled with the direction fitted on the other folds,
 so no record is ever nulled by a direction it helped fit — in-sample, nulling the mean interaction
 removes the mean disparity by construction.
@@ -164,8 +173,9 @@ def cross_fitted(contrasts: torch.Tensor, record_ids: Sequence[str],
 
 
 def split_half_cosine(contrasts: torch.Tensor, seed: int, repeats: int = 20) -> float:
-    """Mean cosine between directions fitted on two random halves of the records — the reliability ceiling
-    against which a cosine between two different directions is read. NaN below 4 records."""
+    """Mean cosine between directions fitted on two random halves of the records: the reliability of an
+    n/2-record fit. For the n-record direction step it up with `full_sample_reliability`; a cosine between two
+    directions is read against `cosine_ceiling`, not against this. NaN below 4 records."""
     n = contrasts.shape[0]
     if n < 4:
         return float("nan")
@@ -177,6 +187,25 @@ def split_half_cosine(contrasts: torch.Tensor, seed: int, repeats: int = 20) -> 
         half = n // 2
         values.append(cosine(contrasts[order[:half]].mean(0), contrasts[order[half:]].mean(0)))
     return float(sum(values) / len(values))
+
+
+def full_sample_reliability(split_half: float) -> float:
+    """The reliability of a direction fitted on all n records from the split-half cosine ρ of n/2-record
+    halves: 2ρ / (1 + ρ) (Spearman–Brown). With contrast = signal s + noise of total variance σ² per record,
+    a half-sample fit has cos(half, half') ≈ |s|² / (|s|² + 2σ²/n) = ρ, and two full-sample fits
+    |s|² / (|s|² + σ²/n) = 2ρ / (1 + ρ). NaN for ρ ≤ 0 or NaN (no measurable signal)."""
+    if not split_half > 0:
+        return float("nan")
+    return 2 * split_half / (1 + split_half)
+
+
+def cosine_ceiling(rel_a: float, rel_b: float) -> float:
+    """The largest cosine two directions of full-sample reliabilities ``rel_a`` and ``rel_b`` can show:
+    √(rel_a · rel_b), reached when their signals coincide (each fit's cosine with its own signal is √rel, and
+    independent noise is orthogonal in high dimension). NaN if either reliability is NaN or ≤ 0."""
+    if not (rel_a > 0 and rel_b > 0):
+        return float("nan")
+    return (rel_a * rel_b) ** 0.5
 
 
 def head_alignment(w: torch.Tensor, u: torch.Tensor) -> Dict[str, float]:

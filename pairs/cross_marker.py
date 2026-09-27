@@ -432,7 +432,8 @@ def build_block_items(block: CellBlock, domain: str, *, seed: int = 42, n_paraph
 
 def fits_max_length(conversations: Iterable[Any], count_tokens: Callable[[Any], int],
                     max_length: int) -> bool:
-    """True when no formatted conversation exceeds ``max_length`` tokens. Inputs are truncated from the
-    right, which here would cut the response — the part that carries the decision — so a block with any
-    oversized text is dropped whole (keeping the factorial balanced) rather than scored truncated."""
+    """True when no formatted conversation exceeds ``max_length`` tokens. The forward pass refuses an
+    over-long input (`probes.probe.tokenize_inputs`; truncation would cut the response, the part that carries
+    the decision), so a block with any oversized text is dropped whole beforehand, keeping the factorial
+    balanced."""
     return all(count_tokens(c) <= max_length for c in conversations)

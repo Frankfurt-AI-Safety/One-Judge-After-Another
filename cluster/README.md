@@ -192,13 +192,18 @@ export ONEJUDGE_EMBED_CACHE=/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/embedding_
 ```
 
 Size is about `unique texts × hidden size × 2 bytes` per model: roughly 0.1 GB for Qwen3-0.6B
-and 0.4 GB for an 8B model over the whole education pool, 0.8 GB for a 70B. Files: one shard per call
-that embedded something new, a few dozen per run, far below the inode budget. Concurrent jobs on the
-same model are safe (each writes its own shards). `ONEJUDGE_EMBED_CACHE=off` disables it.
+and 0.4 GB for an 8B model over the whole education pool, 0.8 GB for a 70B. Files: one shard per 4,096
+new texts (and at least one per call that embedded something new), a few dozen per run, far below the inode
+budget; a killed run keeps every finished shard, so a resubmitted one continues. Shards are memory-mapped
+when a cache is opened. Concurrent jobs on the same model are safe (each writes its own shards).
+`ONEJUDGE_EMBED_CACHE=off` disables it.
 
-The fingerprint does not include the device. Local (Mac) runs are smoke tests only — publishable numbers
-come from the cluster — and the local `artifacts/embedding_cache` is cleared before the cluster phase; it
-is gitignored, so `stage.sh` never copies it.
+Since 2026-09-27 the fingerprint names the environment (device type and GPU name, attention implementation,
+torch and transformers versions), so a cache is never shared across hardware or library versions: a Mac
+smoke run and a cluster run get separate directories, and a `pip` upgrade on the cluster starts a new cache.
+The change invalidated every earlier cache once, including the pilot's `$PFSS/embedding_cache` (its texts are
+mostly stale anyway after the pairs/ review); the old directories can be deleted. The local
+`artifacts/embedding_cache` is gitignored, so `stage.sh` never copies it.
 
 **Cross-marker decision design** (`runners/run_cross_marker.py`, the harm evidence since 2026-09-24). Per
 record, template and encoding: 9 prompts (8 factorial cells + unmarked) x 5 responses = 45 decision texts,

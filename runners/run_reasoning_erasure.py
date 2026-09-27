@@ -12,8 +12,11 @@ under three conditions:
   - **none**     — no erasure (sanity: both probes ≫ chance ⇒ decodable);
   - **diffmean** — project out the difference-of-means direction (our method);
   - **leace**    — provably-optimal linear erasure.
-Linear→chance after LEACE is guaranteed; **MLP accuracy after LEACE is the answer**: ≈chance ⇒ low-complexity,
-≫chance ⇒ non-linearly recoverable / entangled.
+LEACE guarantees linear → chance on the states it was fitted on (the probe split); on the held-out states
+it is approximate, so the linear row after LEACE is a check, not a given. **MLP accuracy after LEACE is the
+answer**, read from the 95% interval of ``mlp_above_chance`` (clustered by applicant: the four cells of one
+item are correlated), one-sided: clearly above 0 ⇒ non-linearly recoverable / entangled; reaching 0 or below
+⇒ low-complexity (the baseline is the majority-class share, >= 0.5, so a probe at chance sits at or below it).
 
 Usage:
     python runners/run_reasoning_erasure.py --config configs/demographic_cv_reasoning_qwen06.yaml \
@@ -41,7 +44,7 @@ from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import DemographicBiasExperiment
 from probes.probe import get_embeddings
 from probes.erasure import (
-    apply_diffmean, apply_eraser, diffmean_erase, leace_erase, probe_recoverability,
+    apply_diffmean, apply_eraser, diffmean_direction, leace_erase, probe_recoverability,
 )
 
 PREMISES = ["parental_leave", "commute"]
@@ -54,30 +57,33 @@ def _label(cell: str, concept: str) -> int:
     return int(cell.endswith("_advance"))  # conclusion: advance=1, reject=0
 
 
-def _embed_and_label(exp, cfg, dom, premise, records, rng) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+def _embed_and_label(exp, cfg, dom, premise, records, rng
+                     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], List[int]]:
+    """States, labels per concept, and each state's item (applicant) index: the cluster of the intervals."""
     tok = exp.tokenizer
     tids = list(dom.template_ids)
     items = [build_reasoning_item(r, premise, dom.render_fn, rng, template_id=tids[i % len(tids)], vary=True)
              for i, r in enumerate(records)]
-    texts, labels = [], {c: [] for c in CONCEPTS}
-    for it in items:
+    texts, labels, groups = [], {c: [] for c in CONCEPTS}, []
+    for n, it in enumerate(items):
         for cell in REASONING_CELLS:
             texts.append(format_conversation(tok, it["user_prompt"], it["cells"][cell]))
+            groups.append(n)
             for c in CONCEPTS:
                 labels[c].append(_label(cell, c))
     X = get_embeddings(exp.model, tok, texts, cfg.batch_size, cfg.device, cfg.max_length)
-    return X, {c: torch.tensor(labels[c]) for c in CONCEPTS}
+    return X, {c: torch.tensor(labels[c]) for c in CONCEPTS}, groups
 
 
-def _erasure_row(Xtr, ytr, Xev, yev, method: str) -> Dict[str, float]:
+def _erasure_row(Xtr, ytr, Xev, yev, groups_ev, method: str) -> Dict[str, Any]:
     if method == "none":
-        return probe_recoverability(Xtr, ytr, Xev, yev)
+        return probe_recoverability(Xtr, ytr, Xev, yev, groups_ev=groups_ev)
     if method == "diffmean":
-        d = diffmean_erase(Xtr, ytr)
-        return probe_recoverability(apply_diffmean(d, Xtr), ytr, apply_diffmean(d, Xev), yev)
+        d = diffmean_direction(Xtr, ytr)
+        return probe_recoverability(apply_diffmean(d, Xtr), ytr, apply_diffmean(d, Xev), yev, groups_ev=groups_ev)
     if method == "leace":
         er = leace_erase(Xtr, ytr)
-        return probe_recoverability(apply_eraser(er, Xtr), ytr, apply_eraser(er, Xev), yev)
+        return probe_recoverability(apply_eraser(er, Xtr), ytr, apply_eraser(er, Xev), yev, groups_ev=groups_ev)
     raise ValueError(method)
 
 
@@ -105,10 +111,10 @@ def main() -> None:
     results: List[Dict[str, Any]] = []
     for premise in PREMISES:
         print(f"[erasure] embedding {dom.name}/{premise} ...", flush=True)
-        Xtr, ytr = _embed_and_label(exp, cfg, dom, premise, probe_recs, random.Random(args.seed))
-        Xev, yev = _embed_and_label(exp, cfg, dom, premise, eval_recs, random.Random(args.seed + 1))
+        Xtr, ytr, _ = _embed_and_label(exp, cfg, dom, premise, probe_recs, random.Random(args.seed))
+        Xev, yev, groups_ev = _embed_and_label(exp, cfg, dom, premise, eval_recs, random.Random(args.seed + 1))
         for concept in CONCEPTS:
-            rows = {m: _erasure_row(Xtr, ytr[concept], Xev, yev[concept], m)
+            rows = {m: _erasure_row(Xtr, ytr[concept], Xev, yev[concept], groups_ev, m)
                     for m in ("none", "diffmean", "leace")}
             results.append({"premise": premise, "concept": concept, "rows": rows})
             print(f"  [{premise}/{concept}] done", flush=True)
@@ -116,14 +122,18 @@ def main() -> None:
     print("\n" + "=" * 96)
     print(f"REASONING ERASURE — LEACE + non-linear probe — {cfg.model_path}")
     print("=" * 96)
-    print(f"{'premise':15} {'concept':12} {'method':9} {'linear':>8} {'MLP':>8} {'chance':>8}")
+    print(f"{'premise':15} {'concept':12} {'method':9} {'linear':>8} {'MLP':>8} {'chance':>8}  "
+          f"{'MLP − chance [95% CI, by applicant]':>36}")
     for r in results:
         for m in ("none", "diffmean", "leace"):
             row = r["rows"][m]
+            gap = row["intervals"]["mlp_above_chance"]
             print(f"{r['premise']:15} {r['concept']:12} {m:9} {row['linear_acc']:>8.3f} "
-                  f"{row['mlp_acc']:>8.3f} {row['chance']:>8.3f}")
+                  f"{row['mlp_acc']:>8.3f} {row['chance']:>8.3f}  "
+                  f"{gap['estimate']:>+14.3f} [{gap['ci_low']:+.3f}, {gap['ci_high']:+.3f}]")
         print("-" * 96)
-    print("MLP after LEACE ≈ chance ⇒ low-complexity; ≫ chance ⇒ non-linearly recoverable (entangled).")
+    print("MLP after LEACE: interval clearly above 0 ⇒ non-linearly recoverable (entangled); reaching 0 or below "
+          "⇒ low-complexity.")
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"model": cfg.model_path, "domain": dom.name, "seed": args.seed,

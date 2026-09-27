@@ -98,7 +98,7 @@ def test_the_cache_fingerprint_records_the_tokenization(loaded, tmp_path, monkey
     fp = ec.model_fingerprint(model, tok)
     assert fp["add_special_tokens"] is False
     from tests.test_embedding_cache import _model as linear_model, _tokenizer as linear_tokenizer
-    assert "add_special_tokens" not in ec.model_fingerprint(linear_model(), linear_tokenizer())
+    assert ec.model_fingerprint(linear_model(), linear_tokenizer())["add_special_tokens"] is True
 
 
 def test_an_unlisted_causal_lm_is_refused(tmp_path):
