@@ -5,7 +5,8 @@
 # Generate the data first (corpus is user-downloaded — see substrates/education_ingest.py):
 #   python runners/generate_education.py
 #
-#   python runners/run_experiment.py --config configs/demographic_edu_sex_asap2_qwen06.yaml
+#   python runners/run_battery.py --config configs/demographic_edu_sex_asap2_qwen06.yaml --axes sex --encodings proxy \
+#       --out artifacts/results/demographic/battery_demographic_edu_sex_asap2_qwen06.json
 #
 # The education corpus since 2026-09-27 (it replaced PERSUADE 2.0 and ASAP-AES, whose results are superseded).
 
@@ -13,22 +14,16 @@ name: demographic_edu_sex_asap2_qwen06
 bias_type: demographic
 
 model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
-trust_remote_code: true
 
 dataset_source: data/demographic/education/asap2/pairs.jsonl
-dataset_name: edu_sex
 probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
 max_test_examples: 200
 split_seed: 42
 
-null_alpha: 1.0
 batch_size: 8
 max_length: 2048
 device: auto
 
-save_probe: false
 
 extra:
   domain: education
-  axis: sex
-  encoding: proxy

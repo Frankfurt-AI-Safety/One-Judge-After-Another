@@ -58,19 +58,56 @@ def test_the_runner_takes_a_revision_on_the_command_line():
     assert apply_overrides(cfg, build_parser().parse_args(["--revision", "deadbeef"])).model_revision == "deadbeef"
 
 
-def test_offloading_to_cpu_is_reported(caplog):
+def test_offloading_is_refused(caplog):
     import logging
 
-    from scoring.backend import check_placement
+    import pytest
+
+    from scoring.backend import ModelOffloaded, check_placement
 
     with caplog.at_level(logging.INFO, logger="scoring.backend"):
         check_placement(SimpleNamespace(hf_device_map={"model.layers.0": 0, "model.layers.1": 1, "score": 1}))
-    assert "modules per device" in caplog.text and "OFFLOADED" not in caplog.text
-    caplog.clear()
-    with caplog.at_level(logging.INFO, logger="scoring.backend"):
+    assert "modules per device" in caplog.text
+    with pytest.raises(ModelOffloaded, match="2 module"):
         check_placement(SimpleNamespace(hf_device_map={"model.layers.0": 0, "model.layers.79": "cpu", "score": "cpu"}))
-    assert "2 module(s) OFFLOADED" in caplog.text
+    with pytest.raises(ModelOffloaded):
+        check_placement(SimpleNamespace(hf_device_map={"model.layers.0": "cpu", "score": "disk"}))
+    check_placement(SimpleNamespace(hf_device_map={"": "cpu"}))    # --device cpu: the whole model, not an offload
     check_placement(SimpleNamespace())             # single-device load: nothing to report
+
+
+def test_load_model_records_the_loaded_commit(monkeypatch, tmp_path):
+    """Unpinned models load from the Hub's moving main: the result must name the commit it ran on."""
+    import scoring.backend as backend
+    from probes import embedding_cache as ec
+    from scoring.demographic_experiment import DemographicBiasExperiment
+    from scoring.experiment import ExperimentConfig
+    from tests.test_embedding_cache import _model, _tokenizer
+
+    monkeypatch.delenv(ec.ENV_VAR, raising=False)
+    for commit in ("c" * 40, None):                 # None: a local directory, nothing to record
+        model, tok = _model(), _tokenizer()
+        model.config._commit_hash = commit
+        monkeypatch.setattr(backend, "_load_transformers", lambda cfg: (model, tok))
+        cfg = ExperimentConfig(name="x", bias_type="demographic", model_path="m",
+                               embedding_cache_dir=str(tmp_path), extra={"domain": "credit"})
+        DemographicBiasExperiment(cfg).load_model()
+        assert cfg.model_revision == commit and cfg.to_dict()["model_revision"] == commit
+        assert backend.model_revision(cfg) == commit
+
+
+def test_remote_code_is_off_unless_asked_for():
+    """No model of the eleven needs its checkpoint's own code; with it on, a repo that gains an auto_map
+    would have its code run in place of the transformers class."""
+    from pathlib import Path
+
+    import yaml
+
+    from scoring.experiment import ExperimentConfig
+
+    assert ExperimentConfig(name="x", bias_type="demographic", model_path="m").trust_remote_code is False
+    for path in sorted(Path("configs").glob("*.yaml")):
+        assert not yaml.safe_load(path.read_text()).get("trust_remote_code"), path
 
 
 def test_prefetch_skips_bin_weights_next_to_safetensors():

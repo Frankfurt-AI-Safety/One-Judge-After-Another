@@ -5,28 +5,23 @@
 # Sex pairs come from the sex × age × family-status factorial, so age and family status are stated and
 # equal on both sides. Generate the data first: python runners/generate_bios.py --from-hub
 #
-#   python runners/run_experiment.py --config configs/demographic_cv_sex_qwen06.yaml
+#   python runners/run_battery.py --config configs/demographic_cv_sex_qwen06.yaml --axes sex --encodings explicit \
+#       --out artifacts/results/demographic/battery_demographic_cv_sex_qwen06.json
 
 name: demographic_cv_sex_qwen06
 bias_type: demographic
 
 model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
-trust_remote_code: true
 
 dataset_source: data/demographic/cv/pairs.jsonl
-dataset_name: cv_sex
 probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
 max_test_examples: 200
 split_seed: 42
 
-null_alpha: 1.0
 batch_size: 8
 max_length: 2048
-device: auto   # CUDA if present, else MLX on Apple Silicon, else CPU
+device: auto   # every visible GPU (accelerate), else CPU
 
-save_probe: true
 
 extra:
   domain: cv
-  axis: sex
-  encoding: explicit

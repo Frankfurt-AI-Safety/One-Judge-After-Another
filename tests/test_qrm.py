@@ -194,6 +194,38 @@ def test_the_loader_uses_our_class_for_the_qrm_architecture(tmp_path):
     assert _own_class(str(tmp_path / "plain")) is None
 
 
+def test_the_loader_keeps_gemma2s_attention_soft_cap(tmp_path):
+    """sdpa (the transformers default) silently drops Gemma-2's attention soft-cap; the loader uses eager."""
+    from types import SimpleNamespace
+
+    from scoring.backend import _load_transformers
+    from tests.test_embedding_cache import _model as linear_model, _tokenizer as linear_tokenizer
+
+    tok, model = _tokenizer(), _model()
+    with torch.no_grad():   # attention scores large enough for the cap (50) to bite
+        for layer in model.model.layers:
+            layer.self_attn.q_proj.weight.mul_(30)
+            layer.self_attn.k_proj.weight.mul_(30)
+    model.save_pretrained(tmp_path / "qrm")
+    tok.save_pretrained(tmp_path / "qrm")
+    cfg = SimpleNamespace(model_path=str(tmp_path / "qrm"), model_revision=None, trust_remote_code=False, device="cpu")
+    loaded, loaded_tok = _load_transformers(cfg)
+    assert loaded.config._attn_implementation == "eager"
+    batch = loaded_tok([_conv(tok, "should this loan be approved ?", "approve ."),
+                        _conv(tok, "grade this short essay .", "decline .")], return_tensors="pt", padding=True)
+    scores = {}
+    for impl in ("eager", "sdpa"):          # (the in-memory `model` is not comparable: .to(bf16) also casts RoPE)
+        loaded.set_attn_implementation(impl)
+        with torch.no_grad():
+            scores[impl] = loaded(**batch).logits
+    assert not torch.allclose(scores["eager"], scores["sdpa"], atol=1e-3)     # the cap matters here
+    # a model without a soft-cap keeps the default
+    linear_model().save_pretrained(tmp_path / "llama")
+    linear_tokenizer().save_pretrained(tmp_path / "llama")
+    cfg.model_path = str(tmp_path / "llama")
+    assert _load_transformers(cfg)[0].config._attn_implementation != "eager"
+
+
 # --------------------------------------------------------------------------- cross-marker --------------
 def test_cross_marker_reports_the_gate_pathway(monkeypatch):
     from runners.run_cross_marker import gate_fixed_column

@@ -440,7 +440,7 @@ def build_factorial_rows(
                 for p in pairs:
                     item_id = (f"{id_prefix}-{p.axis}-{enc}-{tid}-{rec.source_record_id}-"
                                f"{pair_suffix(p.intersectional_cell)}")
-                    pair_rows.append(pair_to_record(p, item_id, role="probe", seed=seed, domain=domain,
+                    pair_rows.append(pair_to_record(p, item_id, seed=seed, domain=domain,
                                                     real_fields=fields))
                 names = ProxyNames.from_exemplar(exemplar) if enc == "proxy" else None
                 cell_rows.append({

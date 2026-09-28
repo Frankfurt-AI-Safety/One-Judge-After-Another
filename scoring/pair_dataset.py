@@ -14,22 +14,25 @@ The base loads `pairs.jsonl`, filters to one (`varied_axis`, `encoding`) at a ti
 - **probe pairs** → `ContrastivePair(positive=A, negative=B)` for the difference-of-means direction
   (e.g. female − male = the "sex" direction).
 - **eval examples** → `EvalExample(texts={"a": A, "b": B})` for the matched-pair **auto-influence**
-  readout (score gap when only the attribute is swapped).
+  readout (score gap when only the attribute is swapped). Their metadata carries the record's quality label
+  (``strong``) and, for education, its ``prompt_id``, for strong/weak and per-prompt breakdowns — and none of
+  the record's other ``real_fields``, which are the writer's real demographics and must not reach a result.
 
-Each rendered text is wrapped as a chat turn via the existing `format_conversation`, so it is
-formatted with the target RM's own chat template (and falls back to pair-format for DeBERTa). The
+Side A is the axis's pole A (the level hypothesised to be penalised; for the intersection the all-pole-A
+cell): checked on every axis and encoding of the credit and hiring manifests, 2026-09-28.
+
+Each rendered text is wrapped as a chat turn via `format_conversation`, so it is formatted with the target
+RM's own chat template (a model without one, DeBERTa, is refused at load by `verify_score_path`). The
 text is presented as the assistant response to the domain's fixed neutral assessment prompt; the
 demographic marker lives inside that response, so swapping A↔B changes only the marker.
 
-A subclass sets `NAME_PREFIX`, `DEFAULT_PROMPT`, `GROUP_BY_RECORD` and `QUALITY_FIELD`. The
-deterministic hash split (inherited from `ProbeDataset`) is grouped by `source_record_id` under
-`GROUP_BY_RECORD`, so a record whose pairs would straddle probe and eval cannot leak its content into
-the evaluation of its own direction; every factorial domain needs this, since the design cuts several
-pairs from each record. The probe split is sized in **records** (`probe_records`), stratified by the
-record's quality label (`real_fields[QUALITY_FIELD]`, written onto every pair row by the generators),
-so the directions rest on a known number of records with the pool's strong/weak mix. `probe_size`
-(pairs) remains for ungrouped use; on a grouped split it fixes the number of records only through the
-pairs each record contributes (8 per single axis, 2 for the intersection: 300 pairs were ~38 records).
+A subclass sets `NAME_PREFIX`, `DEFAULT_PROMPT` and `QUALITY_FIELD`. The deterministic hash split
+(inherited from `ProbeDataset`) is grouped by `source_record_id`, so a record whose pairs would straddle
+probe and eval cannot leak its content into the evaluation of its own direction; every factorial domain
+needs this, since the design cuts several pairs from each record. The probe split is sized in **records**
+(`probe_records`), stratified by the record's quality label (`real_fields[QUALITY_FIELD]`, written onto
+every pair row by the generators), so the directions rest on a known number of records with the pool's
+strong/weak mix.
 """
 
 from __future__ import annotations
@@ -52,7 +55,6 @@ class MatchedPairDataset(ProbeDataset):
 
     NAME_PREFIX: str = ""       # e.g. "credit_demographic"
     DEFAULT_PROMPT: str = ""    # the domain's assessment prompt
-    GROUP_BY_RECORD: bool = False
     QUALITY_FIELD: Optional[str] = None   # the `real_fields` key the probe_records split stratifies on
     GENERATOR: str = "the domain's runners/generate_*.py"
 
@@ -61,16 +63,15 @@ class MatchedPairDataset(ProbeDataset):
         source: str,
         axis: str,
         encoding: str,
-        probe_size: int = 500,
+        probe_records: Optional[int] = None,
         split_seed: int = 42,
         max_test_examples: Optional[int] = None,
         prompt: Optional[str] = None,
-        probe_records: Optional[int] = None,
     ):
         if not self.NAME_PREFIX or not self.DEFAULT_PROMPT:
             raise TypeError(f"{type(self).__name__} must set NAME_PREFIX and DEFAULT_PROMPT")
-        super().__init__(source=source, probe_size=probe_size, split_seed=split_seed,
-                         max_test_examples=max_test_examples, probe_records=probe_records)
+        super().__init__(source=source, probe_records=probe_records, split_seed=split_seed,
+                         max_test_examples=max_test_examples)
         self.axis = axis
         self.encoding = encoding
         self.prompt = self.DEFAULT_PROMPT if prompt is None else prompt
@@ -92,20 +93,16 @@ class MatchedPairDataset(ProbeDataset):
                 if not line:
                     continue
                 rec = json.loads(line)
-                if (rec.get("role") == "probe" and rec.get("varied_axis") == self.axis
-                        and rec.get("encoding") == self.encoding):
+                if rec.get("varied_axis") == self.axis and rec.get("encoding") == self.encoding:
                     rows.append(rec)
         if not rows:
             raise ValueError(
-                f"No probe pairs for axis={self.axis!r} encoding={self.encoding!r} in {path}."
+                f"No pairs for axis={self.axis!r} encoding={self.encoding!r} in {path}."
             )
         return rows
 
-    def _get_example_key(self, example: Any) -> str:
-        return example["id"]
-
-    def _get_group_key(self, example: Any) -> Optional[str]:
-        return example["source_record_id"] if self.GROUP_BY_RECORD else None
+    def _get_group_key(self, example: Any) -> str:
+        return example["source_record_id"]
 
     def _get_stratum_key(self, example: Any) -> Optional[bool]:
         """The record's quality label (strong/weak), which the probe_records split stratifies on."""
@@ -140,15 +137,21 @@ class MatchedPairDataset(ProbeDataset):
         )
 
     def _make_eval_example(self, raw_example: Any, tokenizer: Any) -> Optional[EvalExample]:
+        metadata = {"id": raw_example["id"], "axis": self.axis, "encoding": self.encoding,
+                    "label_a": raw_example["label_a"], "label_b": raw_example["label_b"],
+                    "source_record_id": raw_example["source_record_id"],
+                    "template_id": raw_example["template_id"],
+                    "strong": self._get_stratum_key(raw_example)}
+        # Only the prompt from real_fields: the rest are the writer's real demographics (module docstring).
+        prompt_id = (raw_example.get("real_fields") or {}).get("prompt_id")
+        if prompt_id is not None:
+            metadata["prompt_id"] = prompt_id
         return EvalExample(
             texts={
                 "a": self._fmt(tokenizer, raw_example["text_a"]),
                 "b": self._fmt(tokenizer, raw_example["text_b"]),
             },
-            metadata={"id": raw_example["id"], "axis": self.axis, "encoding": self.encoding,
-                      "label_a": raw_example["label_a"], "label_b": raw_example["label_b"],
-                      "source_record_id": raw_example["source_record_id"],
-                      "template_id": raw_example["template_id"]},
+            metadata=metadata,
         )
 
 
@@ -157,6 +160,5 @@ class CreditDemographicDataset(MatchedPairDataset):
 
     NAME_PREFIX = "credit_demographic"
     DEFAULT_PROMPT = ASSESSMENT_PROMPT
-    GROUP_BY_RECORD = True
     QUALITY_FIELD = "credit_good"
     GENERATOR = "runners/generate_credit.py"

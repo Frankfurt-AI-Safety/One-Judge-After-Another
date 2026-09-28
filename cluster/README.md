@@ -43,7 +43,7 @@ PFSS=/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias
 # cannot resolve, so every package otherwise burns 5 retries before falling back to PyPI.
 # A CLI flag cannot unset an extra-index-url, so make the failure fast instead.
 python -m pip install --target "$PFSS/pylibs" --retries 1 --timeout 10 \
-  "transformers>=4.51,<5" accelerate datasets textstat scikit-learn concept-erasure \
+  "transformers>=4.56,<5" accelerate datasets textstat scikit-learn concept-erasure \
   hf_transfer
 
 # MANDATORY cleanup -- see below.
@@ -73,10 +73,10 @@ Verify afterwards that `numpy.__file__` and `torch.__file__` both resolve under
 the Hub raises rather than falling back if the package is missing. It is worth having anyway —
 it is substantially faster over the 566 GB of checkpoints.
 
-Pins worth knowing: `transformers>=4.51` because Qwen3 support (which the Skywork RMs need)
-landed there; `<5` to stay compatible with the image's torch 2.3. Note the reference numbers
-in `results/` were produced under transformers 5.10 — the first thing to suspect if a cluster
-run comes out close but not equal.
+Pins worth knowing: `transformers>=4.56` because the loader passes `dtype=` (4.56+; Qwen3
+support, which the Skywork RMs need, landed in 4.51); `<5` to stay compatible with the image's
+torch 2.3. Note the reference numbers in `results/` were produced under transformers 5.10 — the
+first thing to suspect if a cluster run comes out close but not equal.
 
 **(a) Custom image — reproducible, do it once things work.** `cluster/Dockerfile` layers our
 extras onto the same NGC base and drops `torch` from the requirements for the reason above.
@@ -239,8 +239,13 @@ numbers, so this is a real regression check rather than a vibe check:
 ```bash
 det shell start -w IL_rm_bias --config-file cluster/config.yaml     # slots: 1
 # then, inside:
-python runners/run_experiment.py --config configs/demographic_credit_sex_qwen06.yaml
+python runners/run_battery.py --config configs/demographic_credit_sex_qwen06.yaml --axes sex --encodings explicit \
+    --out artifacts/results/demographic/battery_demographic_credit_sex_qwen06.json
 ```
+
+(Until 2026-09-28 this read `runners/run_experiment.py`, which exited without running anything from the
+repo's initial commit on and was removed; the 2026-09-09 pass below predates that commit. `run_battery.py` is
+the direct arm's runner.)
 
 **Expected: auto-influence 1.00 baseline → 0.06 nulled.** A mismatch means the CUDA path
 diverges, and every scaled number would inherit the fault. This single run catches padding

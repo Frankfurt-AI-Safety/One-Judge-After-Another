@@ -134,3 +134,21 @@ def test_pairs_without_a_shell_carry_no_shell_hash():
     pair = factorial_pairs(_fake_record(), "credit_v1", "explicit", render_profile, random.Random(0),
                            axes=("sex",), design=CREDIT_DESIGN)[0][0]
     assert "header_template_hash" not in pair_to_record(pair, "c0", seed=1, domain="credit")["provenance"]
+
+
+def test_rows_carry_no_role_and_the_summary_counts_by_axis_and_encoding(tmp_path):
+    """`role` was always "probe" (the split into probe and eval happens in the dataset); removed 2026-09-28."""
+    import random
+
+    from pairs.factorial import CREDIT_DESIGN, factorial_pairs
+    from pairs.manifest import pair_to_record
+    from substrates.credit_render import render_profile
+    from tests.test_credit_pipeline import _fake_record
+
+    pair = factorial_pairs(_fake_record(), "credit_v1", "explicit", render_profile, random.Random(0),
+                           axes=("sex",), design=CREDIT_DESIGN)[0][0]
+    row = pair_to_record(pair, "c0", seed=1, domain="credit")
+    assert "role" not in row
+    paths = write_manifest(tmp_path, [row], seed=1, discard_report={}, thresholds={}, domain="credit",
+                           attribution="a")
+    assert json.loads(paths["manifest"].read_text())["counts_by_axis_encoding"] == {"sex/explicit": 1}

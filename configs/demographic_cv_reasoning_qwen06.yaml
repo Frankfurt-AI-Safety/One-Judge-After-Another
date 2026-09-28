@@ -12,22 +12,16 @@ name: demographic_cv_reasoning_qwen06
 bias_type: demographic
 
 model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
-trust_remote_code: true
 
 dataset_source: data/demographic/cv/pairs.jsonl
-dataset_name: cv_reasoning
 probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
 max_test_examples: 200
 split_seed: 42
 
-null_alpha: 1.0
 batch_size: 8
 max_length: 2048
 device: auto
 
-save_probe: false
 
 extra:
   domain: cv
-  axis: family_status
-  encoding: explicit

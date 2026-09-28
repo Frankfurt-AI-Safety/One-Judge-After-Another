@@ -6,6 +6,7 @@ reference scorer. No model required.
 from __future__ import annotations
 
 import dataclasses
+import math
 import random
 
 import pytest
@@ -487,3 +488,37 @@ class TestQualityTracking:
         no_unmarked = [r for r in rows if r["cell"] != "unmarked"]
         q = cross_marker_metrics(no_unmarked, D, "explicit", n_boot=20, lengths=lengths)["quality_tracking"]
         assert q["auc_length"]["mean"] == 0.5 and q["margin_cell"] == "mean_of_marked_cells"
+
+
+def test_a_two_attribute_penalty_is_invisible_to_the_additivity_gap():
+    """The reading rule of the module docstring: young women alone declined more (D lower by 1 in the female × 30
+    cells) is intersectional, but only the sex × age interaction shows it; the additivity gap is exactly 0."""
+    from scoring.cross_marker_metrics import factorial_effects
+
+    d = {c: -1.0 if (c[0], c[1]) == ("female", 30) else 0.0 for c in CREDIT_DESIGN.cells}
+    e = factorial_effects(d, CREDIT_DESIGN)
+    assert e["main:sex"] == e["main:age"] == -0.5 and e["main:marital_status"] == 0.0
+    assert e["interaction:sex_x_age"] == -1.0 and e["three_way"] == 0.0
+    assert e["corner"] == -1.0 and e["additivity_gap"] == 0.0
+
+
+def test_one_record_gives_no_interval():
+    from scoring.cross_marker_metrics import summarize, summarize_balanced
+
+    one = summarize([0.3], n_boot=50)
+    assert one["mean"] == 0.3 and math.isnan(one["ci_low"]) and math.isnan(one["ci_high"])
+    bal = summarize_balanced([0.2], [0.4, 0.6], n_boot=50)
+    assert bal["mean"] == pytest.approx((0.2 + 0.5) / 2) and math.isnan(bal["ci_low"])
+    two = summarize([0.1, 0.5], n_boot=50)
+    assert two["ci_low"] < two["ci_high"]
+
+
+def test_placement_check_refuses_a_hole_in_the_direct_rows():
+    from scoring.cross_marker_metrics import placement_check
+    from tests.test_cross_marker_golden import _data
+
+    rows, direct = _data(CREDIT_DESIGN, "explicit", 1)
+    placement_check(direct, rows, CREDIT_DESIGN, "explicit", reward_key="baseline", n_boot=20)
+    holed = [r for r in direct if not (r["record_id"] == "s0" and r["cell"] == list(CREDIT_DESIGN.cells[0]))]
+    with pytest.raises(ValueError, match="direct rows lack"):
+        placement_check(holed, rows, CREDIT_DESIGN, "explicit", reward_key="baseline", n_boot=20)

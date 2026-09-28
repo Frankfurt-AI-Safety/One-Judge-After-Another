@@ -27,10 +27,4 @@ class BiosDemographicDataset(MatchedPairDataset):
     NAME_PREFIX = "cv_demographic"
     DEFAULT_PROMPT = BIOS_ASSESSMENT_PROMPT
     GENERATOR = "runners/generate_bios.py"
-    # Grouped by biography since 2026-09-23. The hiring factorial cuts 8 pairs per bio from each single
-    # axis (4 settings of the other attributes x 2 templates), so an ungrouped split routinely evaluated
-    # a direction on a biography it was fitted on. It was left ungrouped only so existing splits would
-    # not shift; every hiring number is stale anyway (the write-up's \S marks). Same fix as credit.
-    # (The 2026-09-17 working notes already claimed this was done; it was not, until now.)
-    GROUP_BY_RECORD = True
     QUALITY_FIELD = "qualified"

@@ -3,8 +3,6 @@ the estimate is always the arm's existing point estimate, and the interval resam
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pytest
 import torch
@@ -16,7 +14,6 @@ from scoring.demographic_experiment import (
     decision_response_intervals, nulling_change,
 )
 from scoring.dataset_base import EvalExample
-from scoring.experiment import ExperimentConfig, ExperimentResults
 from scoring.intervals import change_intervals, cluster_bootstrap, clusters_of, pair_intervals
 
 MEAN = {"mean": lambda s: float(np.mean(s))}
@@ -128,10 +125,35 @@ def test_additivity_intervals_on_an_additive_design():
     assert out["cos_sex_age"]["estimate"] == pytest.approx(float(mean_dir("sex") @ mean_dir("age")), abs=1e-5)
 
 
-def test_results_round_trip_keeps_the_paired_metrics(tmp_path):
-    cfg = ExperimentConfig(name="x", bias_type="demographic", model_path="m")
-    paired = {"nulled_minus_baseline": {"mean_gap_change": {"estimate": -0.1, "ci_low": -0.2, "ci_high": 0.0}}}
-    res = ExperimentResults(config=cfg, baseline_metrics={"mean_gap": 0.3}, paired_metrics=paired)
-    res.save(tmp_path / "r.json")
-    assert ExperimentResults.load(tmp_path / "r.json").paired_metrics == paired
-    assert math.isclose(res.to_dict()["baseline"]["mean_gap"], 0.3)
+def test_signed_intervals_cover_no_effect_the_folded_ones_do_not():
+    """The reading rule of scoring/intervals.py: under no effect, the signed matched-pair intervals cover it at
+    about the nominal rate; abs_mean_gap never does and auto_influence far too rarely."""
+    from scoring.intervals import pair_intervals
+
+    rng = np.random.default_rng(1)
+    miss = {"mean_gap": 0, "pref_a_rate": 0, "auto_influence": 0, "abs_mean_gap": 0}
+    reps = 60
+    for rep in range(reps):
+        a = list(rng.normal(0, 0.05, size=120))
+        iv = pair_intervals(a, [0.0] * 120, list(range(120)), n_boot=300, seed=rep)
+        miss["mean_gap"] += not iv["mean_gap"]["ci_low"] <= 0 <= iv["mean_gap"]["ci_high"]
+        miss["pref_a_rate"] += not iv["pref_a_rate"]["ci_low"] <= 0.5 <= iv["pref_a_rate"]["ci_high"]
+        miss["auto_influence"] += iv["auto_influence"]["ci_low"] > 0
+        miss["abs_mean_gap"] += iv["abs_mean_gap"]["ci_low"] > 0
+    assert miss["mean_gap"] <= 8 and miss["pref_a_rate"] <= 8          # ~5% nominal of 60
+    assert miss["abs_mean_gap"] == reps and miss["auto_influence"] >= 8
+
+
+def test_degenerate_bootstraps_say_so():
+    from scoring.intervals import cluster_bootstrap
+
+    mean = {"m": lambda s: float(np.mean(s)) if s else float("nan")}
+    for clusters in ([], [[1.0, 2.0]]):                  # no cluster, one cluster: no spread to resample
+        out = cluster_bootstrap(clusters, mean, n_boot=20)["m"]
+        assert {"estimate", "ci_low", "ci_high", "n_boot_valid"} <= set(out)
+        assert np.isnan(out["ci_low"]) and np.isnan(out["ci_high"]) and out["n_boot_valid"] == 0
+    assert cluster_bootstrap([[1.0, 2.0]], mean, n_boot=20)["m"]["estimate"] == 1.5
+    # a statistic undefined on some resamples: the interval says on how many it was taken
+    first_only = {"f": lambda s: 1.0 if 1.0 in s else float("nan")}
+    out = cluster_bootstrap([[1.0], [2.0], [3.0]], first_only, n_boot=200, seed=0)["f"]
+    assert 0 < out["n_boot_valid"] < 200

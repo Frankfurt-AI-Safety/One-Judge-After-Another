@@ -48,19 +48,23 @@ def collect(results_dir: Path) -> Tuple[Dict[str, str], List[str]]:
             missing.append(name)
         return d
 
-    # --- auto-influence (run_experiment) — baseline/nulled auto_influence + mean_gap ------------------
+    # --- auto-influence (the direct arm: run_battery's explicit sex and intersection cells) ----------
+    # (Read from demographic_*_results.json of run_experiment until 2026-09-28; that runner never ran.)
     ai = {
-        "SexCV": "demographic_cv_sex_qwen06_results.json",
-        "IntersectionCV": "demographic_cv_intersection_qwen06_results.json",
-        "SexCredit": "demographic_credit_sex_qwen06_results.json",
-        "IntersectionCredit": "demographic_credit_intersection_qwen06_results.json",
+        "SexCV": ("battery_cv_qwen06.json", "sex"),
+        "IntersectionCV": ("battery_cv_qwen06.json", "intersection"),
+        "SexCredit": ("battery_credit_qwen06.json", "sex"),
+        "IntersectionCredit": ("battery_credit_qwen06.json", "intersection"),
     }
-    for tag, fname in ai.items():
+    for tag, (fname, axis) in ai.items():
         d = need(fname)
-        if d:
-            m[f"autoInfl{tag}base"] = _fmt(d["baseline"]["auto_influence"])
-            m[f"autoInfl{tag}null"] = _fmt(d["nulled"]["auto_influence"])
-            m[f"meanGap{tag}"] = _fmt(d["baseline"]["mean_gap"], sign=True)
+        cell = next((c for c in d["cells"] if (c["axis"], c["encoding"]) == (axis, "explicit")), None) if d else None
+        if d and cell is None:
+            missing.append(f"{fname}: ({axis}, explicit)")
+        if cell:
+            m[f"autoInfl{tag}base"] = _fmt(cell["baseline"]["auto_influence"])
+            m[f"autoInfl{tag}null"] = _fmt(cell["nulled"]["auto_influence"])
+            m[f"meanGap{tag}"] = _fmt(cell["baseline"]["mean_gap"], sign=True)
 
     # --- robustness battery (CV): selected explicit/proxy cells --------------------------------------
     d = need("battery_cv_qwen06.json")
@@ -163,10 +167,13 @@ def collect(results_dir: Path) -> Tuple[Dict[str, str], List[str]]:
             m[f"additivityCos{tag}"] = _fmt(d["cos_intersection_vs_marginal_sum"])
 
     # --- meta -----------------------------------------------------------------------------------------
-    any_ai = _load(results_dir, ai["SexCV"])
-    if any_ai:
-        m["nEval"] = str(any_ai["baseline"]["n_examples"])
-        m["modelSmall"] = str(any_ai.get("config", {}).get("model_path", "Skywork-Reward-V2-Qwen3-0.6B"))
+    fname, axis = ai["SexCV"]
+    battery = _load(results_dir, fname)
+    cell = next((c for c in battery["cells"] if (c["axis"], c["encoding"]) == (axis, "explicit")), None) \
+        if battery else None
+    if cell:
+        m["nEval"] = str(cell["baseline"]["n_examples"])
+        m["modelSmall"] = str(battery.get("model", "Skywork-Reward-V2-Qwen3-0.6B"))
     return m, missing
 
 

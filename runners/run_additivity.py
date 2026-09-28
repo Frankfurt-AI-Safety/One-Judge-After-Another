@@ -19,9 +19,9 @@ Usage:
     python runners/run_additivity.py --domain credit --encoding explicit --probe-records 150
 
 Every direction is fitted on the same ``--probe-records`` records (stratified by quality), so the
-intersection and its marginals are compared at equal precision. (Counting pairs, as ``--probe-size``
-does, gave the marginals ~38 records and the intersection 150: a record contributes 8 pairs to a
-marginal axis but 2 to the intersection.)
+intersection and its marginals are compared at equal precision. (Counting pairs, as the removed
+``--probe-size`` did, gave the marginals ~38 records and the intersection 150: a record contributes 8 pairs
+to a marginal axis but 2 to the intersection.)
 
 Every cosine also gets a 95% interval from a bootstrap over the probe records (``intervals``): the
 directions are refitted on each resample of the shared records, from the per-record contrasts (a record's
@@ -101,8 +101,7 @@ def main() -> None:
     ap.add_argument("--pairs", default=None, help="Pairs manifest (defaults per --domain)")
     ap.add_argument("--encoding", default="explicit", choices=["explicit", "proxy"])
     ap.add_argument("--probe-records", type=int, default=150,
-                    help="Probe records per direction, the same for every axis (0 = count pairs instead)")
-    ap.add_argument("--probe-size", type=int, default=300, help="Probe PAIRS; only with --probe-records 0")
+                    help="Probe records per direction, the same for every axis")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--max-length", type=int, default=2048)
@@ -131,8 +130,7 @@ def main() -> None:
     contrasts: Dict[str, Dict[str, torch.Tensor]] = {}
     for axis in marginal_axes + ["intersection"]:
         ds = dataset_cls(pairs_path, axis=axis, encoding=args.encoding,
-                         probe_size=args.probe_size, split_seed=cfg.split_seed,
-                         probe_records=args.probe_records or None)
+                         probe_records=args.probe_records, split_seed=cfg.split_seed)
         pairs = ds.get_probe_pairs(exp.tokenizer)
         probe, meta = build_probe_direction(exp.model, exp.tokenizer, pairs,
                                             batch_size=args.batch_size, device=args.device,
@@ -177,7 +175,7 @@ def main() -> None:
         args.out.write_text(json.dumps({
             "model": args.model, "domain": args.domain, "encoding": args.encoding,
             "marginal_axes": marginal_axes,
-            "probe_records": args.probe_records or None,
+            "probe_records": args.probe_records,
             "cos_intersection_vs_marginal_sum": cos_inter_sum,
             **pairwise,
             "verdict": verdict,

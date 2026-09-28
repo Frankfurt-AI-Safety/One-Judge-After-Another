@@ -309,15 +309,15 @@ def record_contrast_matrix(pairs: Sequence[Any], pos: Any, neg: Any) -> Any:
 
 
 def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodings: Sequence[str], *,
-                      probe_size: int, split_seed: int, batch_size: int, device: str, max_length: int,
-                      reliability_seed: int = 0, probe_records: Optional[int] = None
+                      probe_records: int, split_seed: int, batch_size: int, device: str, max_length: int,
+                      reliability_seed: int = 0
                       ) -> Tuple[Dict[str, Dict[str, Any]], Set[str], Dict[str, Any]]:
     """The direct arm's difference-of-means direction for every (encoding, axis) the factorial has pairs
     for, the union of their probe records, and per-direction metadata (incl. the split report and a
     split-half reliability over the probe records, from the same states — embedding-cache hits).
 
-    With ``probe_records`` every direction rests on that many records, stratified by quality and the
-    same for every axis (the split ignores the axis), so the union is those records."""
+    Every direction rests on ``probe_records`` records, stratified by quality and the same for every axis
+    (the split ignores the axis), so the union is those records."""
     import torch
 
     from probes.cross_marker_directions import full_sample_reliability, split_half_cosine
@@ -330,8 +330,8 @@ def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodin
         for axis in dom.axes:
             if not dom.factorial.axis_pairs(axis, encoding):
                 continue
-            ds = dom.dataset_cls(source, axis=axis, encoding=encoding, probe_size=probe_size,
-                                 split_seed=split_seed, probe_records=probe_records)
+            ds = dom.dataset_cls(source, axis=axis, encoding=encoding, probe_records=probe_records,
+                                 split_seed=split_seed)
             pairs = ds.get_probe_pairs(tokenizer)
             if not pairs:
                 raise ValueError(f"{dom.name}/{axis}/{encoding}: no probe pairs in {source}")
@@ -758,9 +758,9 @@ def main() -> None:
     probe_meta: Dict[str, Any] = {}
     if "direct" in settings["directions"]:
         direct_dirs, probe_ids, probe_meta = direct_directions(
-            model, tok, dom, source, settings["encodings"], probe_size=cfg.probe_size,
+            model, tok, dom, source, settings["encodings"], probe_records=cfg.probe_records,
             split_seed=cfg.split_seed, batch_size=cfg.batch_size, device=cfg.device,
-            max_length=cfg.max_length, reliability_seed=settings["seed"], probe_records=cfg.probe_records)
+            max_length=cfg.max_length, reliability_seed=settings["seed"])
     direct_misses = None if cache is None else cache.misses
     timer.lap("direct_directions")
 
@@ -834,8 +834,7 @@ def main() -> None:
             "direct_directions": direct_misses, "scoring": cache.misses - direct_misses}),
         "caveats": [
             "Direct probe directions are fitted on probe_records records per direction, stratified by "
-            "quality and shared by every axis (probe_directions[*].split); none of them is evaluated. "
-            "If probe_records is None they are counted in PAIRS (probe_size), ~38 records per single axis.",
+            "quality and shared by every axis (probe_directions[*].split); none of them is evaluated.",
             "Last-token projection only: an RM that also reads the prompt elsewhere (QRM's gate) keeps a "
             "second pathway; for a gated head, gate_fixed isolates the last-token pathway and the geometry "
             "uses the mean effective head.",

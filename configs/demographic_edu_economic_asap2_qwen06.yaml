@@ -10,7 +10,8 @@
 # ethnicity share one carrier in the proxy encoding: the index-matched Haim name grid.
 #   python runners/generate_education.py
 #
-#   python runners/run_experiment.py --config configs/demographic_edu_economic_asap2_qwen06.yaml
+#   python runners/run_battery.py --config configs/demographic_edu_economic_asap2_qwen06.yaml --axes economic_status --encodings proxy \
+#       --out artifacts/results/demographic/battery_demographic_edu_economic_asap2_qwen06.json
 #
 # NOTE: new axis (2026-09-17), not yet run.
 
@@ -18,22 +19,16 @@ name: demographic_edu_economic_asap2_qwen06
 bias_type: demographic
 
 model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
-trust_remote_code: true
 
 dataset_source: data/demographic/education/asap2/pairs.jsonl
-dataset_name: edu_economic_status
 probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
 max_test_examples: 200
 split_seed: 42
 
-null_alpha: 1.0
 batch_size: 8
 max_length: 2048
 device: auto
 
-save_probe: false
 
 extra:
   domain: education
-  axis: economic_status
-  encoding: proxy

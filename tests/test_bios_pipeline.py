@@ -314,7 +314,8 @@ class TestLoader:
             p = factorial_pairs(rec, "bios_v1", "explicit", render_bio, random.Random(i), axes=("sex",),
                                 content_label="bio_content", design=HIRING_DESIGN)[0][0]
             rows.append(pair_to_record(p, f"bios-sex-explicit-bios_v1-{rec.source_record_id}",
-                                       role="probe", seed=42, domain="cv"))
+                                       seed=42, domain="cv",
+                                       real_fields={"qualified": bool(i % 2)}))
         path = tmp_path / "pairs.jsonl"
         path.write_text("\n".join(json.dumps(x) for x in rows))
         return path
@@ -330,7 +331,7 @@ class TestLoader:
         from scoring.bios_dataset import BiosDemographicDataset
 
         ds = BiosDemographicDataset(str(self._write_jsonl(tmp_path)), axis="sex",
-                                    encoding="explicit", probe_size=20, split_seed=42)
+                                    encoding="explicit", probe_records=20, split_seed=42)
         assert ds.name == "cv_demographic_sex_explicit"
         tok = self._fake_tokenizer()
         probe_pairs = ds.get_probe_pairs(tok)

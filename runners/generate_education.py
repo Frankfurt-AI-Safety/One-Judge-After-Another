@@ -174,7 +174,7 @@ def build_stage_rows(records, *, axes, encodings, templates, n_per, seed, valida
         kept += 1
         for axis, enc, pair in block:
             item_id = f"edu-{axis}-{enc}-{tid}-{rec.source_record_id}"
-            rows.append(pair_to_record(pair, item_id, role="probe", seed=seed, domain="education",
+            rows.append(pair_to_record(pair, item_id, seed=seed, domain="education",
                                        real_fields=real_fields(rec)))
     return rows, {"blocks_kept": kept, "blocks_dropped": dropped, "failure_reasons": fail_reasons,
                   "pairs_per_cell": kept}

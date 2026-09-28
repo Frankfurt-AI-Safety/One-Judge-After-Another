@@ -15,6 +15,11 @@ exactly that: ``.model`` (the transformer), ``.score`` (row k of ``lm_head`` as 
 `probes.probe.get_score_head`) and a ``forward`` whose ``logits`` are the model's own reward, computed through the
 full ``lm_head`` as the model card does — what `probes.probe.verify_score_path` compares the pipeline against.
 
+Checked 2026-09-28 on the real tokenizer and card: the chat template has no BOS and ends in ``<extra_id_2>``,
+which Llama-3's vocabulary splits into ordinary tokens, so the reward is read at the final ``>``; token 0 is ``!``;
+the pipeline's token ids (`scoring.backend.TEMPLATE_TOKENIZED`) equal the card's
+``apply_chat_template(tokenize=True)`` ids on multi-paragraph conversations.
+
 A causal-LM checkpoint is only loaded as a reward model when it is listed in `scoring.backend.LOGIT_REWARD_MODELS`
 with its token; an unlisted one is refused, because loading it as a sequence classifier would attach a randomly
 initialised score head that nothing downstream could detect.
@@ -46,6 +51,7 @@ class LogitRewardModel(torch.nn.Module):
         with torch.no_grad():
             self.score.weight.copy_(row)
         self.score.requires_grad_(False)
+        self.train(causal_lm.training)          # a new Module starts in training mode; follow the loaded model
 
     @property
     def model(self) -> Any:

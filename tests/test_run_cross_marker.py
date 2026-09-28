@@ -230,8 +230,8 @@ def test_direct_directions_share_the_probe_records(manifest, monkeypatch):
     monkeypatch.setenv("ONEJUDGE_EMBED_CACHE", "off")
     model, tok = _model(), _tokenizer()
     _, probe_ids, meta = direct_directions(
-        model, tok, DOM, str(manifest), ["explicit", "proxy"], probe_size=8, split_seed=42,
-        batch_size=16, device="cpu", max_length=1024, probe_records=6)
+        model, tok, DOM, str(manifest), ["explicit", "proxy"], probe_records=6, split_seed=42,
+        batch_size=16, device="cpu", max_length=1024)
     assert len(probe_ids) == 6 and sum(r.startswith("s") for r in probe_ids) == 3
     assert {m["n_records"] for m in meta.values()} == {6}
     assert all(m["split"]["probe_strata"] == {"False": 3, "True": 3} for m in meta.values())
@@ -244,7 +244,7 @@ def test_end_to_end_on_a_tiny_model(manifest, monkeypatch):
 
     model, tok = _model(), _tokenizer()
     directions, probe_ids, meta = direct_directions(
-        model, tok, DOM, str(manifest), ["explicit", "proxy"], probe_size=8, split_seed=42,
+        model, tok, DOM, str(manifest), ["explicit", "proxy"], probe_records=6, split_seed=42,
         batch_size=8, device="cpu", max_length=1024)
     # every factorial axis with pairs in the encoding: no marital direction under proxy
     assert set(directions["explicit"]) == {"sex", "age", "marital_status", "intersection"}
@@ -341,8 +341,8 @@ def test_nulling_moves_the_disparity_by_the_predicted_amount(manifest, monkeypat
 
     model, tok = _model().float(), _tokenizer()
     directions, probe_ids, meta = direct_directions(
-        model, tok, DOM, str(manifest), ["explicit"], probe_size=8, split_seed=42, batch_size=8,
-        device="cpu", max_length=1024, probe_records=4)
+        model, tok, DOM, str(manifest), ["explicit"], probe_records=4, split_seed=42, batch_size=8,
+        device="cpu", max_length=1024)
     settings = resolve_settings({}, {"n_strong": 6, "n_weak": 6, "n_folds": 3, "alphas": [0.0, 0.5, 1.0]})
     fmt = lambda p, r: format_conversation(tok, p, r)
     blocks = load_cell_blocks(manifest.parent / "cells.jsonl", CREDIT_DESIGN)

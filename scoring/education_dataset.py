@@ -6,6 +6,12 @@ matched-pairs manifest. The loader body is domain-agnostic (`MatchedPairDataset`
 
 The essay submission (header + verbatim body) is the assistant response to a fixed neutral grading
 prompt; the demographic marker lives in the header, so swapping A↔B changes only the marker.
+
+No record needs to be selected out for length: the ingest drops essays over 6,000 characters
+(`substrates.education_ingest.load_asap2`), and over all 7,083 ingested ASAP 2.0 essays x both templates, with
+the real header and a long marker, the longest input is 1,451 tokens (Qwen3, Llama-3, RB2 and Gemma-2
+tokenizers; checked 2026-09-28) — under ``max_length: 2048``. Lowering ``max_length`` below that would stop a
+run with `probes.probe.InputTooLong`, never truncate.
 """
 
 from __future__ import annotations
@@ -26,11 +32,4 @@ class EducationDemographicDataset(MatchedPairDataset):
     NAME_PREFIX = "education_demographic"
     DEFAULT_PROMPT = EDU_ASSESSMENT_PROMPT
     GENERATOR = "runners/generate_education.py"
-    # Grouped by essay since 2026-09-23. The education factorial cuts 8 pairs per essay from each single
-    # axis (4 settings of the other attributes x 2 templates) and the A2 positioned arm 4, so an ungrouped
-    # split routinely put one of an essay's pairs in probe and another in eval — the direction was then
-    # evaluated on an essay it was fitted on (already true, less often, of the old single-axis design with
-    # its two templates). It was left ungrouped only so existing splits would not shift; every education
-    # number is stale anyway (see the write-up's \P marks), so that reason is gone. Same fix as credit/cv.
-    GROUP_BY_RECORD = True
     QUALITY_FIELD = "high_quality"

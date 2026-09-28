@@ -25,7 +25,14 @@ Scoring, as in the reference implementation (module and parameter names match th
 Differences from the reference forward, neither of which changes a score the pipeline computes: the last
 token is found from ``attention_mask`` (the pipeline pins right padding; the reference searched for the
 first pad id, which is the same position); and the reference's special case for a doubled BOS at batch
-size 1 is dropped, because `format_conversation` strips the template's BOS and the tokenizer adds one.
+size 1 is dropped, because `format_conversation` strips the template's BOS and the tokenizer adds one (one BOS
+on the real tokenizer). Checked 2026-09-28 against the reference ``modeling_custom.py`` itself (the checkpoint's
+commit 83d5ac5, its dead import removed) on shared tiny random weights: score, gate, per-objective rewards and
+quantiles bit-identical, in a padded batch and one text at a time.
+
+Attention: Gemma-2 soft-caps its attention scores (``attn_logit_softcapping``), which transformers' default
+``sdpa`` silently ignores; the model card loads with ``flash_attention_2``. `scoring.backend.attention_kwargs`
+loads it with ``eager``, which applies the cap.
 """
 
 from __future__ import annotations

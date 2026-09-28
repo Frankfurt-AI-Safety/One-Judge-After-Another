@@ -56,7 +56,7 @@ def loaded(tmp_path, monkeypatch):
     monkeypatch.setattr(backend, "TEMPLATE_TOKENIZED", {path})
     cfg = SimpleNamespace(model_path=path, model_revision=None, trust_remote_code=False, device="cpu")
     model, tok = backend._load_transformers(cfg)
-    return path, model.eval(), tok
+    return path, model, tok
 
 
 def test_the_loader_wraps_the_causal_lm_and_the_head_is_row_k(loaded):
@@ -66,6 +66,7 @@ def test_the_loader_wraps_the_causal_lm_and_the_head_is_row_k(loaded):
     assert isinstance(head, LinearHead)
     assert torch.equal(head.layer.weight, model.lm.lm_head.weight[:1])
     assert model.model is model.lm.model and model.config is model.lm.config
+    assert not any(m.training for m in model.modules())                    # evaluation mode, wrapper included
 
 
 def test_tokenized_as_the_template_without_the_tokenizers_bos(loaded):

@@ -32,6 +32,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from scoring.experiment import ExperimentConfig
 from scoring.demographic_experiment import (
     DemographicBiasExperiment, auto_influence_with_intervals, compute_auto_influence_metrics, nulling_change,
+    organize_rewards, subgroup_metrics, texts_and_variants,
 )
 from scoring.intervals import DEFAULT_N_BOOT
 from substrates.domains import get_domain
@@ -44,31 +45,21 @@ SWEEP_AXES = ["sex", "intersection"]
 DOMAIN_SWEEP = {"education": ["grade_level", "sex"]}
 
 
-def _subgroup_auto_influence(base_org, eval_examples, key="template_id") -> Dict[str, float]:
-    groups = sorted({e.metadata.get(key) for e in eval_examples})
-    out = {}
-    for g in groups:
-        idx = [i for i, e in enumerate(eval_examples) if e.metadata.get(key) == g]
-        sub = {"a": [base_org["a"][i] for i in idx], "b": [base_org["b"][i] for i in idx]}
-        out[str(g)] = compute_auto_influence_metrics(sub).get("auto_influence", float("nan"))
-    return out
-
-
 def run_cell(exp, cfg, axis, encoding, dataset_cls, sweep_axes=SWEEP_AXES) -> Dict[str, Any]:
     ds = dataset_cls(cfg.dataset_source, axis=axis, encoding=encoding,
-                     probe_size=cfg.probe_size, split_seed=cfg.split_seed,
+                     split_seed=cfg.split_seed,
                      max_test_examples=cfg.max_test_examples, probe_records=cfg.probe_records)
     probe, meta = build_probe_direction(exp.model, exp.tokenizer, ds.get_probe_pairs(exp.tokenizer),
                                         batch_size=cfg.batch_size, device=cfg.device,
                                         max_length=cfg.max_length)
     eval_examples = ds.get_eval_examples(exp.tokenizer)
-    all_texts, text_meta = exp._get_all_texts_and_variants(eval_examples)
+    all_texts, text_meta = texts_and_variants(eval_examples)
     n = len(eval_examples)
     baseline, nulled = get_rewards_both(exp.model, exp.tokenizer, all_texts, probe,
                                         batch_size=cfg.batch_size, device=cfg.device,
                                         max_length=cfg.max_length, null_alpha=1.0, show_progress=False)
-    base_org = exp._organize_rewards(baseline, text_meta, n)
-    null_org = exp._organize_rewards(nulled, text_meta, n)
+    base_org = organize_rewards(baseline, text_meta, n)
+    null_org = organize_rewards(nulled, text_meta, n)
     n_boot, seed = int(cfg.extra.get("n_boot", DEFAULT_N_BOOT)), cfg.split_seed
     cell = {
         "axis": axis, "encoding": encoding, "n_eval": n,
@@ -77,7 +68,10 @@ def run_cell(exp, cfg, axis, encoding, dataset_cls, sweep_axes=SWEEP_AXES) -> Di
         "baseline": auto_influence_with_intervals(base_org, eval_examples, n_boot, seed),
         "nulled": auto_influence_with_intervals(null_org, eval_examples, n_boot, seed),
         "baseline_vs_nulled": nulling_change(base_org, null_org, eval_examples, n_boot, seed),
-        "baseline_by_template": _subgroup_auto_influence(base_org, eval_examples),
+        # the full metric set per template, record quality (strong/weak) and, for education, essay prompt
+        "baseline_by_template": subgroup_metrics(base_org, eval_examples, "template_id"),
+        "baseline_by_quality": subgroup_metrics(base_org, eval_examples, "strong"),
+        "baseline_by_prompt": subgroup_metrics(base_org, eval_examples, "prompt_id"),
     }
     # α-sweep: the texts' states come from the embedding cache; only the head runs per α.
     if axis in sweep_axes:
@@ -94,7 +88,7 @@ def _alpha_sweep(exp, cfg, all_texts, text_meta, n, probe) -> Dict[str, float]:
     curve: Dict[str, float] = {}
     for a in SWEEP_ALPHAS:
         _, scores = rewards_from_hidden(exp.model, hidden, state_dtype, probe, null_alpha=a, gates=gates)
-        org = exp._organize_rewards(scores, text_meta, n)
+        org = organize_rewards(scores, text_meta, n)
         curve[str(a)] = compute_auto_influence_metrics(org).get("auto_influence", float("nan"))
     return curve
 
@@ -141,7 +135,7 @@ def main() -> None:
     print("=" * 86)
     print(f"{'axis':14} {'enc':9} {'probe_acc':>9} {'base_AI':>8} {'null_AI':>8} {'base_gap':>9}  per-template(base_AI)")
     for c in cells:
-        bt = "  ".join(f"{k}={v:.2f}" for k, v in c["baseline_by_template"].items())
+        bt = "  ".join(f"{k}={v.get('auto_influence', float('nan')):.2f}" for k, v in c["baseline_by_template"].items())
         print(f"{c['axis']:14} {c['encoding']:9} {c['probe_accuracy']:>9.2%} "
               f"{c['baseline']['auto_influence']:>8.3f} {c['nulled']['auto_influence']:>8.3f} "
               f"{c['baseline']['mean_gap']:>9.3f}  {bt}")
@@ -153,6 +147,12 @@ def main() -> None:
         print(f"{c['axis']:14} {c['encoding']:9} |gap| {ci['estimate']:.4f} [{ci['ci_low']:.4f}, "
               f"{ci['ci_high']:.4f}]   nulled − baseline {ch['estimate']:+.4f} "
               f"[{ch['ci_low']:+.4f}, {ch['ci_high']:+.4f}]   ({ci['n_clusters']} records)")
+    print("-" * 86)
+    print("is a preference left after nulling? the signed intervals (auto-influence and |gap| are positive under noise)")
+    for c in cells:
+        g, r = c["nulled"]["intervals"]["mean_gap"], c["nulled"]["intervals"]["pref_a_rate"]
+        print(f"{c['axis']:14} {c['encoding']:9} nulled mean_gap {g['estimate']:+.4f} [{g['ci_low']:+.4f}, "
+              f"{g['ci_high']:+.4f}]   pref_a_rate {r['estimate']:.3f} [{r['ci_low']:.3f}, {r['ci_high']:.3f}]")
     print("-" * 86)
     for c in cells:
         if "alpha_sweep" in c:

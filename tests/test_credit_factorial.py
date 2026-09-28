@@ -212,7 +212,7 @@ class TestGroupedSplit:
         from scoring.pair_dataset import CreditDemographicDataset
 
         ds = CreditDemographicDataset(str(self._manifest(tmp_path)), axis="sex", encoding="explicit",
-                                      probe_size=40, split_seed=42)
+                                      probe_records=5, split_seed=42)
         ds._ensure_loaded()
         raw = ds._raw_data
         probe = {raw[i]["source_record_id"] for i in ds._probe_indices}
@@ -232,7 +232,7 @@ class TestGroupedSplit:
         from scoring.pair_dataset import CreditDemographicDataset
 
         ds = CreditDemographicDataset(str(self._manifest(tmp_path, n_records=60)), axis=axis,
-                                      encoding="explicit", probe_size=40, split_seed=42,
+                                      encoding="explicit", probe_records=5, split_seed=42,
                                       max_test_examples=40)
         ds._ensure_loaded()
         test = [ds._raw_data[i] for i in ds._test_indices]
@@ -248,7 +248,7 @@ class TestGroupedSplit:
         from scoring.pair_dataset import CreditDemographicDataset
 
         ds = CreditDemographicDataset(str(self._manifest(tmp_path)), axis="sex", encoding="explicit",
-                                      probe_size=40, split_seed=42)
+                                      probe_records=5, split_seed=42)
         ds._ensure_loaded()
         probe, test = ds._probe_indices, ds._test_indices
         assert not set(probe) & set(test) and len(probe) + len(test) == len(ds._raw_data)
@@ -257,7 +257,7 @@ class TestGroupedSplit:
         from scoring.pair_dataset import CreditDemographicDataset
 
         ds = CreditDemographicDataset(str(self._manifest(tmp_path)), axis="sex", encoding="explicit",
-                                      probe_size=40, split_seed=42, max_test_examples=10)
+                                      probe_records=5, split_seed=42, max_test_examples=10)
         ds._ensure_loaded()
         # 10 capped examples come from 10 different records (round-robin), not from 2
         assert len({ds._raw_data[i]["source_record_id"] for i in ds._test_indices}) == 10
@@ -271,7 +271,7 @@ class TestGroupedSplit:
 
         row = {"id": "x", "source_record_id": "r"}
         for cls in (CreditDemographicDataset, BiosDemographicDataset, EducationDemographicDataset):
-            assert cls("unused", axis="sex", encoding="explicit")._get_group_key(row) == "r", cls.__name__
+            assert cls("unused", axis="sex", encoding="explicit", probe_records=1)._get_group_key(row) == "r", cls.__name__
 
     @pytest.mark.parametrize("cls_path", ["scoring.bios_dataset.BiosDemographicDataset",
                                           "scoring.education_dataset.EducationDemographicDataset"])
@@ -280,8 +280,12 @@ class TestGroupedSplit:
 
         module, name = cls_path.rsplit(".", 1)
         cls = getattr(importlib.import_module(module), name)
-        ds = cls(str(self._manifest(tmp_path)), axis="sex", encoding="explicit", probe_size=40,
-                 split_seed=42)
+        path = self._manifest(tmp_path)          # a credit manifest: give its rows this domain's quality label
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        for r in rows:
+            r["real_fields"][cls.QUALITY_FIELD] = r["real_fields"]["credit_good"]
+        path.write_text("\n".join(json.dumps(r) for r in rows))
+        ds = cls(str(path), axis="sex", encoding="explicit", probe_records=5, split_seed=42)
         ds._ensure_loaded()
         raw = ds._raw_data
         probe = {raw[i]["source_record_id"] for i in ds._probe_indices}
@@ -298,11 +302,11 @@ class TestGroupedSplit:
         from scoring.bios_dataset import BIOS_ASSESSMENT_PROMPT, BiosDemographicDataset
         from scoring.pair_dataset import ASSESSMENT_PROMPT, CreditDemographicDataset
 
-        credit = CreditDemographicDataset("unused", axis="sex", encoding="proxy")
-        bios = BiosDemographicDataset("unused", axis="age", encoding="explicit", prompt="custom")
+        credit = CreditDemographicDataset("unused", axis="sex", encoding="proxy", probe_records=1)
+        bios = BiosDemographicDataset("unused", axis="age", encoding="explicit", prompt="custom", probe_records=1)
         assert (credit.name, credit.prompt) == ("credit_demographic_sex_proxy", ASSESSMENT_PROMPT)
         assert (bios.name, bios.prompt) == ("cv_demographic_age_explicit", "custom")
-        assert BiosDemographicDataset("unused", axis="sex", encoding="explicit").prompt == BIOS_ASSESSMENT_PROMPT
+        assert BiosDemographicDataset("unused", axis="sex", encoding="explicit", probe_records=1).prompt == BIOS_ASSESSMENT_PROMPT
 
 
 # --------------------------------------------------------------------------- probe split in records
@@ -340,7 +344,7 @@ class TestProbeRecords:
         strong = {r["source_record_id"] for r in ds._raw_data if r["real_fields"]["credit_good"]}
         assert len(probe & strong) == 14            # 20 x 0.7, exactly
         rep = ds.split_report()
-        assert rep["mode"] == "records" and rep["probe_records"] == 20 and rep["test_records"] == 30
+        assert rep["probe_records"] == 20 and rep["test_records"] == 30
         assert rep["probe_strata"] == {"False": 6, "True": 14}
         assert rep["probe_pairs"] == 20 * 8           # every pair of a probe record goes to probe
 
@@ -374,15 +378,14 @@ class TestProbeRecords:
         greedy = self._ds(path, n=500)                                   # 20% (10 records) stay for test
         assert greedy.split_report()["probe_records"] == 40
 
-    def test_needs_a_grouped_split(self, tmp_path):
+    def test_the_probe_split_must_be_sized_in_records(self, tmp_path):
+        # The pair-counted split (probe_size) was removed 2026-09-28: without probe_records a dataset refuses.
         from scoring.pair_dataset import CreditDemographicDataset
 
-        class Ungrouped(CreditDemographicDataset):
-            GROUP_BY_RECORD = False
-
-        with pytest.raises(ValueError, match="grouped"):
-            Ungrouped(str(self._manifest(tmp_path)), axis="sex", encoding="explicit",
-                      probe_records=10)._ensure_loaded()
+        for n in (None, 0):
+            with pytest.raises(ValueError, match="probe_records"):
+                CreditDemographicDataset(str(self._manifest(tmp_path)), axis="sex", encoding="explicit",
+                                         probe_records=n)
 
     def test_a_manifest_without_real_fields_asks_to_regenerate(self, tmp_path):
         path = self._manifest(tmp_path)
@@ -392,10 +395,6 @@ class TestProbeRecords:
         path.write_text("\n".join(json.dumps(r) for r in rows))
         with pytest.raises(ValueError, match="generate_credit"):
             self._ds(path)
-        # counting pairs does not need the label
-        from scoring.pair_dataset import CreditDemographicDataset
-        ds = CreditDemographicDataset(str(path), axis="sex", encoding="explicit", probe_size=40)
-        assert ds.split_report()["mode"] == "pairs" and ds.split_report()["probe_records"] == 5
 
     def test_pair_rows_carry_the_cells_real_fields(self):
         from runners.generate_credit import build_dataset

@@ -24,23 +24,39 @@ Review in the following order: substrates -> pairs -> probes -> scoring -> runne
 | 1 | `substrates/` | real corpora → records, and how a record becomes text | 3,855 lines | **done** (2026-09-24) |
 | 2 | `pairs/` | the factorial marker designs, the validation gate, the manifest, the decision responses | 2,254 lines | **done** (2026-09-27) |
 | 3 | `probes/` | **the mechanistic core**: difference-of-means, null-space projection, LEACE | 1,418 lines | **done** (2026-09-27) |
-| 4 | `scoring/` | model loading, dataset plumbing, experiment orchestration, metrics | 3,037 lines | not yet |
-| 5 | `runners/` | CLI entry points — one per experiment arm | 3,420 lines | not yet |
+| 4 | `scoring/` | model loading, the record split, metrics and their intervals | 2,338 lines | **done** (2026-09-28) |
+| 5 | `runners/` | CLI entry points — one per experiment arm | 3,986 lines | not yet |
 | 6 | `cluster/` | hessian.AI 42 cluster deployment | 591 lines | not yet |
-| — | `tests/` `configs/` | read alongside the stage they cover | 5,219 lines | with their stage |
+| — | `tests/` `configs/` | read alongside the stage they cover | 7,260 lines | with their stage |
 
 **Review status.** `substrates/` (finished 2026-09-24, including the class-imbalance audit's substrate items),
-`pairs/` (finished 2026-09-27) and `probes/` (finished 2026-09-27) have been reviewed line by line. During the
-`pairs/` session the education corpus became ASAP 2.0 only, which rewrote `substrates/education_ingest.py` and
-`education_clean.py` (with tests; see the working notes of 2026-09-27). The `probes/` session changed what the
-pipeline does in three places worth knowing before any run: an input longer than `max_length` is refused
-(`InputTooLong`) instead of truncated; the embedding cache's fingerprint names the environment (device, GPU,
-attention implementation, library versions), which invalidated every earlier cache once; and the cross-marker
-geometry reads each cosine against its ceiling √(rel_a · rel_b) from full-sample reliabilities. It also made small
-edits in `runners/run_cross_marker.py`, `run_reasoning_erasure.py` and `scoring/experiment.py`, covered by
-tests. The remaining folders have changed a lot since the prototype — the cross-marker mechanism layer, the
-audit fixes — and every change came with tests, but none of them has had its own review session yet. Treat
-their code as unverified.
+`pairs/` and `probes/` (both finished 2026-09-27) and `scoring/` (finished 2026-09-28) have been reviewed line by
+line. During the `pairs/` session the education corpus became ASAP 2.0 only, which rewrote
+`substrates/education_ingest.py` and `education_clean.py` (with tests; see the working notes of 2026-09-27). The
+`probes/` session changed what the pipeline does in three places worth knowing before any run: an input longer
+than `max_length` is refused (`InputTooLong`) instead of truncated; the embedding cache's fingerprint names the
+environment (device, GPU, attention implementation, library versions), which invalidated every earlier cache
+once; and the cross-marker geometry reads each cosine against its ceiling √(rel_a · rel_b) from full-sample
+reliabilities.
+
+The `scoring/` session changed, before any run:
+- **the direct arm's runner is `runners/run_battery.py`.** `runners/run_experiment.py` never ran anything (it
+  exited after building the config, from the initial commit on) and was removed with the evaluation half of
+  `scoring/experiment.py`; the exporter's auto-influence macros read the battery's cells;
+- **the probe split is counted in records only** (`probe_records`; the pair count `probe_size` is gone), and an
+  unknown config key is an error;
+- **exact ties count ½** in every win rate (rewards are bf16, and ties are common after nulling), and a remaining
+  preference is read from the **signed** intervals (`mean_gap`, `pref_a_rate`): auto-influence and |gap| are
+  folded and positive under noise alone;
+- **model loading:** Gemma-2 (Skywork-Gemma, QRM) loads with eager attention, since sdpa silently dropped its
+  attention soft-cap; a model partly offloaded to CPU/disk is refused; results record the Hub commit the weights
+  came from; remote code is off by default;
+- `scoring/plotting.py` (unused, upstream plots with per-pair error bars) is deleted; figures will be built anew
+  from the final result files.
+
+`runners/` and `cluster/` have changed a lot since the prototype — the cross-marker mechanism layer, the audit
+fixes, the edits of the review sessions — and every change came with tests, but neither has had its own review
+session yet. Treat their code as unverified.
 
 `probes/` is small and load-bearing: it is where the actual intervention lives, and where a
 subtle error would be least visible in the results.
@@ -76,7 +92,8 @@ pip install -r requirements-analysis.txt        # pulls requirements.txt too
 
 # corpora are user-downloaded and gitignored; the loaders print the exact command
 python runners/generate_credit.py
-python runners/run_experiment.py --config configs/demographic_credit_sex_qwen06.yaml
+python runners/run_battery.py --config configs/demographic_credit_sex_qwen06.yaml --axes sex --encodings explicit \
+    --out artifacts/results/demographic/battery_demographic_credit_sex_qwen06.json
 ```
 
 Running on the cluster: see [`cluster/README.md`](cluster/README.md).

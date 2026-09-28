@@ -130,7 +130,7 @@ def main() -> None:
                 kept_blocks += 1
                 for pair in pairs:
                     item_id = f"pos-{axis}-{position}-{rec.source_record_id}{block_id_suffix(pair)}"
-                    out_records.append(pair_to_record(pair, item_id, role="probe", seed=args.seed,
+                    out_records.append(pair_to_record(pair, item_id, seed=args.seed,
                                                        domain="education", real_fields=fields(rec)))
                     n_pairs += 1
             seen = kept_blocks + dropped_blocks

@@ -207,7 +207,9 @@ class TestLoader:
                                 content_label="essay_content", subject="student",
                                 design=EDUCATION_DESIGN)[0][0]
             rows.append(pair_to_record(p, f"edu-ethnicity-proxy-edu_v1-{rec.source_record_id}",
-                                       role="probe", seed=42, domain="education"))
+                                       seed=42, domain="education",
+                                       real_fields={"high_quality": bool(i % 2), "prompt_id": f"P{i % 3}",
+                                                    "sex": "F", "ethnicity": "E"}))
         path = tmp_path / "pairs.jsonl"
         path.write_text("\n".join(json.dumps(x) for x in rows))
         return path
@@ -223,7 +225,7 @@ class TestLoader:
         from scoring.education_dataset import EducationDemographicDataset
 
         ds = EducationDemographicDataset(str(self._write_jsonl(tmp_path)), axis="ethnicity",
-                                         encoding="proxy", probe_size=20, split_seed=42)
+                                         encoding="proxy", probe_records=20, split_seed=42)
         assert ds.name == "education_demographic_ethnicity_proxy"
         tok = self._fake_tokenizer()
         probe_pairs = ds.get_probe_pairs(tok)
@@ -232,3 +234,8 @@ class TestLoader:
         assert len(probe_pairs) + len(evals) == 40
         assert set(evals[0].texts.keys()) == {"a", "b"}
         assert evals[0].metadata["template_id"] == "edu_v1"
+        # the quality label and the prompt, for the breakdowns; never the writer's real demographics
+        for e in evals:
+            i = int(e.metadata["source_record_id"].split("-")[1])
+            assert e.metadata["strong"] is bool(i % 2) and e.metadata["prompt_id"] == f"P{i % 3}"
+            assert not {"sex", "ethnicity", "real_fields"} & set(e.metadata)

@@ -1,21 +1,16 @@
 """
-Reward-model loading.
+Reward-model loading: ``(model, tokenizer)`` from Hugging Face ``transformers``, as the pipeline needs them.
 
-One backend: Hugging Face ``transformers``. The model is returned as the raw HF object,
-exactly as the pipeline used it before backends existed.
+Most checkpoints load as ``AutoModelForSequenceClassification``. Two families do not:
+- QRM (``Gemma2ForQuantileSequenceClassification``) loads with our own class, `scoring/qrm.py`: its remote code
+  no longer imports under current transformers, and the pipeline needs to see its gate.
+- Reward models packaged as causal LMs (`LOGIT_REWARD_MODELS`) load through `scoring/logit_reward.py`; any other
+  causal LM is refused.
 
-An MLX (Apple Silicon) backend used to live alongside this, behind a ``ModelBackend``
-abstraction, so the pipeline could be prototyped without GPUs. It was removed once the
-hessian.AI cluster was validated on CUDA (see cluster/README.md): every reported number now
-comes off CUDA, so a second numerical path was pure cost. The abstraction went with it,
-because MLX was its only implementation.
-
-``transformers`` is imported lazily inside :func:`create_backend` so importing this module
-does not pull in the framework.
-
-One checkpoint family is loaded with our own class instead of ``AutoModelForSequenceClassification``:
-QRM (``Gemma2ForQuantileSequenceClassification``, `scoring/qrm.py`), whose remote code no longer imports
-under current transformers and whose gate the pipeline needs to see.
+The loader also pins right padding, loads soft-capped attention (Gemma-2) as ``eager`` (`attention_kwargs`),
+tokenizes as each model's authors score (`TEMPLATE_TOKENIZED`), loads pinned Hub revisions where ``main`` cannot
+be loaded (`PINNED_REVISIONS`) and refuses a model that accelerate offloaded to CPU or disk (`check_placement`).
+``transformers`` is imported lazily, so importing this module does not pull in the framework.
 """
 
 from __future__ import annotations
@@ -27,7 +22,8 @@ from scoring.dataset_base import tokenization_vs_template, use_template_tokens
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["create_backend", "PINNED_REVISIONS", "LOGIT_REWARD_MODELS", "model_revision"]
+__all__ = ["create_backend", "PINNED_REVISIONS", "LOGIT_REWARD_MODELS", "TEMPLATE_TOKENIZED", "model_revision",
+           "loaded_revision", "check_placement", "ModelOffloaded"]
 
 # Reward models packaged as causal LMs, with the vocabulary token whose logit at the last position is the reward
 # (`scoring/logit_reward.py`). Only listed checkpoints are loaded this way; any other causal LM is refused.
@@ -57,10 +53,21 @@ def model_revision(config: Any) -> Any:
     return getattr(config, "model_revision", None) or PINNED_REVISIONS.get(config.model_path)
 
 
+def loaded_revision(model: Any) -> Any:
+    """The Hub commit the model's weights were loaded from (None for a local directory). With no revision
+    configured, that is whatever ``main`` was at load time, which can move between runs."""
+    return getattr(getattr(model, "config", None), "_commit_hash", None)
+
+
+class ModelOffloaded(RuntimeError):
+    """accelerate placed part of the model on the CPU or disk."""
+
+
 def check_placement(model: Any) -> None:
-    """Log where ``device_map="auto"`` put the model, and warn loudly when part of it landed on the CPU or
-    disk: accelerate offloads silently when the GPUs are too small (a 70B on two 80 GB cards is close), and
-    an offloaded model runs orders of magnitude slower without failing."""
+    """Log where ``device_map="auto"`` put the model, and refuse a model that accelerate partly offloaded to
+    the CPU or disk: it offloads silently when the GPUs are too small (a 70B on two 80 GB cards is close), and
+    an offloaded model runs orders of magnitude slower without failing, holding its GPUs for days. A model
+    placed entirely on the CPU (``--device cpu``) is not an offload."""
     device_map = getattr(model, "hf_device_map", None) or {}
     if not device_map:
         return
@@ -69,17 +76,14 @@ def check_placement(model: Any) -> None:
         counts[str(device)] = counts.get(str(device), 0) + 1
     logger.info("model placement (modules per device): %s", counts)
     offloaded = sorted(name for name, device in device_map.items() if str(device) in ("cpu", "disk"))
-    if offloaded:
-        logger.warning("%d module(s) OFFLOADED to CPU/disk (e.g. %s): the GPUs are too small for this model, "
-                       "and every forward pass will be very slow", len(offloaded), offloaded[:3])
+    if offloaded and ("disk" in counts or len(offloaded) < len(device_map)):
+        raise ModelOffloaded(f"{len(offloaded)} module(s) offloaded to CPU/disk (e.g. {offloaded[:3]}): the GPUs are "
+                             f"too small for this model, and every forward pass would be very slow. Give it more "
+                             f"GPUs (placement: {counts}).")
 
 
 def _load_transformers(config: Any) -> Tuple[Any, Any]:
-    """Load an HF sequence-classification reward model + tokenizer.
-
-    This reproduces the original ``BiasExperiment.load_model`` body exactly so the
-    CUDA/CPU paths are byte-for-byte unchanged.
-    """
+    """Load the reward model (bf16) and its tokenizer; see the module docstring."""
     import torch
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
@@ -108,16 +112,14 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
     # Pin RIGHT padding. Every activation read in probe.py gathers the last real token via
     # `attention_mask.sum(dim=1) - 1`, which is only the last token under right padding; with
     # left padding that index lands mid-sequence on a pad and the scores are silently wrong.
-    # The MLX backend and parity_check.py both pinned this explicitly; this path did
-    # not, so it inherited each checkpoint's tokenizer default -- fine for Qwen3 ('right'), but
-    # several Llama tokenizers default to 'left'. It also keeps the baseline branch, which uses
-    # HF's own pad_token_id-based pooling, consistent with the nulled branch's manual gather.
+    # Of the eleven models, both Gemma-2-27B tokenizers (Skywork, QRM) default to 'left' (checked 2026-09-28).
     tokenizer.padding_side = "right"
 
     # "cuda" / "auto" → let HF shard the model across all visible GPUs.
     # An explicit single-device string (e.g. "cuda:0", "cpu") is passed
     # through unchanged so the caller retains control.
     device_map = "auto" if config.device in ("cuda", "auto") else config.device
+    attention = attention_kwargs(config.model_path, revision)
     token = LOGIT_REWARD_MODELS.get(config.model_path)
     if token is not None:
         from transformers import AutoModelForCausalLM
@@ -127,7 +129,7 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
         logger.info("%s: causal-LM reward model, reward = logit of token %d at the last position",
                     config.model_path, token)
         causal = AutoModelForCausalLM.from_pretrained(
-            config.model_path, revision=revision, dtype=torch.bfloat16, device_map=device_map)
+            config.model_path, revision=revision, dtype=torch.bfloat16, device_map=device_map, **attention)
         model = LogitRewardModel(causal, token)
     else:
         model_cls = _own_class(config.model_path, revision) or AutoModelForSequenceClassification
@@ -138,6 +140,7 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
             revision=revision,
             dtype=torch.bfloat16,
             device_map=device_map,
+            **attention,
             **kwargs,
         )
     # .to() intentionally omitted: device_map handles placement.
@@ -147,6 +150,22 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
         model.config.pad_token_id = tokenizer.pad_token_id
 
     return model, tokenizer
+
+
+def attention_kwargs(model_path: str, revision: Any = None) -> dict:
+    """``attn_implementation="eager"`` for a model whose attention scores are soft-capped (Gemma-2:
+    ``attn_logit_softcapping``), else nothing (the transformers default, ``sdpa``). ``sdpa`` accepts the cap and
+    silently ignores it, so a soft-capped model would run without it; ``verify_score_path`` cannot see that, because
+    the pipeline and the model's own forward share the attention. Both Gemma-2 cards (Skywork-Gemma-2-27B, QRM)
+    require ``eager`` or ``flash_attention_2``; flash-attn is not installed on the cluster. Reads only the config."""
+    from transformers import AutoConfig
+
+    cfg = AutoConfig.from_pretrained(model_path, revision=revision)
+    if getattr(cfg, "attn_logit_softcapping", None) is None:
+        return {}
+    logger.info("%s: attention soft-capped at %s, loaded with eager attention (sdpa would drop the cap)",
+                model_path, cfg.attn_logit_softcapping)
+    return {"attn_implementation": "eager"}
 
 
 def _own_class(model_path: str, revision: Any = None) -> Any:
@@ -169,10 +188,5 @@ def _own_class(model_path: str, revision: Any = None) -> Any:
 
 
 def create_backend(config: Any) -> Tuple[Any, Any]:
-    """``(model, tokenizer)`` for ``config`` — the entry point ``BiasExperiment.load_model`` calls.
-
-    Restored 2026-09-23: removing the MLX backend also removed this dispatcher, while
-    ``scoring/experiment.py`` still imported it, so every runner failed at ``load_model()`` with an
-    ImportError. No test loaded a model, so it went unnoticed; ``tests/test_backend.py`` now does.
-    """
+    """``(model, tokenizer)`` for ``config`` — the entry point ``BiasExperiment.load_model`` calls."""
     return _load_transformers(config)

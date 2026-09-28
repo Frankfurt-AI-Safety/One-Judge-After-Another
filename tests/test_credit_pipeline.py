@@ -298,7 +298,8 @@ class TestLoader:
         for i, r in enumerate(recs):
             p = _sex_pair(r, seed=i)
             rows.append(pair_to_record(p, f"credit-sex-explicit-credit_v1-{r.source_record_id}",
-                                       role="probe", seed=42, domain="credit"))
+                                       seed=42, domain="credit",
+                                       real_fields={"credit_good": bool(i % 2)}))
         path = tmp_path / "pairs.jsonl"
         path.write_text("\n".join(json.dumps(x) for x in rows))
         return path
@@ -312,7 +313,7 @@ class TestLoader:
         from scoring.pair_dataset import CreditDemographicDataset
 
         ds = CreditDemographicDataset(str(self._write_jsonl(tmp_path)), axis="sex",
-                                      encoding="explicit", probe_size=20, split_seed=42)
+                                      encoding="explicit", probe_records=20, split_seed=42)
         tok = self._fake_tokenizer()
         probe_pairs = ds.get_probe_pairs(tok)
         evals = ds.get_eval_examples(tok)
@@ -326,7 +327,7 @@ class TestLoader:
         from scoring.pair_dataset import CreditDemographicDataset
 
         ds = CreditDemographicDataset(str(self._write_jsonl(tmp_path)), axis="age",
-                                      encoding="explicit", probe_size=20)
+                                      encoding="explicit", probe_records=20)
         with pytest.raises(ValueError):  # no age rows in this manifest
             ds.get_probe_pairs(self._fake_tokenizer())
 
@@ -352,13 +353,15 @@ class TestAutoInfluence:
 
     def test_per_template_subgroup_split(self):
         from scoring.dataset_base import EvalExample
-        from runners.run_battery import _subgroup_auto_influence
+        from scoring.demographic_experiment import subgroup_metrics
 
         evs = [EvalExample(texts={}, metadata={"template_id": t})
                for t in ["credit_v1", "credit_v2", "credit_v1", "credit_v2"]]
         # v1 examples (idx 0,2): a>b both → AI=1.0; v2 examples (idx 1,3): a<b both → AI=1.0
         base_org = {"a": [2.0, 0.0, 3.0, 0.0], "b": [1.0, 5.0, 1.0, 9.0]}
-        out = _subgroup_auto_influence(base_org, evs, key="template_id")
+        out = subgroup_metrics(base_org, evs, "template_id")
         assert set(out) == {"credit_v1", "credit_v2"}
-        assert out["credit_v1"] == pytest.approx(1.0)  # both a>b
-        assert out["credit_v2"] == pytest.approx(1.0)  # both a<b (pref_a_rate=0 → AI=1)
+        assert out["credit_v1"]["auto_influence"] == pytest.approx(1.0)  # both a>b
+        assert out["credit_v2"]["auto_influence"] == pytest.approx(1.0)  # both a<b (pref_a_rate=0 → AI=1)
+        assert out["credit_v1"]["mean_gap"] == pytest.approx(1.5) and out["credit_v2"]["mean_gap"] == pytest.approx(-7.0)
+        assert subgroup_metrics(base_org, evs, "prompt_id") == {}           # no example carries the key

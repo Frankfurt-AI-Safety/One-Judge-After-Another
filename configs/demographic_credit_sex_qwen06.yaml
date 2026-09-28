@@ -5,16 +5,15 @@
 # Sex pairs come from the sex × age × marital-status factorial, so age and marital status are
 # stated and equal on both sides. Generate the data first: python runners/generate_credit.py
 #
-#   python runners/run_experiment.py --config configs/demographic_credit_sex_qwen06.yaml
+#   python runners/run_battery.py --config configs/demographic_credit_sex_qwen06.yaml --axes sex --encodings explicit \
+#       --out artifacts/results/demographic/battery_demographic_credit_sex_qwen06.json
 
 name: demographic_credit_sex_qwen06
 bias_type: demographic
 
 model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
-trust_remote_code: true
 
 dataset_source: data/demographic/credit/pairs.jsonl
-dataset_name: credit_sex
 # probe_records counts RECORDS (stratified by credit_good, the same records for every axis). It replaced
 # probe_size (PAIRS) on 2026-09-24: a record gives 8 pairs per single axis but 2 to the intersection, so
 # 300 pairs were ~38 records for sex/age/marital and 150 for the intersection. 150 keeps the records the
@@ -24,13 +23,10 @@ probe_records: 150  # TODO(pilot)
 max_test_examples: 200
 split_seed: 42
 
-null_alpha: 1.0
 batch_size: 8
 max_length: 2048
-device: auto   # CUDA if present, else MLX on Apple Silicon, else CPU
+device: auto   # every visible GPU (accelerate), else CPU
 
-save_probe: true
 
 extra:
-  axis: sex
-  encoding: explicit
+  domain: credit

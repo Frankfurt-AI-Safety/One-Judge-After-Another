@@ -7,7 +7,7 @@ encoding, intersectional cell, the A/B texts and clauses, the record's real fiel
 emits three files into the output directory:
 - ``pairs.jsonl``   — one row per matched pair (what the loader reads).
 - ``manifest.json`` — generator version, the git commit and dirty paths (`code_provenance`), seed, counts
-  per axis/encoding/role, template hashes, validation thresholds, discard report, domain and the
+  per axis/encoding, template hashes, validation thresholds, discard report, domain and the
   substrate's licence line.
 - ``spotcheck.csv`` — a seeded sample for human review, stratified by (axis, encoding).
 The factorial generators also write ``cells.jsonl`` (all eight texts per block) next to these, themselves.
@@ -118,7 +118,6 @@ def pair_to_record(
     pair: GeneratedPair,
     item_id: str,
     *,
-    role: str = "probe",
     seed: int,
     domain: str,
     real_fields: Optional[Dict[str, Any]] = None,
@@ -130,7 +129,6 @@ def pair_to_record(
     row = {
         "id": item_id,
         "domain": domain,
-        "role": role,
         "source_record_id": pair.record_id,
         "varied_axis": pair.axis,
         "encoding": pair.encoding,
@@ -183,10 +181,10 @@ def write_manifest(
         for rec in records:
             f.write(json.dumps(rec) + "\n")
 
-    # counts per (axis, encoding) and per role
+    # counts per (axis, encoding)
     counts: Dict[str, int] = {}
     for rec in records:
-        key = f"{rec['varied_axis']}/{rec['encoding']}/{rec['role']}"
+        key = f"{rec['varied_axis']}/{rec['encoding']}"
         counts[key] = counts.get(key, 0) + 1
 
     manifest = {
@@ -195,7 +193,7 @@ def write_manifest(
         "seed": seed,
         "domain": domain,
         "n_records": len(records),
-        "counts_by_axis_encoding_role": counts,
+        "counts_by_axis_encoding": counts,
         "templates": {tid: _template_hash(tid) for tid in sorted(
             {r["template_id"] for r in records}
             | {r["exemplar"]["header_template"] for r in records if "header_template" in r.get("exemplar", {})})},
