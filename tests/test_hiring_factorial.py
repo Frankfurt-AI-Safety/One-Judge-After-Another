@@ -92,9 +92,8 @@ class TestHiringDesign:
         pairs, texts, _ = factorial_pairs(_rec(), "bios_v1", enc, render_bio, random.Random(0),
                                           content_label="bio_content", design=HIRING_DESIGN)
         assert len(texts) == 8 and len(pairs) == 13  # 3 axes x 4 + 1 corner, both encodings
-        for p in pairs:
-            thr = Thresholds(max_char_delta=40) if p.axis == "intersection" else Thresholds()
-            res = validate_pair(p, thr)
+        for p in pairs:  # the default bounds on every axis (the intersection's 40-char bound went 2026-09-28)
+            res = validate_pair(p, Thresholds())
             assert res.ok, (p.axis, res.reasons)
             assert p.held_fixed[-2:] == ["bio_content", "template"]
 

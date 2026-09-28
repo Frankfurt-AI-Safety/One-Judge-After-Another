@@ -232,6 +232,52 @@ class TestLoaderFilters:
         assert flips != [_coin(7, i) for i in range(2000)]
 
 
+class TestGenerateBiosCLI:
+    """`runners/generate_bios.py` end to end on a synthetic parquet."""
+
+    # no stated years (the age rules drop "many years" too)
+    _FILLER = " They practise in a busy clinic and enjoy teaching students about the field." * 5
+
+    def _main(self, tmp_path, monkeypatch, *extra):
+        from runners import generate_bios
+
+        # 12 professions, 8 bios each: each under the 10% profession cap, so nothing is capped
+        rows = [(f"She is a professional, case {k}." + self._FILLER, k % 12, k % 2) for k in range(96)]
+        raw, out = TestLoaderFilters()._write(tmp_path, rows), tmp_path / "out"
+        monkeypatch.setattr("sys.argv", ["generate_bios.py", "--raw-path", str(raw), "--out-dir", str(out),
+                                         "--templates", "bios_v1", *extra])
+        generate_bios.main()
+        return raw, out
+
+    def test_main_writes_the_files_the_manifest_names(self, tmp_path, monkeypatch):
+        import hashlib
+
+        raw, out = self._main(tmp_path, monkeypatch)
+        m = json.loads((out / "manifest.json").read_text())
+        n_used = m["discard_report"]["n_records_used"]
+        assert n_used == 96
+        pairs = [json.loads(line) for line in (out / "pairs.jsonl").read_text().splitlines()]
+        cells = (out / "cells.jsonl").read_text().splitlines()
+        assert len(pairs) == n_used * (13 + 13) and len(cells) == n_used * 2  # 1 template, both encodings
+        for name in ("pairs.jsonl", "cells.jsonl"):
+            assert m["files"][name]["sha256"] == hashlib.sha256((out / name).read_bytes()).hexdigest()
+        assert m["sources"] == {"bias_in_bios.parquet": {
+            "path": str(raw), "sha256": hashlib.sha256(raw.read_bytes()).hexdigest()}}
+        # one set of gate bounds for every axis (the intersection's own 40-char bound is gone)
+        assert m["validation_thresholds"] == {"max_char_delta": 12, "max_token_delta": 3, "max_flesch_delta": 8.0}
+        assert set(pairs[0]["real_fields"]) == {"gender", "profession", "target_role", "role", "qualified"}
+        assert all(r["real_fields"]["qualified"] == (r["real_fields"]["profession"]
+                                                     == r["real_fields"]["target_role"]) for r in pairs)
+
+    def test_the_default_pool_is_fixed_and_the_old_flags_are_gone(self, tmp_path, monkeypatch):
+        from runners import generate_bios
+
+        assert generate_bios.DEFAULT_N_BIOS == 12_000
+        for flag in ("--n-per", "--intersection-char-delta"):
+            with pytest.raises(SystemExit):
+                self._main(tmp_path, monkeypatch, flag, "5")
+
+
 class TestMismatchedRoles:
     def test_no_fixed_points_and_same_multiset(self):
         from substrates.bios_ingest import _assign_mismatched_roles

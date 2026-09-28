@@ -16,11 +16,27 @@ Pipeline:
      (`pairs/factorial.py`), per template and encoding
   5. Tier-1 structural gate on every pair; a bio/template/encoding block with any failing pair is
      dropped whole, so the factorial stays balanced
-  6. write pairs.jsonl (+ manifest.json, spotcheck.csv) and cells.jsonl (all 8 texts per block, plus
-     the corpus's real gender label for stratified analysis — never rendered)
+  6. write pairs.jsonl, cells.jsonl (all 8 texts per block), spotcheck.csv and manifest.json
+     (`pairs/manifest.py`; it names the data files and the corpus file it was built from by SHA-256)
 
 The biography body is byte-identical across an A/B pair, so only the marker differs. Every drop is
 counted in manifest.json's discard report; the train/eval split happens at load time.
+
+Every pair row and every cells row carries the bio's ``real_fields``, never rendered: ``qualified``, the
+quality label the probe split stratifies on and the cross-marker design groups by; ``role``, the target role
+with its article, which the cross-marker decision prompt names; and ``target_role``, ``profession`` and the
+corpus's ``gender`` label, which nothing reads from the manifest (the scrub check reloads the corpus); they are
+kept for checks of the unrendered real attributes (decided 2026-09-28). The datasets keep them out of every
+result (`scoring/pair_dataset.py`).
+
+**``--n-bios`` is fixed before the pilot and never changed after it** (12,000, decided 2026-09-28). It is the
+pool the runs draw from, not what they score: the probe split takes ``probe_records`` of it and the
+cross-marker design ``n_strong`` + ``n_weak`` of the rest (about 5,900 per group). A different value breaks
+every nesting the pilot-then-freeze relies on, since (i) the qualified label and target roles are assigned on
+the sample itself (`bios_clean.assign_roles`; 4,000 -> 6,000 changed 68 labels and 1,878 target roles of the
+same first 4,000 bios, and the role is in the header), (ii) the probe split takes the first records in hash
+order over the whole manifest, and (iii) the cross-marker design shuffles the whole pool with a seed. The
+pool after the profession cap holds 32,774 bios.
 
 The corpus is user-downloaded (not committed) into data/demographic/cv/raw/. Fetch it once with
 `--from-hub`; note these are biographies of identifiable real people, so neither the raw corpus nor
@@ -30,26 +46,27 @@ Usage:
     # one-time fetch of the HF mirror into data/demographic/cv/raw/ (MIT licence)
     python runners/generate_bios.py --from-hub
 
-    python runners/generate_bios.py --encodings explicit,proxy --n-bios 4000 --seed 42 \
+    python runners/generate_bios.py --encodings explicit,proxy --n-bios 12000 --seed 42 \
         --out-dir data/demographic/cv
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from substrates.bios_clean import FACTORIAL_RULES, load_factorial_bios
+from substrates.bios_clean import load_factorial_bios
 from substrates.bios_ingest import DEFAULT_BIOS_PATH, fetch_from_hub
 from substrates.bios_render import BIOS_TEMPLATES, render_bio
 from pairs.factorial import HIRING_DESIGN, build_factorial_rows
-from pairs.validate import Thresholds, validate_pair
+from pairs.validate import add_threshold_args, thresholds_from_args, validate_pair
 from pairs.manifest import BIOS_ATTRIBUTION, write_manifest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s",
@@ -57,6 +74,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger("gen-bios")
 
 DEFAULT_AXES = HIRING_DESIGN.axes + ("intersection",)
+DEFAULT_N_BIOS = 12_000  # fixed before the pilot (module docstring)
 
 
 def main() -> None:
@@ -68,21 +86,14 @@ def main() -> None:
                     help="Which pair types to write (the 8 cells are always rendered)")
     ap.add_argument("--encodings", default="explicit,proxy")
     ap.add_argument("--templates", default=",".join(sorted(BIOS_TEMPLATES)))
-    ap.add_argument("--n-bios", type=int, default=4000,
-                    help="Biographies to use (after the scrub and plausibility filters)")
-    ap.add_argument("--n-per", type=int, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--n-bios", type=int, default=DEFAULT_N_BIOS,
+                    help="Biographies in the manifest (after the scrub and plausibility filters). Fixed before "
+                         "the pilot and never changed after it: a different value relabels the same bios "
+                         "(module docstring)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out-dir", type=Path, default=Path("data/demographic/cv"))
-    ap.add_argument("--max-char-delta", type=int, default=12)
-    ap.add_argument("--max-token-delta", type=int, default=3)
-    ap.add_argument("--max-flesch-delta", type=float, default=8.0)
-    # The composed 3-way intersection clause is inherently longer than a marginal one, so the gate
-    # gets a relaxed char bound for that axis only.
-    ap.add_argument("--intersection-char-delta", type=int, default=40)
+    add_threshold_args(ap)
     args = ap.parse_args()
-    if args.n_per is not None:
-        ap.error("--n-per was replaced by --n-bios: the factorial design emits a fixed set of pairs "
-                 "per biography")
 
     raw_path = args.raw_path or DEFAULT_BIOS_PATH
     if args.from_hub:
@@ -92,8 +103,7 @@ def main() -> None:
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
     encodings = [e.strip() for e in args.encodings.split(",") if e.strip()]
     templates = [t.strip() for t in args.templates.split(",") if t.strip()]
-    base = Thresholds(args.max_char_delta, args.max_token_delta, args.max_flesch_delta)
-    wide = Thresholds(args.intersection_char_delta, args.max_token_delta, args.max_flesch_delta)
+    thr = thresholds_from_args(args)
 
     # raises FileNotFoundError with fetch instructions if absent
     corpus_report: Dict[str, Any] = {}
@@ -136,7 +146,7 @@ def main() -> None:
         encodings=encodings,
         templates=templates,
         seed=args.seed,
-        validate=lambda pair: validate_pair(pair, wide if pair.axis == "intersection" else base),
+        validate=lambda pair: validate_pair(pair, thr),
         content_label="bio_content",
     )
     for enc, g in gate.items():
@@ -149,11 +159,9 @@ def main() -> None:
                                 "n_records_used": len(records), "gate": gate}
     paths = write_manifest(
         out_dir=args.out_dir, records=pair_rows, seed=args.seed, discard_report=discards,
-        thresholds={"max_char_delta": args.max_char_delta, "max_token_delta": args.max_token_delta,
-                    "max_flesch_delta": args.max_flesch_delta,
-                    "intersection_char_delta": args.intersection_char_delta},
+        thresholds=dataclasses.asdict(thr),
         domain="cv", attribution=BIOS_ATTRIBUTION,
-        cells=cell_rows,
+        cells=cell_rows, sources={"bias_in_bios.parquet": raw_path},
     )
     logger.info("Wrote %d pairs -> %s", len(pair_rows), paths["pairs"])
     logger.info("Wrote %d factorial blocks -> %s", len(cell_rows), paths["cells"])
