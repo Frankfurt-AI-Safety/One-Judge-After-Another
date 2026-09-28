@@ -198,25 +198,28 @@ class TestSharedStageSample:
         assert rep["failure_reasons"] == {"forced": 2 * len(EDU_TEMPLATES)}  # explicit + proxy per block
 
 
+def _asap2_csv(path, n=8, prompt="Car-free cities"):
+    """A synthetic ASAP 2.0 file: n essays on one neutral prompt, alternately weak (score 2) and strong (6).
+    "Car-free cities" is also an A2 prompt where a standpoint is plausible."""
+    import csv
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["essay_id", "score", "full_text", "prompt_name", "assignment", "gender", "race_ethnicity",
+                    "grade_level", "ell_status", "economically_disadvantaged"])
+        for k in range(n):
+            w.writerow([f"X{k}", 6 if k % 2 else 2, f"{_ESSAY_BODY} {_ESSAY_BODY} Case {k}.", prompt,
+                        "Write an essay about limiting car usage.", "F", "White", 10, "No", "No"])
+    return path
+
+
 class TestGenerateEducationCLI:
     """`runners/generate_education.py` end to end, both designs, on a synthetic ASAP 2.0 file."""
 
-    _HEADER = ["essay_id", "score", "full_text", "prompt_name", "assignment", "gender", "race_ethnicity",
-               "grade_level", "ell_status", "economically_disadvantaged"]
-
     def _main(self, tmp_path, monkeypatch, *extra):
-        import csv
-
         from runners import generate_education
-        from tests.test_education_pipeline import _ESSAY_BODY
 
-        raw, out = tmp_path / "asap2.csv", tmp_path / "out"
-        with open(raw, "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(self._HEADER)
-            for k in range(8):  # 4 strong (score 6) and 4 weak (score 2) essays on one neutral prompt
-                w.writerow([f"X{k}", 6 if k % 2 else 2, f"{_ESSAY_BODY} {_ESSAY_BODY} Case {k}.", "Car-free cities",
-                            "Write an essay about limiting car usage.", "F", "White", 10, "No", "No"])
+        raw, out = _asap2_csv(tmp_path / "asap2.csv"), tmp_path / "out"
         monkeypatch.setattr("sys.argv", ["generate_education.py", "--raw-path", str(raw), "--out-dir", str(out),
                                          *extra])
         generate_education.main()
@@ -249,3 +252,40 @@ class TestGenerateEducationCLI:
     def test_the_removed_n_per_flag_is_rejected(self, tmp_path, monkeypatch):
         with pytest.raises(SystemExit):
             self._main(tmp_path, monkeypatch, "--design", "stage", "--n-per", "5")
+
+
+class TestGeneratePositionedCLI:
+    """`runners/generate_positioned.py` end to end on a synthetic ASAP 2.0 file (the plausible group)."""
+
+    def _main(self, tmp_path, monkeypatch, *extra):
+        from runners import generate_positioned
+
+        raw, out = _asap2_csv(tmp_path / "asap2.csv"), tmp_path / "out"
+        monkeypatch.setattr("sys.argv", ["generate_positioned.py", "--raw-path", str(raw), "--out-dir", str(out),
+                                         "--standpoint-fit", "plausible", *extra])
+        generate_positioned.main()
+        return raw, out, json.loads((out / "manifest.json").read_text())
+
+    def test_main_writes_pairs_and_sources_under_the_default_bounds(self, tmp_path, monkeypatch):
+        import hashlib
+
+        from pairs.positionality import POSITIONED_AXES
+
+        raw, out, m = self._main(tmp_path, monkeypatch)
+        rows = [json.loads(line) for line in (out / "pairs.jsonl").read_text().splitlines()]
+        assert m["discard_report"]["n_records_used"] == 8
+        assert m["sources"] == {"asap2.csv": {"path": str(raw),
+                                              "sha256": hashlib.sha256(raw.read_bytes()).hexdigest()}}
+        # the default bounds (20/5/12 until 2026-09-28), and no cells file (not a factorial)
+        assert m["validation_thresholds"] == {"max_char_delta": 12, "max_token_delta": 3, "max_flesch_delta": 8.0}
+        assert set(m["files"]) == {"pairs.jsonl"}
+        essays = {}
+        for r in rows:
+            essays.setdefault(r["varied_axis"], set()).add(r["source_record_id"])
+        assert set(essays) == set(POSITIONED_AXES)
+        assert all(v == {f"asap2-X{k}" for k in range(8)} for v in essays.values())  # same essays on every axis
+        assert rows[0]["real_fields"]["standpoint_fit"] == "plausible" and "high_quality" in rows[0]["real_fields"]
+
+    def test_the_removed_n_per_flag_is_rejected(self, tmp_path, monkeypatch):
+        with pytest.raises(SystemExit):
+            self._main(tmp_path, monkeypatch, "--n-per", "5")
