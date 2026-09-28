@@ -180,6 +180,14 @@ def education_rules(prompts: Optional[Collection[str]] = NEUTRAL_PROMPTS) -> Tup
 EDUCATION_RULES: Tuple[Rule, ...] = education_rules()
 
 
+def source_path(source: str = "asap2", path: str | Path | None = None) -> Path:
+    """The corpus file `load_education_essays` reads for ``source``: ``path`` if given, else the source's
+    default location (the generators record it, with its SHA-256, in the manifest)."""
+    if source not in _SOURCES:
+        raise ValueError(f"source must be one of {sorted(_SOURCES)}, got {source!r}")
+    return Path(path or _SOURCES[source][1])
+
+
 def load_education_essays(
     path: str | Path | None = None,
     *,
@@ -207,10 +215,7 @@ def load_education_essays(
     is a dict it is filled with the loader's own counts plus ``education_rules``, ``balance`` and
     ``placeholders`` (on the returned essays; see `placeholder_report`).
     """
-    if source not in _SOURCES:
-        raise ValueError(f"source must be one of {sorted(_SOURCES)}, got {source!r}")
-    loader, default_path = _SOURCES[source]
-    records = loader(path or default_path, report=report, **kwargs)
+    records = _SOURCES[source][0](source_path(source, path), report=report, **kwargs)
     kept, rules_report = apply_rules(records, education_rules(prompts))
     if report is not None:
         report["education_rules"] = rules_report

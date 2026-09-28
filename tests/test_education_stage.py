@@ -8,6 +8,7 @@ Tests for the education arm's stage axis: the plausibility/selection rules
 from __future__ import annotations
 
 import dataclasses
+import json
 import random
 
 import pytest
@@ -144,12 +145,12 @@ class TestSharedStageSample:
     _AXES = ["grade_level", *STAGE_LADDER_AXES]
     _ENCS = ["explicit", "proxy"]
 
-    def _rows(self, validate=None, n_per=15):
+    def _rows(self, validate=None):
         from runners.generate_education import build_stage_rows
 
         recs = [_rec(f"essay-{i:03d}") for i in range(12)]
         return build_stage_rows(recs, axes=self._AXES, encodings=self._ENCS, templates=list(EDU_TEMPLATES),
-                                n_per=n_per, seed=42,
+                                seed=42,
                                 validate=validate or (lambda pair: validate_pair(pair, Thresholds())))
 
     def test_every_rung_and_encoding_uses_the_same_essays_and_templates(self):
@@ -159,7 +160,14 @@ class TestSharedStageSample:
             samples.setdefault((r["varied_axis"], r["encoding"]), set()).add((r["source_record_id"], r["template_id"]))
         assert set(samples) == {(a, e) for a in self._AXES for e in self._ENCS}
         assert len({frozenset(s) for s in samples.values()}) == 1  # identical sample in every cell
-        assert rep["blocks_kept"] == rep["pairs_per_cell"] == 15
+        assert rep["blocks_kept"] == rep["pairs_per_cell"] == 12 * len(EDU_TEMPLATES)
+
+    def test_every_essay_and_template_is_one_block(self):
+        # Until 2026-09-28 a sample of 500 (essay, template) blocks: 462 of 2,018 essays, 38 of them twice.
+        rows, _ = self._rows()
+        cell = [(r["source_record_id"], r["template_id"]) for r in rows
+                if (r["varied_axis"], r["encoding"]) == ("grade_level", "explicit")]
+        assert sorted(cell) == sorted((f"essay-{i:03d}", t) for i in range(12) for t in EDU_TEMPLATES)
 
     def test_pair_rows_carry_real_fields(self):
         # The probe_records split stratifies on real_fields["high_quality"] (audit item 4.1).
@@ -184,7 +192,60 @@ class TestSharedStageSample:
             bad = pair.record_id == "essay-003" and pair.axis == "stage_masters"
             return ValidationResult(ok=not bad, reasons=["forced"] if bad else [], codes=["forced"] if bad else [])
 
-        rows, rep = self._rows(validate=validate, n_per=100)
+        rows, rep = self._rows(validate=validate)
         assert "essay-003" not in {r["source_record_id"] for r in rows}
         assert rep["blocks_dropped"] == len(EDU_TEMPLATES)
         assert rep["failure_reasons"] == {"forced": 2 * len(EDU_TEMPLATES)}  # explicit + proxy per block
+
+
+class TestGenerateEducationCLI:
+    """`runners/generate_education.py` end to end, both designs, on a synthetic ASAP 2.0 file."""
+
+    _HEADER = ["essay_id", "score", "full_text", "prompt_name", "assignment", "gender", "race_ethnicity",
+               "grade_level", "ell_status", "economically_disadvantaged"]
+
+    def _main(self, tmp_path, monkeypatch, *extra):
+        import csv
+
+        from runners import generate_education
+        from tests.test_education_pipeline import _ESSAY_BODY
+
+        raw, out = tmp_path / "asap2.csv", tmp_path / "out"
+        with open(raw, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(self._HEADER)
+            for k in range(8):  # 4 strong (score 6) and 4 weak (score 2) essays on one neutral prompt
+                w.writerow([f"X{k}", 6 if k % 2 else 2, f"{_ESSAY_BODY} {_ESSAY_BODY} Case {k}.", "Car-free cities",
+                            "Write an essay about limiting car usage.", "F", "White", 10, "No", "No"])
+        monkeypatch.setattr("sys.argv", ["generate_education.py", "--raw-path", str(raw), "--out-dir", str(out),
+                                         *extra])
+        generate_education.main()
+        return raw, out, json.loads((out / "manifest.json").read_text())
+
+    def test_factorial_writes_pairs_cells_and_sources(self, tmp_path, monkeypatch):
+        import hashlib
+
+        raw, out, m = self._main(tmp_path, monkeypatch)
+        n = len(EDU_TEMPLATES) * 8
+        assert m["discard_report"]["n_records_used"] == 8
+        assert m["files"]["cells.jsonl"]["n_rows"] == 2 * n  # both encodings
+        assert m["files"]["pairs.jsonl"]["n_rows"] == 2 * n * 13  # 3 axes x 4 + 1 corner per block
+        assert m["sources"] == {"asap2.csv": {"path": str(raw),
+                                              "sha256": hashlib.sha256(raw.read_bytes()).hexdigest()}}
+        assert m["validation_thresholds"] == {"max_char_delta": 12, "max_token_delta": 3, "max_flesch_delta": 8.0}
+
+    def test_stage_uses_every_essay_and_template_and_writes_no_cells(self, tmp_path, monkeypatch):
+        _, out, m = self._main(tmp_path, monkeypatch, "--design", "stage", "--include-ladder")
+        rows = [json.loads(line) for line in (out / "pairs.jsonl").read_text().splitlines()]
+        per_cell = {}
+        for r in rows:
+            per_cell.setdefault((r["varied_axis"], r["encoding"]), []).append((r["source_record_id"], r["template_id"]))
+        assert len(per_cell) == (1 + len(STAGE_LADDER_AXES)) * 2
+        assert all(sorted(v) == sorted((f"asap2-X{k}", t) for k in range(8) for t in EDU_TEMPLATES)
+                   for v in per_cell.values())
+        assert not (out / "cells.jsonl").exists() and set(m["files"]) == {"pairs.jsonl"}
+        assert set(m["sources"]) == {"asap2.csv"}
+
+    def test_the_removed_n_per_flag_is_rejected(self, tmp_path, monkeypatch):
+        with pytest.raises(SystemExit):
+            self._main(tmp_path, monkeypatch, "--design", "stage", "--n-per", "5")

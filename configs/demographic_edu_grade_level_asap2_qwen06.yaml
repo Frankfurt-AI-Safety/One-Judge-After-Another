@@ -3,8 +3,8 @@
 # A1 header-proxy arm over real essays (ASAP 2.0). Same essay body, swap only
 # the education-stage cue in the header (6th-grade pupil vs final-year doctoral candidate) as an
 # age/maturity proxy.
-# The stage design has its OWN manifest and population (stage-neutral prompts, no pupil cues),
-# separate from the sex x ethnicity x economic-status factorial in <source>/.
+# The stage design has its own manifest (<source>_stage/), built from the same essays as the
+# sex x ethnicity x economic-status factorial in <source>/ (every essay x every template, since 2026-09-28).
 #   python runners/generate_education.py --design stage --include-ladder
 #
 #   python runners/run_battery.py --config configs/demographic_edu_grade_level_asap2_qwen06.yaml --axes grade_level --encodings proxy \
