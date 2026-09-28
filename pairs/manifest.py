@@ -4,13 +4,17 @@ factorial, the stage design and the positioned-argument design).
 
 Each matched pair becomes one self-describing JSONL row (which axis varied, what was held fixed, template,
 encoding, intersectional cell, the A/B texts and clauses, the record's real fields, provenance). The writer
-emits three files into the output directory:
+emits into the output directory:
 - ``pairs.jsonl``   — one row per matched pair (what the loader reads).
+- ``cells.jsonl``   — the factorial generators only: one row per block with all eight texts (what the
+  cross-marker design reads).
+- ``spotcheck.csv`` — a seeded sample for human review, stratified by (axis, encoding).
 - ``manifest.json`` — generator version, the git commit and dirty paths (`code_provenance`), seed, counts
   per axis/encoding, template hashes, validation thresholds, discard report, domain and the
-  substrate's licence line.
-- ``spotcheck.csv`` — a seeded sample for human review, stratified by (axis, encoding).
-The factorial generators also write ``cells.jsonl`` (all eight texts per block) next to these, themselves.
+  substrate's licence line; ``files``, the row count and SHA-256 of ``pairs.jsonl`` and ``cells.jsonl``, so a
+  result can name the exact data it ran on; and ``sources``, the path and SHA-256 of each corpus file read.
+  An earlier build's manifest is removed first and the new one written last, so a build that stopped
+  part-way leaves no manifest at all rather than one describing other files.
 
 Per-RM chat-template formatting is intentionally NOT stored: it is applied at scoring time
 (``format_conversation``) with each model's tokenizer, so one manifest serves every RM.
@@ -51,7 +55,9 @@ _ALL_TEMPLATES: Dict[str, str] = _merge_templates(TEMPLATES, BIOS_TEMPLATES, EDU
 # 0.3.0: pairs/ code review (2026-09-26): education proxy names drawn independently per cell, stage pairs'
 #        held_fixed/cell metadata, gate reason codes and clause-position check. manifest.json also records the
 #        git commit (`code_provenance`), which identifies the code even where this version was not bumped.
-GENERATOR_VERSION = "0.3.0"
+# 0.4.0: runners/ review (2026-09-28): rows carry no ``role``; manifest.json lists the data files it describes
+#        (``files``, with cells.jsonl now written here) and the corpus files read (``sources``).
+GENERATOR_VERSION = "0.4.0"
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -92,6 +98,22 @@ def code_provenance(root: Path = _REPO_ROOT) -> Dict[str, Any]:
         return {"git_commit": None, "git_dirty": None, "git_dirty_paths": None}
     paths = sorted(line[3:] for line in status.splitlines() if line.strip())
     return {"git_commit": commit, "git_dirty": bool(paths), "git_dirty_paths": paths}
+
+
+def file_sha256(path: Path | str) -> str:
+    """SHA-256 of a file's bytes, read in chunks (pairs.jsonl runs to ~80 MB)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _write_jsonl(path: Path, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    with open(path, "w") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+    return {"n_rows": len(rows), "sha256": file_sha256(path)}
 
 
 def _template_hash(template_id: str) -> str:
@@ -166,20 +188,29 @@ def write_manifest(
     spotcheck_n: int = 30,
     domain: str,
     attribution: str,
+    cells: Optional[List[Dict[str, Any]]] = None,
+    sources: Optional[Dict[str, Path | str]] = None,
 ) -> Dict[str, Path]:
-    """Write pairs.jsonl + manifest.json + spotcheck.csv. Returns the written paths.
+    """Write pairs.jsonl (+ cells.jsonl when ``cells`` is given) + spotcheck.csv, then manifest.json. Returns
+    the written paths.
 
     ``domain`` and ``attribution`` (the substrate's licence line) have no default: a generator that forgot
-    them would otherwise label its manifest as German Credit under CC-BY."""
+    them would otherwise label its manifest as German Credit under CC-BY. ``sources`` names the corpus files
+    read (name -> path); each is recorded with its SHA-256. A build without cells removes a cells.jsonl left
+    in ``out_dir`` by an earlier build, which would otherwise sit next to pairs it does not belong to."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     pairs_path = out_dir / "pairs.jsonl"
+    cells_path = out_dir / "cells.jsonl"
     manifest_path = out_dir / "manifest.json"
     spotcheck_path = out_dir / "spotcheck.csv"
 
-    with open(pairs_path, "w") as f:
-        for rec in records:
-            f.write(json.dumps(rec) + "\n")
+    manifest_path.unlink(missing_ok=True)  # an earlier build's, until this one is complete
+    files = {"pairs.jsonl": _write_jsonl(pairs_path, records)}
+    if cells is not None:
+        files["cells.jsonl"] = _write_jsonl(cells_path, cells)
+    elif cells_path.exists():
+        cells_path.unlink()
 
     # counts per (axis, encoding)
     counts: Dict[str, int] = {}
@@ -200,8 +231,10 @@ def write_manifest(
         "validation_thresholds": thresholds,
         "discard_report": discard_report,
         "attribution": attribution,
+        "files": files,
+        "sources": {name: {"path": str(path), "sha256": file_sha256(path)}
+                    for name, path in (sources or {}).items()},
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2))
 
     sample = _spotcheck_sample(records, spotcheck_n, seed)
     with open(spotcheck_path, "w", newline="") as f:
@@ -212,4 +245,8 @@ def write_manifest(
             w.writerow([rec["id"], rec["varied_axis"], rec["encoding"], rec["template_id"],
                         rec["label_a"], rec["label_b"], rec["text_a"], rec["text_b"]])
 
-    return {"pairs": pairs_path, "manifest": manifest_path, "spotcheck": spotcheck_path}
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    paths = {"pairs": pairs_path, "manifest": manifest_path, "spotcheck": spotcheck_path}
+    if cells is not None:
+        paths["cells"] = cells_path
+    return paths

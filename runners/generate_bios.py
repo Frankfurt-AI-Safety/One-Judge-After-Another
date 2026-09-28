@@ -37,7 +37,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
@@ -154,13 +153,10 @@ def main() -> None:
                     "max_flesch_delta": args.max_flesch_delta,
                     "intersection_char_delta": args.intersection_char_delta},
         domain="cv", attribution=BIOS_ATTRIBUTION,
+        cells=cell_rows,
     )
-    cells_path = args.out_dir / "cells.jsonl"
-    with open(cells_path, "w") as f:
-        for row in cell_rows:
-            f.write(json.dumps(row) + "\n")
     logger.info("Wrote %d pairs -> %s", len(pair_rows), paths["pairs"])
-    logger.info("Wrote %d factorial blocks -> %s", len(cell_rows), cells_path)
+    logger.info("Wrote %d factorial blocks -> %s", len(cell_rows), paths["cells"])
     logger.info("Manifest: %s | spot-check: %s", paths["manifest"], paths["spotcheck"])
 
 

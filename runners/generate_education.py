@@ -34,7 +34,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import random
 import sys
@@ -230,13 +229,10 @@ def run_factorial(args) -> None:
         thresholds={"max_char_delta": args.max_char_delta, "max_token_delta": args.max_token_delta,
                     "max_flesch_delta": args.max_flesch_delta},
         domain="education", attribution=f"{EDU_ATTRIBUTION} Source corpus: {args.source}.",
+        cells=cell_rows,
     )
-    cells_path = out_dir / "cells.jsonl"
-    with open(cells_path, "w") as f:
-        for row in cell_rows:
-            f.write(json.dumps(row) + "\n")
     logger.info("Wrote %d pairs -> %s", len(pair_rows), paths["pairs"])
-    logger.info("Wrote %d factorial blocks -> %s", len(cell_rows), cells_path)
+    logger.info("Wrote %d factorial blocks -> %s", len(cell_rows), paths["cells"])
     logger.info("Manifest: %s | spot-check: %s", paths["manifest"], paths["spotcheck"])
 
 

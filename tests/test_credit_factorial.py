@@ -197,6 +197,76 @@ class TestGenerator:
         assert {r["varied_axis"] for r in rows} == {"intersection"}
 
 
+    def test_record_cap_takes_a_prefix_of_the_seeded_order(self):
+        from runners.generate_credit import build_dataset
+
+        recs = [_rec(f"german-{i:04d}", credit_amount_dm=1000 + i) for i in range(8)]
+
+        def used(n):
+            _, cells, report = build_dataset(recs, encodings=("explicit",), templates=("credit_v1",), n_records=n)
+            assert report["n_records_used"] == len(cells) == (n or 8)
+            return [c["source_record_id"] for c in cells]
+
+        assert used(3) == used(5)[:3] == used(None)[:3]
+        assert sorted(used(None)) == [r.source_record_id for r in recs]
+
+
+# --------------------------------------------------------------------------- CLI
+def _german_data(path, n=6):
+    """A synthetic `german.data`: n records in the Statlog coding, one per sex/marital code in turn."""
+    codes = ("A91", "A92", "A93", "A94")
+    path.write_text("".join(
+        f"A14 12 A34 A43 {1000 + i} A61 A73 2 {codes[i % 4]} A101 2 A121 {30 + i} A143 A152 1 A173 1 A192 "
+        f"A201 {1 + i % 2}\n" for i in range(n)))
+    return path
+
+
+class TestCLI:
+    def test_threshold_flags_default_to_the_gate_defaults(self):
+        import argparse
+
+        from pairs.validate import Thresholds, add_threshold_args, thresholds_from_args
+
+        ap = argparse.ArgumentParser()
+        add_threshold_args(ap)
+        assert thresholds_from_args(ap.parse_args([])) == Thresholds()
+        ap = argparse.ArgumentParser()
+        add_threshold_args(ap, Thresholds(20, 5, 12.0))
+        assert thresholds_from_args(ap.parse_args(["--max-token-delta", "7"])) == Thresholds(20, 7, 12.0)
+
+    def test_the_removed_n_per_flag_is_rejected(self, tmp_path, monkeypatch):
+        from runners import generate_credit
+
+        monkeypatch.setattr("sys.argv", ["generate_credit.py", "--n-per", "5"])
+        with pytest.raises(SystemExit):
+            generate_credit.main()
+
+    def test_main_writes_the_files_the_manifest_names(self, tmp_path, monkeypatch):
+        import hashlib
+
+        from runners import generate_credit
+
+        raw, out = _german_data(tmp_path / "german.data"), tmp_path / "out"
+        monkeypatch.setattr("sys.argv", ["generate_credit.py", "--raw", str(raw), "--out-dir", str(out)])
+        generate_credit.main()
+
+        m = json.loads((out / "manifest.json").read_text())
+        n_used = m["discard_report"]["n_records_used"]
+        assert n_used == 6
+        pairs = (out / "pairs.jsonl").read_text().splitlines()
+        cells = (out / "cells.jsonl").read_text().splitlines()
+        assert len(pairs) == m["n_records"] == n_used * 2 * (13 + 9)  # 2 templates, explicit + proxy
+        assert len(cells) == n_used * 2 * 2
+        for name, lines in (("pairs.jsonl", pairs), ("cells.jsonl", cells)):
+            assert m["files"][name] == {"n_rows": len(lines),
+                                        "sha256": hashlib.sha256((out / name).read_bytes()).hexdigest()}
+        assert m["sources"] == {"german.data": {"path": str(raw),
+                                                "sha256": hashlib.sha256(raw.read_bytes()).hexdigest()}}
+        assert m["validation_thresholds"] == {"max_char_delta": 12, "max_token_delta": 3,
+                                              "max_flesch_delta": 8.0}
+        assert (out / "spotcheck.csv").exists()
+
+
 # --------------------------------------------------------------------------- split
 class TestGroupedSplit:
     def _manifest(self, tmp_path, n_records=30):

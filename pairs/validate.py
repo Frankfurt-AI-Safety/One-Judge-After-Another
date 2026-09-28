@@ -24,6 +24,7 @@ guards against a builder mistake rather than filtering pairs.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -103,6 +104,20 @@ def validate_pair(pair: GeneratedPair, thr: Optional[Thresholds] = None) -> Vali
         metrics={"char_delta": char_delta, "token_delta": token_delta, "flesch_delta": flesch_delta},
         codes=codes,
     )
+
+
+def add_threshold_args(ap: argparse.ArgumentParser, base: Optional[Thresholds] = None) -> None:
+    """The generators' ``--max-char-delta``/``--max-token-delta``/``--max-flesch-delta`` flags, defaulting to
+    ``base`` (`Thresholds()` unless a generator has looser bounds), so the defaults live in one place."""
+    base = base or Thresholds()
+    ap.add_argument("--max-char-delta", type=int, default=base.max_char_delta)
+    ap.add_argument("--max-token-delta", type=int, default=base.max_token_delta)
+    ap.add_argument("--max-flesch-delta", type=float, default=base.max_flesch_delta)
+
+
+def thresholds_from_args(args: argparse.Namespace) -> Thresholds:
+    """The `Thresholds` of the flags `add_threshold_args` added."""
+    return Thresholds(args.max_char_delta, args.max_token_delta, args.max_flesch_delta)
 
 
 def tally_reasons(results: Iterable[ValidationResult], counts: Dict[str, int]) -> None:

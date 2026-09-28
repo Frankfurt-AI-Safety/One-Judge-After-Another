@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ import pytest
 
 from pairs.manifest import (
     GENERATOR_VERSION, _ALL_TEMPLATES, _merge_templates, _spotcheck_sample, _template_hash, code_provenance,
-    write_manifest,
+    file_sha256, write_manifest,
 )
 from pairs.positionality import POSITION_TEMPLATES
 from substrates.bios_render import BIOS_TEMPLATES
@@ -152,3 +153,53 @@ def test_rows_carry_no_role_and_the_summary_counts_by_axis_and_encoding(tmp_path
     paths = write_manifest(tmp_path, [row], seed=1, discard_report={}, thresholds={}, domain="credit",
                            attribution="a")
     assert json.loads(paths["manifest"].read_text())["counts_by_axis_encoding"] == {"sex/explicit": 1}
+
+
+# --------------------------------------------------------------------------- the files a manifest names
+def _pair_row(i=0):
+    return {"id": f"p{i}", "varied_axis": "sex", "encoding": "explicit", "template_id": "credit_v1",
+            "label_a": "female", "label_b": "male", "text_a": "a", "text_b": "b"}
+
+
+def _write(tmp_path, rows, **kw):
+    return write_manifest(tmp_path, rows, seed=1, discard_report={}, thresholds={}, domain="credit",
+                          attribution="a", **kw)
+
+
+def test_file_sha256_is_the_digest_of_the_bytes(tmp_path):
+    (tmp_path / "f").write_bytes(b"abc" * 1_000_000)  # more than one chunk
+    assert file_sha256(tmp_path / "f") == hashlib.sha256(b"abc" * 1_000_000).hexdigest()
+
+
+def test_manifest_names_its_data_files_by_row_count_and_hash(tmp_path):
+    cells = [{"id": "c0", "cells": []}, {"id": "c1", "cells": []}]
+    paths = _write(tmp_path, [_pair_row(0), _pair_row(1), _pair_row(2)], cells=cells)
+    m = json.loads(paths["manifest"].read_text())
+    assert paths["cells"] == tmp_path / "cells.jsonl"
+    assert [json.loads(line) for line in paths["cells"].read_text().splitlines()] == cells
+    assert m["files"] == {
+        "pairs.jsonl": {"n_rows": 3, "sha256": hashlib.sha256(paths["pairs"].read_bytes()).hexdigest()},
+        "cells.jsonl": {"n_rows": 2, "sha256": hashlib.sha256(paths["cells"].read_bytes()).hexdigest()},
+    }
+    assert m["sources"] == {}
+
+
+def test_manifest_names_the_corpus_files_by_hash(tmp_path):
+    src = tmp_path / "german.data"
+    src.write_text("A11 6 ...\n")
+    m = json.loads(_write(tmp_path / "out", [_pair_row()], sources={"german.data": src})["manifest"].read_text())
+    assert m["sources"] == {"german.data": {"path": str(src), "sha256": file_sha256(src)}}
+
+
+def test_a_build_without_cells_removes_an_earlier_cells_file(tmp_path):
+    _write(tmp_path, [_pair_row()], cells=[{"id": "c0"}])
+    paths = _write(tmp_path, [_pair_row()])
+    assert not (tmp_path / "cells.jsonl").exists() and "cells" not in paths
+    assert set(json.loads(paths["manifest"].read_text())["files"]) == {"pairs.jsonl"}
+
+
+def test_a_build_that_fails_part_way_leaves_no_manifest(tmp_path):
+    _write(tmp_path, [_pair_row()])
+    with pytest.raises(TypeError):
+        _write(tmp_path, [_pair_row()], cells=[{"id": object()}])  # not serialisable: fails after pairs.jsonl
+    assert not (tmp_path / "manifest.json").exists()

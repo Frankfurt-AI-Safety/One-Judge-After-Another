@@ -10,8 +10,13 @@ Pipeline:
      the matched pairs from them (`pairs/factorial.py`), per template and encoding
   5. Tier-1 structural gate on every pair; a record/template/encoding block with any failing pair is
      dropped whole, so the factorial stays balanced
-  6. write pairs.jsonl (+ manifest.json, spotcheck.csv) and cells.jsonl (all 8 texts per block, plus
-     the record's real sex/marital/age fields for stratified analysis — never rendered)
+  6. write pairs.jsonl, cells.jsonl (all 8 texts per block), spotcheck.csv and manifest.json
+     (`pairs/manifest.py`; it names the data files and the corpus file it was built from by SHA-256)
+
+Every pair row and every cells row carries the record's ``real_fields``, never rendered: ``credit_good``, the
+quality label the probe split stratifies on and the cross-marker design groups by, and the corpus's own sex,
+marital status and age (``personal_status_sex``, ``age``), which nothing reads yet; they are kept for a
+check of the unrendered real attributes. The datasets keep them out of every result (`scoring/pair_dataset.py`).
 
 Every drop is counted in manifest.json's discard report. The train/eval split happens at load time
 and is grouped by record (`scoring/pair_dataset.py`).
@@ -24,7 +29,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
+import dataclasses
 import logging
 import random
 import sys
@@ -38,7 +43,7 @@ from substrates.credit_clean import FACTORIAL_RULES, RECORD_RULES, apply_rules
 from substrates.credit_ingest import DEFAULT_RAW_PATH, GermanCreditRecord, load_german_credit
 from substrates.credit_render import TEMPLATES, render_profile
 from pairs.factorial import CREDIT_DESIGN, build_factorial_rows
-from pairs.validate import Thresholds, validate_pair
+from pairs.validate import Thresholds, add_threshold_args, thresholds_from_args, validate_pair
 from pairs.manifest import GERMAN_CREDIT_ATTRIBUTION, write_manifest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s",
@@ -99,22 +104,16 @@ def main() -> None:
     ap.add_argument("--templates", default=",".join(sorted(TEMPLATES)))
     ap.add_argument("--n-records", type=int, default=None,
                     help="Cap on records used (default: every record that passes the rules)")
-    ap.add_argument("--n-per", type=int, default=None, help=argparse.SUPPRESS)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out-dir", type=Path, default=Path("data/demographic/credit"))
     ap.add_argument("--raw", type=Path, default=DEFAULT_RAW_PATH)
-    ap.add_argument("--max-char-delta", type=int, default=12)
-    ap.add_argument("--max-token-delta", type=int, default=3)
-    ap.add_argument("--max-flesch-delta", type=float, default=8.0)
+    add_threshold_args(ap)
     args = ap.parse_args()
-    if args.n_per is not None:
-        ap.error("--n-per was replaced by --n-records: the factorial design emits a fixed set of "
-                 "pairs per record")
 
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
     encodings = [e.strip() for e in args.encodings.split(",") if e.strip()]
     templates = [t.strip() for t in args.templates.split(",") if t.strip()]
-    thr = Thresholds(args.max_char_delta, args.max_token_delta, args.max_flesch_delta)
+    thr = thresholds_from_args(args)
 
     records = load_german_credit(args.raw)
     logger.info("Loaded %d German Credit records; templates=%s", len(records), templates)
@@ -134,16 +133,12 @@ def main() -> None:
 
     paths = write_manifest(
         args.out_dir, pair_rows, seed=args.seed, discard_report=report,
-        thresholds={"max_char_delta": thr.max_char_delta, "max_token_delta": thr.max_token_delta,
-                    "max_flesch_delta": thr.max_flesch_delta},
+        thresholds=dataclasses.asdict(thr),
         domain="credit", attribution=GERMAN_CREDIT_ATTRIBUTION,
+        cells=cell_rows, sources={"german.data": args.raw},
     )
-    cells_path = args.out_dir / "cells.jsonl"
-    with open(cells_path, "w") as f:
-        for row in cell_rows:
-            f.write(json.dumps(row) + "\n")
     logger.info("Wrote %d pairs → %s", len(pair_rows), paths["pairs"])
-    logger.info("Wrote %d factorial blocks → %s", len(cell_rows), cells_path)
+    logger.info("Wrote %d factorial blocks → %s", len(cell_rows), paths["cells"])
     logger.info("Manifest: %s | spot-check: %s", paths["manifest"], paths["spotcheck"])
 
 
