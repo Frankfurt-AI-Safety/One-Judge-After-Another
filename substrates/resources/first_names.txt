@@ -1,5 +1,6 @@
 # Sex-coded U.S. first names, built by runners/build_first_names.py -- do not edit by hand.
-# Source: SSA national baby names (public domain) via https://raw.githubusercontent.com/hadley/data-baby-names/master/baby-names.csv
+# Source: SSA national baby names (public domain) via https://raw.githubusercontent.com/hadley/data-baby-names/b6525579cf7d2816e77fa885299445d15a09c906/baby-names.csv
+# Inputs (SHA-256): baby-names.csv 1259523fa76e5c18151a4c7612b854b22605d07127c596126940e2941ba15d3c; bias_in_bios_train.parquet 7c8f37342447bc79f733d0be7b40aa657e069f93efdce8ac6dd05ccc352f5d09
 # Birth years 1940-2000; mean share >= 5e-05; >= 90% one sex;
 # lowercase/capitalised ratio in Bias-in-Bios < 0.15; calendar and place names removed.
 # 1880 sex-coded candidates, 86 word-like removed, 1767 kept.
