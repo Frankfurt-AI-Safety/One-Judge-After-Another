@@ -26,7 +26,7 @@ from pairs.factorial import (
 from scoring.pair_dataset import ASSESSMENT_PROMPT, CreditDemographicDataset
 from scoring.bios_dataset import BIOS_ASSESSMENT_PROMPT, BiosDemographicDataset
 from scoring.education_dataset import EDU_ASSESSMENT_PROMPT, EducationDemographicDataset
-from substrates.bios_clean import load_factorial_bios
+from substrates.bios_clean import DEFAULT_N_BIOS, load_factorial_bios
 from substrates.credit_clean import load_factorial_records
 from substrates.bios_ingest import DEFAULT_BIOS_PATH
 from substrates.education_clean import load_education_essays
@@ -86,9 +86,11 @@ CV = DomainSpec(
     render_fn=render_bio,
     assessment_prompt=BIOS_ASSESSMENT_PROMPT,
     template_ids=tuple(sorted(BIOS_TEMPLATES)),
-    # Real biographies are user-downloaded; raises with fetch instructions if absent. Only bios that
-    # pass the scrub and the factorial plausibility rules (substrates/bios_clean.py).
-    load_records=lambda: load_factorial_bios(DEFAULT_BIOS_PATH),
+    # Real biographies are user-downloaded; raises with fetch instructions if absent. The manifest's pool
+    # (substrates/bios_clean.py): the same bios, labels and target roles as generate_bios writes. Without
+    # n, the labels were assigned on all 32,774 bios: 147 of the manifest's 12,000 got another label and
+    # 5,583 another target role (fixed 2026-09-29).
+    load_records=lambda: load_factorial_bios(DEFAULT_BIOS_PATH, n=DEFAULT_N_BIOS),
     is_strong=lambda r: r.qualified,
     axes=HIRING_DESIGN.axes + ("intersection",),
     make_marker=hiring_marker,

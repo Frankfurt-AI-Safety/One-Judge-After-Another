@@ -62,7 +62,7 @@ from typing import Any, Dict
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from substrates.bios_clean import load_factorial_bios
+from substrates.bios_clean import DEFAULT_N_BIOS, load_factorial_bios
 from substrates.bios_ingest import DEFAULT_BIOS_PATH, fetch_from_hub
 from substrates.bios_render import BIOS_TEMPLATES, render_bio
 from pairs.factorial import HIRING_DESIGN, build_factorial_rows
@@ -74,7 +74,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger("gen-bios")
 
 DEFAULT_AXES = HIRING_DESIGN.axes + ("intersection",)
-DEFAULT_N_BIOS = 12_000  # fixed before the pilot (module docstring)
 
 
 def main() -> None:

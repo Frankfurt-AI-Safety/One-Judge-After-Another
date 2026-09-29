@@ -269,6 +269,16 @@ def _decision_request(template: str, profile: str, record: Any) -> str:
     return template.format(role=role, profile=profile)
 
 
+def unmarked_decision_prompt(record: Any, render_fn: Callable[..., str], template_id: str = "",
+                             domain: str = "cv") -> str:
+    """The decision prompt of `build_decision_item` for the same record and template, without the marker: the
+    reference whose gate a gated head's ``gate_fixed`` rescoring uses (the gate reads the prompt only)."""
+    if domain not in DECISION_FRAMES:
+        raise ValueError(f"domain must be one of {sorted(DECISION_FRAMES)}, got {domain!r}")
+    profile = render_fn(record, template_id, marker="") if template_id else render_fn(record, marker="")
+    return _decision_request(DECISION_FRAMES[domain].prompt, profile, record)
+
+
 def build_reasoning_item(
     record: Any,
     premise: str,

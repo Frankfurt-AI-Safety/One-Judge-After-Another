@@ -80,6 +80,12 @@ NEAR_SYNONYM_ROLES: FrozenSet[FrozenSet[str]] = frozenset({
 # Max share of the pool any single profession may take.
 DEFAULT_PROFESSION_CAP = 0.10
 
+# The hiring manifest's pool: `load_factorial_bios(n=DEFAULT_N_BIOS)`. Fixed before the pilot and never changed
+# after it (decided 2026-09-28): the labels and target roles are assigned on the sample, so another n relabels the
+# same bios (see `runners/generate_bios.py`). Every consumer of the hiring records uses this n, so they all see
+# the manifest's bios with the manifest's labels.
+DEFAULT_N_BIOS = 12_000
+
 
 def cap_professions(records: Sequence[RealCVRecord],
                     cap: float) -> Tuple[List[RealCVRecord], Dict[str, object]]:
