@@ -46,7 +46,7 @@ def _probe(exp, cfg, dom, axis):
                          split_seed=cfg.split_seed,
                          probe_records=cfg.probe_records)
     probe, _ = build_probe_direction(exp.model, exp.tokenizer, ds.get_probe_pairs(exp.tokenizer),
-                                     batch_size=cfg.batch_size, device=cfg.device, max_length=cfg.max_length)
+                                     batch_size=cfg.batch_size, max_length=cfg.max_length)
     return probe
 
 
@@ -64,7 +64,7 @@ def run_premise(exp, cfg, dom, premise, null_axis, records, rng) -> Dict[str, An
     # (family_status) only to obtain the baseline and we do NOT report its nulled scores.
     probe = _probe(exp, cfg, dom, null_axis or "family_status")
     base, nulled = get_rewards_both(exp.model, tok, flat, probe, batch_size=cfg.batch_size,
-                                    device=cfg.device, max_length=cfg.max_length,
+                                    max_length=cfg.max_length,
                                     null_alpha=1.0, show_progress=False)
     base_by = {c: base[i * n:(i + 1) * n].tolist() for i, c in enumerate(REASONING_CELLS)}
     out = {"premise": premise, "demographic": items[0]["meta"]["demographic"], "n_items": n,

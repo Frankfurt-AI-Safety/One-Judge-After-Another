@@ -218,10 +218,10 @@ def manifest(tmp_path):
         real_fields=lambda r: {"credit_good": r.credit_good}, axes=DOM.axes, encodings=("explicit", "proxy"),
         templates=DOM.template_ids, seed=42, validate=lambda p: SimpleNamespace(ok=True, reasons=[]),
         content_label="financial_content")
-    path = tmp_path / "pairs.jsonl"
-    path.write_text("".join(json.dumps(r) + "\n" for r in pair_rows))
-    (tmp_path / "cells.jsonl").write_text("".join(json.dumps(r) + "\n" for r in cell_rows))
-    return path
+    from pairs.manifest import write_manifest  # pairs.jsonl, cells.jsonl and manifest.json, as the generator
+
+    return write_manifest(tmp_path, pair_rows, seed=42, discard_report={}, thresholds={}, domain="credit",
+                          attribution="test", cells=cell_rows)["pairs"]
 
 
 def test_direct_directions_share_the_probe_records(manifest, monkeypatch):
@@ -231,7 +231,7 @@ def test_direct_directions_share_the_probe_records(manifest, monkeypatch):
     model, tok = _model(), _tokenizer()
     _, probe_ids, meta = direct_directions(
         model, tok, DOM, str(manifest), ["explicit", "proxy"], probe_records=6, split_seed=42,
-        batch_size=16, device="cpu", max_length=1024)
+        batch_size=16, max_length=1024)
     assert len(probe_ids) == 6 and sum(r.startswith("s") for r in probe_ids) == 3
     assert {m["n_records"] for m in meta.values()} == {6}
     assert all(m["split"]["probe_strata"] == {"False": 3, "True": 3} for m in meta.values())
@@ -245,7 +245,7 @@ def test_end_to_end_on_a_tiny_model(manifest, monkeypatch):
     model, tok = _model(), _tokenizer()
     directions, probe_ids, meta = direct_directions(
         model, tok, DOM, str(manifest), ["explicit", "proxy"], probe_records=6, split_seed=42,
-        batch_size=8, device="cpu", max_length=1024)
+        batch_size=8, max_length=1024)
     # every factorial axis with pairs in the encoding: no marital direction under proxy
     assert set(directions["explicit"]) == {"sex", "age", "marital_status", "intersection"}
     assert set(directions["proxy"]) == {"sex", "age", "intersection"}
@@ -275,7 +275,7 @@ def test_end_to_end_on_a_tiny_model(manifest, monkeypatch):
 
     # the baseline and direct columns are the pipeline's rewards for the same texts
     base, nulled = get_rewards_both(model, tok, convs[:30], directions["explicit"]["sex"], batch_size=16,
-                                    device="cpu", max_length=1024, show_progress=False)
+                                    max_length=1024, show_progress=False)
     assert [r["baseline"] for r in rows[:30]] == pytest.approx(base.tolist(), abs=1e-6)
     assert [r["null_direct:sex"] for r in rows[:30]] == pytest.approx(nulled.tolist(), abs=1e-6)
 
@@ -342,7 +342,7 @@ def test_nulling_moves_the_disparity_by_the_predicted_amount(manifest, monkeypat
     model, tok = _model().float(), _tokenizer()
     directions, probe_ids, meta = direct_directions(
         model, tok, DOM, str(manifest), ["explicit"], probe_records=4, split_seed=42, batch_size=8,
-        device="cpu", max_length=1024)
+        max_length=1024)
     settings = resolve_settings({}, {"n_strong": 6, "n_weak": 6, "n_folds": 3, "alphas": [0.0, 0.5, 1.0]})
     fmt = lambda p, r: format_conversation(tok, p, r)
     blocks = load_cell_blocks(manifest.parent / "cells.jsonl", CREDIT_DESIGN)

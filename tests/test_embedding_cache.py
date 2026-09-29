@@ -71,18 +71,18 @@ def cached(tmp_path, monkeypatch):
 def _probe(model, tok):
     pairs = [ContrastivePair(positive_text=TEXTS[1], negative_text=TEXTS[3]),
              ContrastivePair(positive_text=TEXTS[0], negative_text=TEXTS[2])]
-    return build_probe_direction(model, tok, pairs, batch_size=4, device="cpu", max_length=32)[0]
+    return build_probe_direction(model, tok, pairs, batch_size=4, max_length=32)[0]
 
 
 def test_cached_rewards_are_bit_identical_to_uncached(cached):
     model, tok, _ = cached
     probe = _probe(model, tok)
     plain = _model()                      # same seed -> same weights, no cache attached
-    b0, n0 = get_rewards_both(plain, tok, TEXTS, probe, batch_size=4, device="cpu", max_length=32,
+    b0, n0 = get_rewards_both(plain, tok, TEXTS, probe, batch_size=4, max_length=32,
                               show_progress=False)
-    b1, n1 = get_rewards_both(model, tok, TEXTS, probe, batch_size=4, device="cpu", max_length=32,
+    b1, n1 = get_rewards_both(model, tok, TEXTS, probe, batch_size=4, max_length=32,
                               show_progress=False)
-    b2, n2 = get_rewards_both(model, tok, TEXTS, probe, batch_size=4, device="cpu", max_length=32,
+    b2, n2 = get_rewards_both(model, tok, TEXTS, probe, batch_size=4, max_length=32,
                               show_progress=False)  # all hits
     assert torch.equal(b0, b1) and torch.equal(n0, n1)
     assert torch.equal(b1, b2) and torch.equal(n1, n2)
@@ -92,7 +92,7 @@ def test_cached_rewards_are_bit_identical_to_uncached(cached):
 def test_baseline_reward_is_the_models_own_score(cached):
     # Sanity of the pooled-state path: head(last real token) == HF's own sequence-classification logits.
     model, tok, _ = cached
-    base, _ = get_rewards_both(model, tok, TEXTS, None, batch_size=4, device="cpu", max_length=32,
+    base, _ = get_rewards_both(model, tok, TEXTS, None, batch_size=4, max_length=32,
                                show_progress=False)
     with torch.no_grad():
         logits = model(**tokenize_inputs(tok, TEXTS, max_length=32)).logits.squeeze(-1)
@@ -102,17 +102,17 @@ def test_baseline_reward_is_the_models_own_score(cached):
 def test_second_call_runs_no_forward_pass(cached):
     model, tok, _ = cached
     count = _Counter.attach(model)
-    get_rewards_both(model, tok, TEXTS, None, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    get_rewards_both(model, tok, TEXTS, None, batch_size=4, max_length=32, show_progress=False)
     assert count.n == len(TEXTS)
-    get_rewards_both(model, tok, TEXTS, None, batch_size=4, device="cpu", max_length=32, show_progress=False)
-    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    get_rewards_both(model, tok, TEXTS, None, batch_size=4, max_length=32, show_progress=False)
+    get_embeddings(model, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     assert count.n == len(TEXTS)
 
 
 def test_repeated_texts_are_embedded_once(cached):
     model, tok, _ = cached
     count = _Counter.attach(model)
-    out = get_embeddings(model, tok, TEXTS[:2] * 5, batch_size=4, device="cpu", max_length=32,
+    out = get_embeddings(model, tok, TEXTS[:2] * 5, batch_size=4, max_length=32,
                          show_progress=False)
     assert count.n == 2 and out.shape[0] == 10
     assert torch.equal(out[0], out[2]) and torch.equal(out[1], out[9])
@@ -121,8 +121,8 @@ def test_repeated_texts_are_embedded_once(cached):
 def test_max_length_is_part_of_the_key(cached):
     model, tok, _ = cached
     count = _Counter.attach(model)
-    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
-    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=64, show_progress=False)
+    get_embeddings(model, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
+    get_embeddings(model, tok, TEXTS, batch_size=4, max_length=64, show_progress=False)
     # Inputs are never truncated (so the state no longer depends on max_length), but the key keeps it: existing
     # caches stay valid, at the cost of re-embedding a text scored under another max_length.
     assert count.n == 2 * len(TEXTS)
@@ -133,16 +133,16 @@ def test_an_over_long_input_is_refused_not_truncated(cached):
 
     model, tok, _ = cached
     with pytest.raises(InputTooLong, match="max_length=3"):
-        get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=3, show_progress=False)
+        get_embeddings(model, tok, TEXTS, batch_size=4, max_length=3, show_progress=False)
 
 
 def test_cache_persists_for_a_new_process(cached, monkeypatch):
     model, tok, root = cached
-    first = get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    first = get_embeddings(model, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     fresh = _model()                      # "another job": same weights, new object, re-attached
     ec.attach(fresh, tok, str(root))
     count = _Counter.attach(fresh)
-    again = get_embeddings(fresh, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    again = get_embeddings(fresh, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     assert count.n == 0 and torch.equal(first, again)
     assert not list(root.rglob("*.tmp"))  # atomic writes leave no temp files
 
@@ -150,11 +150,11 @@ def test_cache_persists_for_a_new_process(cached, monkeypatch):
 def test_alpha_sweep_from_cached_states_equals_a_fresh_pass(cached):
     model, tok, _ = cached
     probe = _probe(model, tok)
-    hidden = get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    hidden = get_embeddings(model, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     dtype = getattr(model, ec.CACHE_ATTR).state_dtype
     for alpha in (0.0, 0.5, 1.0):
         _, swept = rewards_from_hidden(model, hidden, dtype, probe, null_alpha=alpha)
-        _, direct = get_rewards_both(_model(), tok, TEXTS, probe, batch_size=4, device="cpu",
+        _, direct = get_rewards_both(_model(), tok, TEXTS, probe, batch_size=4,
                                      max_length=32, show_progress=False, null_alpha=alpha)
         assert torch.equal(swept, direct), alpha
 
@@ -162,7 +162,7 @@ def test_alpha_sweep_from_cached_states_equals_a_fresh_pass(cached):
 def test_offline_rewards_reproduce_the_online_ones_without_the_model(cached):
     model, tok, root = cached
     probe = _probe(model, tok)
-    base, nulled = get_rewards_both(model, tok, TEXTS, probe, batch_size=4, device="cpu", max_length=32,
+    base, nulled = get_rewards_both(model, tok, TEXTS, probe, batch_size=4, max_length=32,
                                     show_progress=False)
     (directory,) = [d for d in root.iterdir() if d.is_dir()]
     cache = ec.open_cache(directory)
@@ -176,18 +176,18 @@ def test_offline_rewards_reproduce_the_online_ones_without_the_model(cached):
 
 def test_a_different_model_never_shares_states(cached):
     model, tok, root = cached
-    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    get_embeddings(model, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     other = _model(seed=1)
     ec.attach(other, tok, str(root))
     count = _Counter.attach(other)
-    get_embeddings(other, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    get_embeddings(other, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     assert count.n == len(TEXTS)
     assert len([d for d in root.iterdir() if d.is_dir()]) == 2
 
 
 def test_a_directory_refuses_another_fingerprint(cached):
     model, tok, root = cached
-    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    get_embeddings(model, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     (directory,) = [d for d in root.iterdir() if d.is_dir()]
     with pytest.raises(ValueError, match="different model"):
         ec.EmbeddingCache(directory, fingerprint={"model_path": "something else"})
@@ -197,7 +197,7 @@ def test_environment_switch_disables_the_cache(tmp_path, monkeypatch):
     monkeypatch.setenv(ec.ENV_VAR, "off")
     model, tok = _model(), _tokenizer()
     assert ec.attach(model, tok, str(tmp_path)) is None
-    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    get_embeddings(model, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     assert not any(tmp_path.iterdir())
 
 
@@ -234,11 +234,11 @@ def test_chunked_embedding_writes_a_shard_per_chunk_and_the_same_bits(cached, mo
 
     model, tok, root = cached
     monkeypatch.setattr(pp, "FLUSH_EVERY", 3)             # rounded up to whole batches of 2: chunks of 4
-    chunked = get_embeddings(model, tok, TEXTS, batch_size=2, device="cpu", max_length=32, show_progress=False)
+    chunked = get_embeddings(model, tok, TEXTS, batch_size=2, max_length=32, show_progress=False)
     monkeypatch.setenv(ec.ENV_VAR, "off")
     plain = _model()
     ec.attach(plain, tok, None)
-    whole = get_embeddings(plain, tok, TEXTS, batch_size=2, device="cpu", max_length=32, show_progress=False)
+    whole = get_embeddings(plain, tok, TEXTS, batch_size=2, max_length=32, show_progress=False)
     assert torch.equal(chunked, whole)
     (directory,) = [d for d in root.iterdir() if d.is_dir()]
     assert len(list(directory.glob("shard-*.pt"))) == 2    # 6 texts: 4 + 2
@@ -257,12 +257,12 @@ def test_a_crashed_run_keeps_the_chunks_it_finished(cached, monkeypatch):
             raise RuntimeError("killed")
     handle = get_base_model(model).register_forward_pre_hook(crash_on_second_chunk, with_kwargs=True)
     with pytest.raises(RuntimeError, match="killed"):
-        get_embeddings(model, tok, TEXTS, batch_size=2, device="cpu", max_length=32, show_progress=False)
+        get_embeddings(model, tok, TEXTS, batch_size=2, max_length=32, show_progress=False)
     handle.remove()
     fresh = _model()                                      # the resubmitted job
     ec.attach(fresh, tok, str(root))
     count = _Counter.attach(fresh)
-    get_embeddings(fresh, tok, TEXTS, batch_size=2, device="cpu", max_length=32, show_progress=False)
+    get_embeddings(fresh, tok, TEXTS, batch_size=2, max_length=32, show_progress=False)
     assert count.n == len(TEXTS) - 2                      # the first chunk came from disk
 
 
@@ -280,11 +280,11 @@ def test_the_fingerprint_names_the_environment(cached, monkeypatch):
     env = ec.model_fingerprint(model, tok)["environment"]
     assert env["device"] == "cpu" and env["torch"] == torch.__version__
     assert set(env) == {"device", "device_name", "attn_implementation", "torch", "transformers"}
-    get_embeddings(model, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    get_embeddings(model, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     monkeypatch.setattr(torch, "__version__", "0.0-another-torch")   # a library upgrade: a cache of its own
     other = _model()
     ec.attach(other, tok, str(root))
     count = _Counter.attach(other)
-    get_embeddings(other, tok, TEXTS, batch_size=4, device="cpu", max_length=32, show_progress=False)
+    get_embeddings(other, tok, TEXTS, batch_size=4, max_length=32, show_progress=False)
     assert count.n == len(TEXTS)
     assert len([d for d in root.iterdir() if d.is_dir()]) == 2

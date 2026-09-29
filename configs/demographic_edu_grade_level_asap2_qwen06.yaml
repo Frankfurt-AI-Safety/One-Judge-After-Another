@@ -7,8 +7,9 @@
 # sex x ethnicity x economic-status factorial in <source>/ (every essay x every template, since 2026-09-28).
 #   python runners/generate_education.py --design stage --include-ladder
 #
-#   python runners/run_battery.py --config configs/demographic_edu_grade_level_asap2_qwen06.yaml --axes grade_level --encodings proxy \
-#       --out artifacts/results/demographic/battery_demographic_edu_grade_level_asap2_qwen06.json
+#   python runners/run_battery.py --config configs/demographic_edu_grade_level_asap2_qwen06.yaml    # every cell of the manifest
+#   python runners/run_battery.py --config configs/demographic_edu_grade_level_asap2_qwen06.yaml --axes grade_level --encodings proxy    # this cell only
+# (results: artifacts/results/demographic/battery_<domain>[_<manifest folder>]_<model>[__<axes>__<encodings>].json)
 #
 # The education corpus since 2026-09-27 (it replaced PERSUADE 2.0 and ASAP-AES, whose results are superseded).
 

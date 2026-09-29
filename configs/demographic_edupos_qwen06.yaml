@@ -7,8 +7,7 @@
 #   python runners/generate_positioned.py --standpoint-fit plausible     # and --standpoint-fit implausible
 # Battery over all identity axes (the plausible group; the control group via
 # --dataset-source data/demographic/education_positioned/asap2_implausible/pairs.jsonl):
-#   python runners/run_battery.py --config configs/demographic_edupos_qwen06.yaml \
-#     --axes pos_sex,pos_race,pos_class,pos_origin,pos_intersection,pos_control --encodings conclusion
+#   python runners/run_battery.py --config configs/demographic_edupos_qwen06.yaml    # every axis and position of the manifest
 
 name: demographic_edupos_qwen06
 bias_type: demographic

@@ -87,13 +87,13 @@ def run_axis(exp, cfg, dom, axis, encoding, records, rng) -> Dict[str, Any]:
                          split_seed=cfg.split_seed,
                          probe_records=cfg.probe_records)
     probe, _ = build_probe_direction(exp.model, tok, ds.get_probe_pairs(tok),
-                                     batch_size=cfg.batch_size, device=cfg.device,
+                                     batch_size=cfg.batch_size,
                                      max_length=cfg.max_length)
 
     n = len(items)
     flat = [t for v in VERDICT_VARIANTS for t in texts[v]]
     base, nulled = get_rewards_both(exp.model, tok, flat, probe, batch_size=cfg.batch_size,
-                                    device=cfg.device, max_length=cfg.max_length,
+                                    max_length=cfg.max_length,
                                     null_alpha=1.0, show_progress=False)
     base_by = {v: base[i * n:(i + 1) * n].tolist() for i, v in enumerate(VERDICT_VARIANTS)}
     null_by = {v: nulled[i * n:(i + 1) * n].tolist() for i, v in enumerate(VERDICT_VARIANTS)}

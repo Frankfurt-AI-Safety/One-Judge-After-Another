@@ -5,8 +5,9 @@
 # Sex pairs come from the sex × age × family-status factorial, so age and family status are stated and
 # equal on both sides. Generate the data first: python runners/generate_bios.py --from-hub
 #
-#   python runners/run_battery.py --config configs/demographic_cv_sex_qwen06.yaml --axes sex --encodings explicit \
-#       --out artifacts/results/demographic/battery_demographic_cv_sex_qwen06.json
+#   python runners/run_battery.py --config configs/demographic_cv_sex_qwen06.yaml    # every cell of the manifest
+#   python runners/run_battery.py --config configs/demographic_cv_sex_qwen06.yaml --axes sex --encodings explicit    # this cell only
+# (results: artifacts/results/demographic/battery_<domain>[_<manifest folder>]_<model>[__<axes>__<encodings>].json)
 
 name: demographic_cv_sex_qwen06
 bias_type: demographic

@@ -10,8 +10,9 @@
 # ethnicity share one carrier in the proxy encoding: the index-matched Haim name grid.
 #   python runners/generate_education.py
 #
-#   python runners/run_battery.py --config configs/demographic_edu_economic_asap2_qwen06.yaml --axes economic_status --encodings proxy \
-#       --out artifacts/results/demographic/battery_demographic_edu_economic_asap2_qwen06.json
+#   python runners/run_battery.py --config configs/demographic_edu_economic_asap2_qwen06.yaml    # every cell of the manifest
+#   python runners/run_battery.py --config configs/demographic_edu_economic_asap2_qwen06.yaml --axes economic_status --encodings proxy    # this cell only
+# (results: artifacts/results/demographic/battery_<domain>[_<manifest folder>]_<model>[__<axes>__<encodings>].json)
 #
 # NOTE: new axis (2026-09-17), not yet run.
 

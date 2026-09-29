@@ -133,7 +133,7 @@ def main() -> None:
                          probe_records=args.probe_records, split_seed=cfg.split_seed)
         pairs = ds.get_probe_pairs(exp.tokenizer)
         probe, meta = build_probe_direction(exp.model, exp.tokenizer, pairs,
-                                            batch_size=args.batch_size, device=args.device,
+                                            batch_size=args.batch_size,
                                             max_length=args.max_length)
         probes[axis] = probe
         # the same states again (embedding-cache hits), per record for the bootstrap

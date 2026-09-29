@@ -72,7 +72,7 @@ def _mechanism(manifest):
     dom, model, tok = get_domain("credit"), _model(), _tokenizer()
     directions, probe_ids, meta = direct_directions(
         model, tok, dom, str(manifest), ["explicit"], probe_records=4, split_seed=42, batch_size=8,
-        device="cpu", max_length=1024)
+        max_length=1024)
     settings = resolve_settings({}, {"n_strong": 6, "n_weak": 6, "n_folds": 3, "alphas": [0.0, 0.5, 1.0]})
     fmt = lambda p, r: format_conversation(tok, p, r)
     blocks = load_cell_blocks(manifest.parent / "cells.jsonl", CREDIT_DESIGN)

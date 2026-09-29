@@ -3,8 +3,9 @@
 # Corner contrast of the credit factorial: female∧age-30∧married  vs  male∧age-50∧single.
 # Generate the data first: python runners/generate_credit.py
 #
-#   python runners/run_battery.py --config configs/demographic_credit_intersection_qwen06.yaml --axes intersection --encodings explicit \
-#       --out artifacts/results/demographic/battery_demographic_credit_intersection_qwen06.json
+#   python runners/run_battery.py --config configs/demographic_credit_intersection_qwen06.yaml    # every cell of the manifest
+#   python runners/run_battery.py --config configs/demographic_credit_intersection_qwen06.yaml --axes intersection --encodings explicit    # this cell only
+# (results: artifacts/results/demographic/battery_<domain>[_<manifest folder>]_<model>[__<axes>__<encodings>].json)
 
 name: demographic_credit_intersection_qwen06
 bias_type: demographic

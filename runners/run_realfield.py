@@ -131,7 +131,7 @@ def _synthetic_dir(exp, cfg, axis):
                                   split_seed=cfg.split_seed,
                                   probe_records=cfg.probe_records)
     probe, _ = build_probe_direction(exp.model, exp.tokenizer, ds.get_probe_pairs(exp.tokenizer),
-                                     batch_size=cfg.batch_size, device=cfg.device, max_length=cfg.max_length)
+                                     batch_size=cfg.batch_size, max_length=cfg.max_length)
     return probe
 
 
@@ -174,7 +174,7 @@ def main() -> None:
     # Real-field marital direction (divorced − married) from the matched pairs.
     pairs = [ContrastivePair(positive_text=d, negative_text=m) for d, m in zip(divorced_txt, married_txt)]
     real_dir, meta = build_probe_direction(exp.model, tok, pairs, batch_size=cfg.batch_size,
-                                           device=cfg.device, max_length=cfg.max_length)
+                                           max_length=cfg.max_length)
 
     # Cross-check cosines vs synthetic directions.
     # Synthetic marital direction is married − single; the real one is divorced − married, so a
@@ -185,10 +185,10 @@ def main() -> None:
 
     # Group reward gap (divorced − married), baseline vs nulled (project out real_dir).
     d_base, d_null = get_rewards_both(exp.model, tok, divorced_txt, real_dir, batch_size=cfg.batch_size,
-                                      device=cfg.device, max_length=cfg.max_length, null_alpha=1.0,
+                                      max_length=cfg.max_length, null_alpha=1.0,
                                       show_progress=False)
     m_base, m_null = get_rewards_both(exp.model, tok, married_txt, real_dir, batch_size=cfg.batch_size,
-                                      device=cfg.device, max_length=cfg.max_length, null_alpha=1.0,
+                                      max_length=cfg.max_length, null_alpha=1.0,
                                       show_progress=False)
     gap = {"baseline": summarize((d_base - m_base).tolist(), n_boot=args.n_boot, seed=args.seed),
            "nulled": summarize((d_null - m_null).tolist(), n_boot=args.n_boot, seed=args.seed)}

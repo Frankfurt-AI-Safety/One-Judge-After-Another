@@ -14,7 +14,7 @@ DOM = get_domain("credit")
 
 
 def _curve(manifest, grid, **kw):
-    args = dict(grid=grid, max_eval=None, batch_size=16, device="cpu", max_length=1024, n_boot=50,
+    args = dict(grid=grid, max_eval=None, batch_size=16, max_length=1024, n_boot=50,
                 seed=42, split_seed=42)
     args.update(kw)
     return direction_curve(_model(), _tokenizer(), DOM.dataset_cls, str(manifest), "sex", "explicit", **args)
@@ -37,11 +37,11 @@ def test_the_largest_point_is_the_plain_direction_on_the_fixed_eval_set(manifest
     out = _curve(manifest, [4, 12])
     model, tok = _model(), _tokenizer()
     ds = DOM.dataset_cls(str(manifest), axis="sex", encoding="explicit", split_seed=42, probe_records=12)
-    u, _ = build_probe_direction(model, tok, ds.get_probe_pairs(tok), batch_size=16, device="cpu",
+    u, _ = build_probe_direction(model, tok, ds.get_probe_pairs(tok), batch_size=16,
                                  max_length=1024)
     examples = ds.get_eval_examples(tok)
     texts = [e.texts["a"] for e in examples] + [e.texts["b"] for e in examples]
-    base, nulled = get_rewards_both(model, tok, texts, u, batch_size=16, device="cpu", max_length=1024,
+    base, nulled = get_rewards_both(model, tok, texts, u, batch_size=16, max_length=1024,
                                     show_progress=False)
     n = len(examples)
     by_record = per_record_gaps(examples, (nulled[:n] - nulled[n:]).tolist())

@@ -70,6 +70,7 @@ from pairs.cross_marker import CellBlock, build_block_items, fits_max_length, lo
 from pairs.factorial import FactorialDesign, stable_rng
 from scoring.cross_marker_metrics import RewardIndex, cross_marker_metrics, placement_check, sweep_point
 from scoring.dataset_base import add_special_tokens, format_conversation
+from scoring.experiment import apply_overrides  # noqa: F401  (the CLI's overrides; re-exported for the tests)
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +310,7 @@ def record_contrast_matrix(pairs: Sequence[Any], pos: Any, neg: Any) -> Any:
 
 
 def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodings: Sequence[str], *,
-                      probe_records: int, split_seed: int, batch_size: int, device: str, max_length: int,
+                      probe_records: int, split_seed: int, batch_size: int, max_length: int,
                       reliability_seed: int = 0
                       ) -> Tuple[Dict[str, Dict[str, Any]], Set[str], Dict[str, Any]]:
     """The direct arm's difference-of-means direction for every (encoding, axis) the factorial has pairs
@@ -335,7 +336,7 @@ def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodin
             pairs = ds.get_probe_pairs(tokenizer)
             if not pairs:
                 raise ValueError(f"{dom.name}/{axis}/{encoding}: no probe pairs in {source}")
-            probe, m = build_probe_direction(model, tokenizer, pairs, batch_size=batch_size, device=device,
+            probe, m = build_probe_direction(model, tokenizer, pairs, batch_size=batch_size,
                                              max_length=max_length)
             ids = ds.probe_record_ids()
             pos, _ = embed_states(model, tokenizer, [p.positive_text for p in pairs], batch_size=batch_size,
@@ -703,16 +704,6 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def apply_overrides(cfg: Any, args: argparse.Namespace) -> Any:
-    """The CLI over the config (config precedence: YAML < CLI), for the keys the runner reads from ``cfg``."""
-    for attr, value in (("device", args.device), ("model_path", args.model),
-                        ("batch_size", args.batch_size), ("probe_records", args.probe_records),
-                        ("model_revision", getattr(args, "revision", None))):
-        if value is not None:
-            setattr(cfg, attr, value)
-    return cfg
-
-
 def main() -> None:
     import torch
 
@@ -759,7 +750,7 @@ def main() -> None:
     if "direct" in settings["directions"]:
         direct_dirs, probe_ids, probe_meta = direct_directions(
             model, tok, dom, source, settings["encodings"], probe_records=cfg.probe_records,
-            split_seed=cfg.split_seed, batch_size=cfg.batch_size, device=cfg.device,
+            split_seed=cfg.split_seed, batch_size=cfg.batch_size,
             max_length=cfg.max_length, reliability_seed=settings["seed"])
     direct_misses = None if cache is None else cache.misses
     timer.lap("direct_directions")

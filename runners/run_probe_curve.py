@@ -40,7 +40,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from runners.run_cross_marker import PhaseTimer, apply_overrides, record_contrast_matrix, timing_report
+from runners.run_cross_marker import PhaseTimer, record_contrast_matrix, timing_report
+from scoring.experiment import apply_overrides
 from scoring.cross_marker_metrics import summarize
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,7 @@ def gap_summaries(by_record: Mapping[str, Sequence[float]], n_boot: int, seed: i
 
 # --------------------------------------------------------------------------- curve -------------------
 def direction_curve(model: Any, tokenizer: Any, dataset_cls: Any, source: str, axis: str, encoding: str, *,
-                    grid: Sequence[int], max_eval: Optional[int], batch_size: int, device: str,
+                    grid: Sequence[int], max_eval: Optional[int], batch_size: int,
                     max_length: int, n_boot: int, seed: int, split_seed: int,
                     threshold: float = DEFAULT_THRESHOLD) -> Dict[str, Any]:
     """The probe-size curve of one (encoding, axis) direction; see the module docstring."""
@@ -126,7 +127,7 @@ def direction_curve(model: Any, tokenizer: Any, dataset_cls: Any, source: str, a
         if len(ids) != n or not ids <= max_ids:
             raise AssertionError(f"{encoding}/{axis}: the N={n} probe set is not a prefix of N={grid[-1]}")
         pairs = ds.get_probe_pairs(tokenizer)
-        u, _ = build_probe_direction(model, tokenizer, pairs, batch_size=batch_size, device=device,
+        u, _ = build_probe_direction(model, tokenizer, pairs, batch_size=batch_size,
                                      max_length=max_length)
         pos, _ = embed_states(model, tokenizer, [p.positive_text for p in pairs], batch_size=batch_size,
                               max_length=max_length, show_progress=False)
@@ -195,7 +196,7 @@ def main() -> None:
             logger.info("probe curve %s/%s over N=%s", encoding, axis, grid)
             results[f"{encoding}/{axis}"] = direction_curve(
                 model, tok, dom.dataset_cls, source, axis, encoding, grid=grid, max_eval=args.max_eval,
-                batch_size=cfg.batch_size, device=cfg.device, max_length=cfg.max_length,
+                batch_size=cfg.batch_size, max_length=cfg.max_length,
                 n_boot=args.n_boot, seed=args.seed, split_seed=cfg.split_seed, threshold=args.threshold)
             timer.lap("curves")
 

@@ -91,7 +91,7 @@ def _embed(exp, cfg, records, *, scrubbed: bool) -> torch.Tensor:
         rendered = render_bio(rec, "bios_v1")
         texts.append(format_conversation(exp.tokenizer, BIOS_ASSESSMENT_PROMPT, rendered))
     return get_embeddings(exp.model, exp.tokenizer, texts, batch_size=cfg.batch_size,
-                          device=cfg.device, max_length=cfg.max_length)
+                          max_length=cfg.max_length)
 
 
 def main() -> None:

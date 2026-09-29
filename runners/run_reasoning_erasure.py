@@ -71,7 +71,7 @@ def _embed_and_label(exp, cfg, dom, premise, records, rng
             groups.append(n)
             for c in CONCEPTS:
                 labels[c].append(_label(cell, c))
-    X = get_embeddings(exp.model, tok, texts, cfg.batch_size, cfg.device, cfg.max_length)
+    X = get_embeddings(exp.model, tok, texts, cfg.batch_size, cfg.max_length)
     return X, {c: torch.tensor(labels[c]) for c in CONCEPTS}, groups
 
 

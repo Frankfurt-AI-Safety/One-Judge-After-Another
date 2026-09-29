@@ -120,10 +120,10 @@ def run_axis(exp, cfg, dom, essays, axis, position, seed, variant=None,
             probe_pairs.append(ContrastivePair(positive_text=a[-1], negative_text=b[-1],
                                                metadata={"axis": axis}))
     probe, meta = build_probe_direction(exp.model, tok, probe_pairs, batch_size=cfg.batch_size,
-                                        device=cfg.device, max_length=cfg.max_length)
+                                        max_length=cfg.max_length)
     n, m = len(essays), len(a)
     base, nulled = get_rewards_both(exp.model, tok, neutral + a + b, probe, batch_size=cfg.batch_size,
-                                    device=cfg.device, max_length=cfg.max_length, null_alpha=1.0,
+                                    max_length=cfg.max_length, null_alpha=1.0,
                                     show_progress=False)
     base = base.tolist()
     r_neu, r_a, r_b = base[:n], base[n:n + m], base[n + m:]

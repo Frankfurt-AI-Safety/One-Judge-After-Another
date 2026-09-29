@@ -239,8 +239,8 @@ numbers, so this is a real regression check rather than a vibe check:
 ```bash
 det shell start -w IL_rm_bias --config-file cluster/config.yaml     # slots: 1
 # then, inside:
-python runners/run_battery.py --config configs/demographic_credit_sex_qwen06.yaml --axes sex --encodings explicit \
-    --out artifacts/results/demographic/battery_demographic_credit_sex_qwen06.json
+python runners/run_battery.py --config configs/demographic_credit_sex_qwen06.yaml --axes sex --encodings explicit
+# -> artifacts/results/demographic/battery_credit_Skywork-Reward-V2-Qwen3-0.6B__sex__explicit.json
 ```
 
 (Until 2026-09-28 this read `runners/run_experiment.py`, which exited without running anything from the

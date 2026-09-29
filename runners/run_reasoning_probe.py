@@ -81,15 +81,15 @@ def _items(dom, premise, records, rng):
 def _heldout_paired_acc(exp, cfg, pairs: List[ContrastivePair], direction) -> float:
     """Paired decodability on unseen pairs: mean[ proj(positive) > proj(negative) ]."""
     pos = get_embeddings(exp.model, exp.tokenizer, [p.positive_text for p in pairs],
-                         cfg.batch_size, cfg.device, cfg.max_length)
+                         cfg.batch_size, cfg.max_length)
     neg = get_embeddings(exp.model, exp.tokenizer, [p.negative_text for p in pairs],
-                         cfg.batch_size, cfg.device, cfg.max_length)
+                         cfg.batch_size, cfg.max_length)
     return float(((pos @ direction) > (neg @ direction)).float().mean())
 
 
 def _effects_on(exp, cfg, eval_flat, n, direction):
     base, nulled = get_rewards_both(exp.model, exp.tokenizer, eval_flat, direction,
-                                    batch_size=cfg.batch_size, device=cfg.device,
+                                    batch_size=cfg.batch_size,
                                     max_length=cfg.max_length, null_alpha=1.0, show_progress=False)
     by = lambda s: {c: s[i * n:(i + 1) * n].tolist() for i, c in enumerate(REASONING_CELLS)}
     return compute_reasoning_metrics(by(base)), compute_reasoning_metrics(by(nulled))
@@ -104,10 +104,10 @@ def run_premise(exp, cfg, dom, premise, probe_recs, eval_recs, rng) -> Dict[str,
     # directions from the PROBE split only
     corr_dir, corr_meta = build_probe_direction(
         exp.model, tok, contrastive_pairs(probe_items, fmt, CORRECTNESS_PAIRS),
-        batch_size=cfg.batch_size, device=cfg.device, max_length=cfg.max_length)
+        batch_size=cfg.batch_size, max_length=cfg.max_length)
     concl_dir, concl_meta = build_probe_direction(
         exp.model, tok, contrastive_pairs(probe_items, fmt, CONCLUSION_PAIRS),
-        batch_size=cfg.batch_size, device=cfg.device, max_length=cfg.max_length)
+        batch_size=cfg.batch_size, max_length=cfg.max_length)
 
     # held-out decodability on the EVAL split
     corr_acc_ho = _heldout_paired_acc(exp, cfg, contrastive_pairs(eval_items, fmt, CORRECTNESS_PAIRS), corr_dir)

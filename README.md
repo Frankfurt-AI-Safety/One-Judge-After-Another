@@ -92,8 +92,8 @@ pip install -r requirements-analysis.txt        # pulls requirements.txt too
 
 # corpora are user-downloaded and gitignored; the loaders print the exact command
 python runners/generate_credit.py
-python runners/run_battery.py --config configs/demographic_credit_sex_qwen06.yaml --axes sex --encodings explicit \
-    --out artifacts/results/demographic/battery_demographic_credit_sex_qwen06.json
+python runners/run_battery.py --config configs/demographic_credit_sex_qwen06.yaml --axes sex --encodings explicit
+# -> artifacts/results/demographic/battery_credit_Skywork-Reward-V2-Qwen3-0.6B__sex__explicit.json
 ```
 
 Running on the cluster: see [`cluster/README.md`](cluster/README.md).

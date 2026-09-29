@@ -374,7 +374,6 @@ def get_embeddings(
     tokenizer: AutoTokenizer,
     texts: List[str],
     batch_size: int = 8,
-    device: str = "cuda",
     max_length: int = 2048,
     show_progress: bool = True,
 ) -> torch.Tensor:
@@ -387,7 +386,6 @@ def get_embeddings(
         tokenizer: Tokenizer
         texts: List of formatted conversation texts
         batch_size: Batch size for inference
-        device: Ignored: the loader placed the model, and inputs go wherever its first layer lives
         max_length: Maximum sequence length (a longer text raises `InputTooLong`)
         show_progress: Whether to show progress bar
 
@@ -447,7 +445,6 @@ def build_probe_direction(
     tokenizer: AutoTokenizer,
     contrastive_pairs: List[ContrastivePair],
     batch_size: int = 8,
-    device: str = "cuda",
     max_length: int = 2048,
 ) -> Tuple[torch.Tensor, Dict[str, Any]]:
     """Build probe direction using difference-of-means.
@@ -460,7 +457,6 @@ def build_probe_direction(
         tokenizer: Tokenizer
         contrastive_pairs: List of ContrastivePair objects
         batch_size: Batch size for embedding extraction
-        device: Ignored: the loader placed the model
         max_length: Maximum sequence length (a longer text raises `InputTooLong`)
 
     Returns:
@@ -477,12 +473,12 @@ def build_probe_direction(
 
     logger.info("Extracting embeddings for %d positive examples", len(positive_texts))
     positive_emb = get_embeddings(
-        model, tokenizer, positive_texts, batch_size, device, max_length
+        model, tokenizer, positive_texts, batch_size, max_length
     )
 
     logger.info("Extracting embeddings for %d negative examples", len(negative_texts))
     negative_emb = get_embeddings(
-        model, tokenizer, negative_texts, batch_size, device, max_length
+        model, tokenizer, negative_texts, batch_size, max_length
     )
 
     # Compute means
@@ -532,7 +528,6 @@ def get_rewards_both(
     texts: List[str],
     probe: Optional[torch.Tensor] = None,
     batch_size: int = 8,
-    device: str = "cuda",
     max_length: int = 2048,
     show_progress: bool = True,
     null_alpha: float = 1.0,
@@ -547,7 +542,6 @@ def get_rewards_both(
         texts: List of formatted conversation texts
         probe: Probe direction tensor [hidden_dim] or [k, hidden_dim]
         batch_size: Batch size for inference
-        device: Ignored: the loader placed the model
         max_length: Maximum sequence length (a longer text raises `InputTooLong`)
         show_progress: Whether to show progress bar
         null_alpha: Nullification strength (0=no change, 1=full projection).
