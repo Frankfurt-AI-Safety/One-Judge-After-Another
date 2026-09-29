@@ -159,4 +159,3 @@ def test_rows_from_the_length_guards_cache_equal_fresh_ones(manifest):
             == build_rows(selected, "credit", "credit_good", fmt, settings))
 
 
-from tests.test_run_cross_marker import manifest  # noqa: E402,F401  (fixture)

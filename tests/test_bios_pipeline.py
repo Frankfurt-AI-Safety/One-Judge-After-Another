@@ -24,7 +24,7 @@ from substrates.bios_ingest import (
     scrub_detailed,
     with_article,
 )
-from substrates.bios_render import BIOS_TEMPLATES, render_bio
+from substrates.bios_render import render_bio
 from pairs.factorial import HIRING_DESIGN, factorial_pairs
 
 # A neutral, brace-containing biography body — the renderer must copy it verbatim (never .format it).

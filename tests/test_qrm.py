@@ -16,7 +16,6 @@ from probes.probe import (
 )
 from scoring.dataset_base import format_conversation
 from scoring.qrm import ARCHITECTURE, Gemma2ForQuantileSequenceClassification, gating_positions
-from tests.test_run_cross_marker import manifest  # noqa: F401  (fixture)
 
 # the checkpoint's non-backbone parameters (nicolinho/QRM-Gemma-2-27B, model.safetensors.index.json)
 CHECKPOINT_HEAD_KEYS = {

@@ -8,7 +8,7 @@ import pytest
 from probes.probe import build_probe_direction, get_rewards_both
 from runners.run_probe_curve import direction_curve, per_record_gaps, probe_rule
 from substrates.domains import get_domain
-from tests.test_run_cross_marker import _model, _tokenizer, manifest  # noqa: F401  (fixture)
+from tests.test_run_cross_marker import _model, _tokenizer
 
 DOM = get_domain("credit")
 

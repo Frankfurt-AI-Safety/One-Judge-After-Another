@@ -15,7 +15,7 @@ import random
 import pytest
 
 from substrates.education_ingest import EssayRecord
-from substrates.education_render import EDU_TEMPLATES, render_essay
+from substrates.education_render import render_essay
 from pairs.markers import (
     BLACK_FEMALE_NAMES,
     BLACK_MALE_NAMES,

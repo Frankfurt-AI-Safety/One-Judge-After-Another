@@ -12,7 +12,7 @@ import yaml
 
 from runners import run_decision_response as rdr
 from substrates.domains import get_domain
-from tests.test_run_cross_marker import _model, _record, _tokenizer, manifest  # noqa: F401  (fixture)
+from tests.test_run_cross_marker import _model, _record, _tokenizer
 
 # the fixture manifest's records (tests/test_run_cross_marker.py::manifest)
 RECORDS = [_record("credit", f"s{i}", True) for i in range(8)] + [_record("credit", f"w{i}", False) for i in range(8)]

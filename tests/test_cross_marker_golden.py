@@ -20,7 +20,7 @@ import pytest
 from pairs.factorial import CREDIT_DESIGN, EDUCATION_DESIGN
 from scoring.cross_marker_metrics import cross_marker_metrics, placement_check
 from tests.test_cross_marker_metrics import _rows
-from tests.test_run_cross_marker import _model, _tokenizer, manifest  # noqa: F401  (fixture)
+from tests.test_run_cross_marker import _model, _tokenizer
 
 GOLDEN = Path(__file__).parent / "golden" / "cross_marker.json"
 N_BOOT = 300

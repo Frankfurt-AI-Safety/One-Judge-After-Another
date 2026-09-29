@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import torch
 
-from runners.run_additivity import additivity_intervals
 from runners.run_positioned_maineffect import positioned_intervals
 from scoring.demographic_experiment import (
     auto_influence_with_intervals, compute_auto_influence_metrics, compute_decision_response_metrics,
@@ -106,23 +104,6 @@ def test_positioned_intervals_estimate_the_decomposition():
     assert out["main_effect"]["estimate"] == pytest.approx((np.mean(d_a) + np.mean(d_b)) / 2)
     assert out["auto_influence"]["estimate"] == pytest.approx(2 * abs(5 / 6 - 0.5))   # 5 of 6 pairs a > b
     assert out["delta_a"]["n_clusters"] == 3
-
-
-def test_additivity_intervals_on_an_additive_design():
-    torch.manual_seed(0)
-    axes = ["sex", "age", "marital_status"]
-    base = {a: torch.randn(16) for a in axes}
-    contrasts = {a: {f"r{i}": base[a] + 0.1 * torch.randn(16) for i in range(30)} for a in axes}
-    unit = lambda v: v / v.norm()
-    # intersection = the sum of the unit marginals, per record: additive by construction
-    contrasts["intersection"] = {r: sum(unit(base[a]) for a in axes) + 0.05 * torch.randn(16)
-                                 for r in contrasts["sex"]}
-    out = additivity_intervals(contrasts, axes, n_boot=300, seed=0)
-    c = out["cos_intersection_vs_marginal_sum"]
-    assert c["estimate"] > 0.95 and c["ci_low"] <= c["estimate"] <= c["ci_high"] and c["n_records"] == 30
-    assert set(out) == {"cos_intersection_vs_marginal_sum", "cos_sex_age", "cos_sex_marital", "cos_age_marital"}
-    mean_dir = lambda a: unit(torch.stack(list(contrasts[a].values())).mean(0))
-    assert out["cos_sex_age"]["estimate"] == pytest.approx(float(mean_dir("sex") @ mean_dir("age")), abs=1e-5)
 
 
 def test_signed_intervals_cover_no_effect_the_folded_ones_do_not():

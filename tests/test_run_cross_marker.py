@@ -209,10 +209,9 @@ def _model():
     return LlamaForSequenceClassification(cfg).to(torch.bfloat16).eval()
 
 
-@pytest.fixture
-def manifest(tmp_path):
-    """A credit pairs.jsonl + cells.jsonl as the generator writes them (16 records, both encodings,
-    both templates)."""
+def credit_manifest(tmp_path):
+    """A credit pairs.jsonl + cells.jsonl + manifest.json as the generator writes them (16 records, both encodings,
+    both templates); the ``manifest`` fixture of tests/conftest.py."""
     recs = [_record("credit", f"s{i}", True) for i in range(8)] + \
            [_record("credit", f"w{i}", False) for i in range(8)]
     pair_rows, cell_rows, _ = build_factorial_rows(

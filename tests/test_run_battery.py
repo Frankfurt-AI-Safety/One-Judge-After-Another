@@ -11,7 +11,7 @@ import yaml
 
 from runners import run_battery
 from runners.run_battery import default_out, manifest_cells, select_cells
-from tests.test_run_cross_marker import _model, _tokenizer, manifest  # noqa: F401  (fixture)
+from tests.test_run_cross_marker import _model, _tokenizer
 
 CREDIT_CELLS = [("sex", "explicit"), ("age", "explicit"), ("marital_status", "explicit"), ("intersection", "explicit"),
                 ("sex", "proxy"), ("age", "proxy"), ("intersection", "proxy")]
