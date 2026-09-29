@@ -33,13 +33,20 @@ Mechanism layer (`probes/cross_marker_directions.py`), all from one embedding pa
   alone; baseline − gate_fixed is the part that runs through the gate.
 
 Items come from the generator's ``cells.jsonl`` next to the config's ``dataset_source`` (the direct
-manifest). Every record in any direct probe split is excluded from evaluation; a record is evaluated only
-if all its requested blocks fit ``max_length`` (the forward pass refuses a longer input rather than cut the
-response, which carries the decision). Settings: ``extra.cross_marker`` in the config, overridden by the CLI.
+manifest), always the one its ``manifest.json`` lists with the ``pairs.jsonl``: both are checked against
+their hashes before the model loads (`scoring.experiment.data_file`), so the probe records the directions
+come from are the records excluded here. Every record in any direct probe split is excluded from evaluation;
+a record is evaluated only if all its requested blocks fit ``max_length`` (the forward pass refuses a longer
+input rather than cut the response, which carries the decision). Requesting more records than exist
+(``--n-strong 100000``) takes them all; any other shortfall, and blocks dropped as mismatched or incomplete,
+are logged as warnings. Settings: ``extra.cross_marker`` in the config, overridden by the CLI.
 
-Outputs (no texts — the corpora's licences): ``<out>.json`` (settings, selection, probe metadata, metrics,
+Outputs (no texts — the corpora's licences): ``<out>.json`` (``meta``: config with the loaded model commit,
+code commit, both data files' SHA-256, settings, command line; then selection, probe metadata, metrics,
 placement check, geometry, α-sweep), ``<out>_rewards.jsonl`` and ``<out>_direct_rewards.jsonl`` (one row
 per scored text, one reward column per variant) and ``<out>_directions.pt`` (every direction, per fold).
+The default ``<out>`` is ``crossmarker_{domain}[_{manifest folder}]_{model}.json``; an existing result is
+never replaced without ``--overwrite`` (checked before the model loads).
 
 Usage:
     python runners/run_cross_marker.py --config configs/demographic_credit_crossmarker_qwen06.yaml
@@ -70,7 +77,8 @@ from pairs.cross_marker import CellBlock, build_block_items, fits_max_length, lo
 from pairs.factorial import FactorialDesign, stable_rng
 from scoring.cross_marker_metrics import RewardIndex, cross_marker_metrics, placement_check, sweep_point
 from scoring.dataset_base import add_special_tokens, format_conversation
-from scoring.experiment import apply_overrides  # noqa: F401  (the CLI's overrides; re-exported for the tests)
+from scoring.experiment import add_override_args, apply_overrides, data_file, run_metadata
+from scoring.intervals import DEFAULT_N_BOOT
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +91,7 @@ DEFAULTS: Dict[str, Any] = {
     "include_unmarked": True,
     "paraphrases": 3,
     "seed": 42,
-    "n_boot": 2000,
+    "n_boot": DEFAULT_N_BOOT,
     "directions": list(DIRECTION_SOURCES),   # [] = baseline only
     "n_folds": 5,
     "alphas": [0.0, 0.25, 0.5, 0.75, 1.0],
@@ -126,11 +134,52 @@ def resolve_settings(extra: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[s
     return settings
 
 
-def cells_path(dataset_source: Optional[str], default_pairs: str, override: Optional[str]) -> Path:
-    """The generator writes cells.jsonl next to pairs.jsonl."""
-    if override:
-        return Path(override)
+def cells_path(dataset_source: Optional[str], default_pairs: str) -> Path:
+    """The generator writes cells.jsonl next to pairs.jsonl, and one manifest lists both. Always that one: a
+    cells file of another build would hold other records than those whose probe split the directions come from,
+    so the probe-record exclusion would remove the wrong ones (the ``--cells`` override went 2026-09-29)."""
     return Path(dataset_source or default_pairs).parent / "cells.jsonl"
+
+
+def default_out(domain: str, source: Path | str, model_path: str) -> Path:
+    """``crossmarker_{domain}[_{manifest folder}]_{model}.json``, as the battery names its results."""
+    folder = Path(source).parent.name
+    stem = domain if folder == domain else f"{domain}_{folder}"
+    return Path("artifacts/results/demographic") / f"crossmarker_{stem}_{Path(model_path).name}.json"
+
+
+def check_requested(blocks: Sequence[CellBlock], encodings: Sequence[str], templates: Sequence[str]) -> None:
+    """Every requested encoding and template must exist in cells.jsonl; otherwise every record would count as
+    incomplete and the run would fail only after the model and the directions."""
+    for what, wanted, have in (("encoding", encodings, {b.encoding for b in blocks}),
+                               ("template", templates, {b.template_id for b in blocks})):
+        missing = sorted(set(wanted) - have)
+        if missing:
+            raise SystemExit(f"{what} {missing} not in cells.jsonl, which has {sorted(have)}")
+
+
+def log_selection(cells_report: Mapping[str, Any], selection: Mapping[str, Any]) -> None:
+    """Say what the result JSON records about dropped and missing records. Requesting more records than exist
+    (the pilot's ``--n-strong 100000``) means "take all" and is only noted; a group that falls short for any
+    other reason — blocks too long for ``max_length`` — is warned about, since it lowers the planned n."""
+    if cells_report.get("n_dropped_mismatch"):
+        logger.warning("%d cells.jsonl blocks dropped as not matching the design, e.g. %s",
+                       cells_report["n_dropped_mismatch"], cells_report.get("dropped_examples", [])[:2])
+    logger.info("records: %d in cells.jsonl, %d probe records excluded, %d incomplete, %d too long",
+                selection["records_in_cells"], selection["excluded_probe_records"],
+                selection["incomplete_records"], selection["too_long_records"])
+    if selection["incomplete_records"]:
+        logger.warning("%d records lack a requested (encoding, template) block and were not evaluated",
+                       selection["incomplete_records"])
+    for group in ("strong", "weak"):
+        n, requested, available = (selection[f"{k}_{group}"] for k in ("n", "requested", "available"))
+        if n >= requested:
+            continue
+        if n == available:
+            logger.info("%s: requested %d, %d available: took all", group, requested, available)
+        else:
+            logger.warning("%s: %d of %d requested records (%d available; %d records too long overall)",
+                           group, n, requested, available, selection["too_long_records"])
 
 
 # --------------------------------------------------------------------------- selection ---------------
@@ -319,8 +368,6 @@ def direct_directions(model: Any, tokenizer: Any, dom: Any, source: str, encodin
 
     Every direction rests on ``probe_records`` records, stratified by quality and the same for every axis
     (the split ignores the axis), so the union is those records."""
-    import torch
-
     from probes.cross_marker_directions import full_sample_reliability, split_half_cosine
     from probes.probe import build_probe_direction, embed_states
 
@@ -629,8 +676,8 @@ def print_report(summary: Dict[str, Any]) -> None:
             cos = {(a, b): geo["cosine"][i][j] for i, a in enumerate(names) for j, b in enumerate(names)}
             ceil = {(a, b): geo["cosine_ceiling"][i][j] for i, a in enumerate(names) for j, b in enumerate(names)}
             rel = geo["reliability"]
-            print(f"  geometry (rel = full-sample reliability; cos x/c = cosine / its ceiling √(rel·rel); "
-                  f"share = part of the DiD the direction carries)")
+            print("  geometry (rel = full-sample reliability; cos x/c = cosine / its ceiling √(rel·rel); "
+                  "share = part of the DiD the direction carries)")
             for axis in d["disparity"]:
                 dn, pn, iname = f"direct:{axis}", f"prompt:{axis}", f"interaction:{axis}"
                 c = lambda a, b: (f"{cos[(a, b)]:+.2f}/{ceil[(a, b)]:.2f}" if (a, b) in cos and
@@ -678,7 +725,6 @@ def print_report(summary: Dict[str, Any]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, default=Path("configs/demographic_credit_crossmarker_qwen06.yaml"))
-    ap.add_argument("--cells", default=None, help="cells.jsonl (default: next to the config's dataset_source)")
     ap.add_argument("--encodings", default=None, help="Comma-separated, e.g. explicit,proxy")
     ap.add_argument("--templates", default=None, help="Comma-separated template ids (default: all)")
     ap.add_argument("--n-strong", type=int, default=None)
@@ -688,19 +734,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-placement-check", action="store_true", help="Skip the marker-in-response side")
     ap.add_argument("--directions", default=None,
                     help=f"Comma-separated subset of {','.join(DIRECTION_SOURCES)}, or 'none'")
-    ap.add_argument("--probe-records", type=int, default=None,
-                    help="Overrides the config's probe_records (records per direct direction)")
     ap.add_argument("--n-folds", type=int, default=None)
     ap.add_argument("--n-boot", type=int, default=None)
     ap.add_argument("--seed", type=int, default=None)
-    ap.add_argument("--device", default=None, help="Overrides the config's device (e.g. cpu, mps)")
-    ap.add_argument("--model", default=None,
-                    help="Overrides the config's model_path (e.g. an 8B RM on a 0.6B config)")
-    ap.add_argument("--batch-size", type=int, default=None, help="Overrides the config's batch_size")
-    ap.add_argument("--revision", default=None,
-                    help="Hub revision of the model (default: pinned in scoring.backend, else main)")
     ap.add_argument("--out", type=Path, default=None,
-                    help="Default artifacts/results/demographic/crossmarker_{domain}_{model}.json")
+                    help="Default artifacts/results/demographic/crossmarker_{domain}[_{folder}]_{model}.json")
+    ap.add_argument("--overwrite", action="store_true", help="Replace an existing result (and its side files)")
+    add_override_args(ap)   # --model, --revision, --batch-size, --device, --probe-records (records per direction)
     return ap
 
 
@@ -728,14 +768,18 @@ def main() -> None:
         "placement_check": False if args.no_placement_check else None,
         "directions": ([] if args.directions == "none" else split(args.directions)),
         "n_folds": args.n_folds, "n_boot": args.n_boot, "seed": args.seed})
-    source = cfg.dataset_source or dom.default_pairs
-    path = cells_path(cfg.dataset_source, dom.default_pairs, args.cells)
-    slug = Path(cfg.model_path).name
-    out = args.out or Path(f"artifacts/results/demographic/crossmarker_{dom.name}_{slug}.json")
+    source = cfg.dataset_source = cfg.dataset_source or dom.default_pairs
+    path = cells_path(source, dom.default_pairs)
+    out = args.out or default_out(dom.name, source, cfg.model_path)
+    # everything that can fail on the inputs fails here, before the model loads
+    if out.exists() and not args.overwrite:
+        raise SystemExit(f"{out} exists; pass --overwrite to replace it (and its side files), or --out")
+    data = {"pairs.jsonl": data_file(source), "cells.jsonl": data_file(path)}
 
     cells_report: Dict[str, Any] = {}
     blocks = load_cell_blocks(path, design, cells_report)
     templates = settings["templates"] or sorted({b.template_id for b in blocks})
+    check_requested(blocks, settings["encodings"], templates)
 
     timer.lap("setup")
     exp = DemographicBiasExperiment(cfg)
@@ -762,6 +806,7 @@ def main() -> None:
         blocks, quality_field=dom.quality_field, encodings=settings["encodings"], templates=templates,
         exclude=probe_ids, n_strong=settings["n_strong"], n_weak=settings["n_weak"],
         seed=settings["seed"], fits=fits)
+    log_selection(cells_report, selection)
     rows, convs = build_rows(selected, dom.name, dom.quality_field, format_fn, settings, cache=formatted)
     formatted.clear()                                          # convs holds what is needed
     lengths = document_lengths(selected, tok)
@@ -805,6 +850,7 @@ def main() -> None:
     reference = credit_reference(dom, selected)
     timer.lap("metrics")
     summary = {
+        "meta": run_metadata(cfg, data, {**settings, "templates": templates}),
         "model": cfg.model_path, "model_revision": model_revision(cfg),
         "domain": dom.name, "settings": {**settings, "templates": templates},
         "max_length": cfg.max_length, "probe_records": cfg.probe_records,

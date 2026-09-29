@@ -58,9 +58,11 @@ class TestSettings:
             resolve_settings({}, {"directions": ["direct", "leace"]})
 
     def test_cells_next_to_pairs(self):
-        assert str(cells_path("data/x/pairs.jsonl", "d/p.jsonl", None)) == "data/x/cells.jsonl"
-        assert str(cells_path(None, "d/p.jsonl", None)) == "d/cells.jsonl"
-        assert str(cells_path("a/pairs.jsonl", "d/p.jsonl", "c.jsonl")) == "c.jsonl"
+        # always the cells.jsonl of the same build (manifest) as the pairs; the --cells override is gone
+        assert str(cells_path("data/x/pairs.jsonl", "d/p.jsonl")) == "data/x/cells.jsonl"
+        assert str(cells_path(None, "d/p.jsonl")) == "d/cells.jsonl"
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["--cells", "c.jsonl"])
 
     def test_config_files_parse(self):
         from scoring.experiment import ExperimentConfig
@@ -378,3 +380,72 @@ def test_nulling_moves_the_disparity_by_the_predicted_amount(manifest, monkeypat
     got = geometry["cosine_ceiling"][i][j]
     assert (got != got and expect != expect) or got == pytest.approx(expect)
     assert rel["direct:sex"] == meta["explicit/sex"]["reliability"] or rel["direct:sex"] != rel["direct:sex"]
+
+
+# --------------------------------------------------------------------------- main, end to end ---------
+@pytest.fixture
+def run_main(manifest, tmp_path, monkeypatch):
+    """`main` on the fixture manifest with the tiny model standing in for the loader."""
+    import yaml
+
+    from runners import run_cross_marker as rcm
+
+    monkeypatch.setenv("ONEJUDGE_EMBED_CACHE", "off")
+    monkeypatch.chdir(tmp_path)
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump({
+        "name": "t", "bias_type": "demographic", "model_path": "org/Tiny-RM", "dataset_source": str(manifest),
+        "probe_records": 6, "batch_size": 16, "max_length": 1024,
+        "extra": {"domain": "credit", "cross_marker": {"n_strong": 3, "n_weak": 100, "n_folds": 2, "n_boot": 20,
+                                                        "paraphrases": 1, "alphas": [0.0, 1.0]}}}))
+    loads = []
+
+    def load_model(self):
+        loads.append(1)
+        self.model, self.tokenizer = _model(), _tokenizer()
+        self.config.model_revision = "abc123"
+
+    from scoring.demographic_experiment import DemographicBiasExperiment
+    monkeypatch.setattr(DemographicBiasExperiment, "load_model", load_model)
+    monkeypatch.setattr(rcm, "credit_reference", lambda dom, selected: None)  # needs the real corpus
+
+    def _run(*extra):
+        monkeypatch.setattr("sys.argv", ["run_cross_marker.py", "--config", str(cfg_path), *extra])
+        rcm.main()
+
+    _run.loads = loads
+    return _run
+
+
+def test_main_end_to_end(run_main, manifest, tmp_path, caplog):
+    import hashlib
+    import logging
+    from pathlib import Path
+
+    with caplog.at_level(logging.INFO, logger="runners.run_cross_marker"):
+        run_main()
+    out = tmp_path / "artifacts/results/demographic" / f"crossmarker_credit_{manifest.parent.name}_Tiny-RM.json"
+    summary = json.loads(out.read_text())
+    stem = str(out.with_suffix(""))
+    assert all(Path(stem + s).exists() for s in ("_rewards.jsonl", "_direct_rewards.jsonl", "_directions.pt"))
+    meta = summary["meta"]
+    assert meta["config"]["model_revision"] == "abc123"
+    for name in ("pairs.jsonl", "cells.jsonl"):
+        assert meta["data"][name]["sha256"] == hashlib.sha256((manifest.parent / name).read_bytes()).hexdigest()
+    sel = summary["selection"]
+    assert sel["excluded_probe_records"] == 6 and sel["n_strong"] == 3 and sel["n_weak"] == sel["available_weak"] == 5
+    assert "weak: requested 100, 5 available: took all" in caplog.text        # "take all" is only noted
+    # an existing result is not replaced without --overwrite, and the model is not loaded for nothing
+    with pytest.raises(SystemExit, match="exists"):
+        run_main()
+    assert len(run_main.loads) == 1
+
+
+def test_bad_requests_stop_before_the_model_loads(run_main, manifest):
+    with pytest.raises(SystemExit, match="not in cells.jsonl"):
+        run_main("--encodings", "explicit,phonetic")
+    with open(manifest.parent / "cells.jsonl", "a") as f:   # cells.jsonl of another build than its manifest says
+        f.write("{}\n")
+    with pytest.raises(ValueError, match="different builds"):
+        run_main()
+    assert run_main.loads == []
