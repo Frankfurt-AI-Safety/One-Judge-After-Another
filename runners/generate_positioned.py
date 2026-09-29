@@ -48,12 +48,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from substrates.education_clean import load_education_essays, source_path
 from substrates.education_ingest import real_fields
 from substrates.education_render import EDU_TEMPLATES
-from pairs.factorial import stable_rng
 from pairs.positionality import (
-    DEFAULT_HEADER_TEMPLATE, POSITIONED_AXES, POSITIONS, STANDPOINT_GROUPS, NoInsertionPoint, block_id_suffix,
-    make_positioned_pairs, select_standpoint_essays, standpoint_fit,
+    DEFAULT_HEADER_TEMPLATE, POSITIONED_AXES, POSITIONS, STANDPOINT_GROUPS, block_id_suffix, positioned_block,
+    select_standpoint_essays, standpoint_fit,
 )
-from pairs.validate import add_threshold_args, tally_reasons, thresholds_from_args, validate_pair
+from pairs.validate import add_threshold_args, thresholds_from_args
 from pairs.manifest import EDU_ATTRIBUTION, pair_to_record, write_manifest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s",
@@ -119,19 +118,14 @@ def main() -> None:
             kept_blocks, dropped_blocks, n_pairs = 0, 0, 0
             fail_reasons: Dict[str, int] = {}
             for rec in records:
-                rng = stable_rng(args.seed, rec.source_record_id, axis, position)
-                try:
-                    pairs = make_positioned_pairs(rec, axis, position, rng,
-                                                  variant="sample" if args.paraphrase == "sample" else None,
-                                                  header_template=args.header_template)
-                except NoInsertionPoint:  # middle/random in an essay with no sentence boundary
+                # built and gated as the main-effect runner builds it (`pairs.positionality.positioned_block`)
+                pairs, failures = positioned_block(rec, axis, position, args.seed,
+                                                   variant="sample" if args.paraphrase == "sample" else None,
+                                                   header_template=args.header_template, thresholds=thr)
+                if not pairs:
                     dropped_blocks += 1
-                    fail_reasons["no_insertion_point"] = fail_reasons.get("no_insertion_point", 0) + 1
-                    continue
-                failures = [res for res in (validate_pair(p, thr) for p in pairs) if not res.ok]
-                if failures:
-                    dropped_blocks += 1
-                    tally_reasons(failures, fail_reasons)
+                    for code, k in failures.items():
+                        fail_reasons[code] = fail_reasons.get(code, 0) + k
                     continue
                 kept_blocks += 1
                 for pair in pairs:

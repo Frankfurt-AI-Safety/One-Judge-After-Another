@@ -55,12 +55,15 @@ from __future__ import annotations
 import dataclasses
 import random
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from substrates.education_ingest import EssayRecord
 from substrates.education_render import render_essay
 from pairs.factorial import EDUCATION_DESIGN, pair_suffix, stable_rng
 from pairs.markers import GeneratedPair
+
+if TYPE_CHECKING:
+    from pairs.validate import Thresholds
 
 # The A1 header shell the positioned essay is framed in (see the module docstring). One shell, not a
 # per-pair sample: A2's robustness dimension is the sentence paraphrase, and a second random factor
@@ -437,3 +440,35 @@ def make_positioned_pairs(
 def block_id_suffix(pair: GeneratedPair) -> str:
     """Id suffix that keeps an essay's four factorial pairs apart (``""`` for single-pair blocks)."""
     return f"-{pair_suffix(pair.intersectional_cell)}" if pair.intersectional_cell else ""
+
+
+def positioned_block(
+    record: EssayRecord,
+    axis: str,
+    position: str,
+    seed: int,
+    *,
+    variant: Optional[str] = None,
+    header_template: str = DEFAULT_HEADER_TEMPLATE,
+    thresholds: Optional["Thresholds"] = None,
+) -> Tuple[List[GeneratedPair], Dict[str, int]]:
+    """One essay's block for one axis and position, built and gated the same way wherever it is built (the
+    positioned generator and `runners/run_positioned_maineffect.py` score the same texts): the rng is keyed by
+    (seed, essay, axis, position), plus the variant when there is one; the Tier-1 gate runs on every pair at
+    ``thresholds`` (default `pairs.validate.Thresholds()`). Returns ``(pairs, failures)``: the pairs, or ``[]``
+    with the failure counts by reason code when the block is dropped whole (``no_insertion_point`` when the
+    position needs a sentence boundary the essay does not have)."""
+    from pairs.validate import Thresholds, tally_reasons, validate_pair
+
+    key = (seed, record.source_record_id, axis, position) + ((variant,) if variant else ())
+    try:
+        pairs = make_positioned_pairs(record, axis, position, stable_rng(*key), variant=variant,
+                                      header_template=header_template)
+    except NoInsertionPoint:
+        return [], {"no_insertion_point": 1}
+    failures = [res for res in (validate_pair(p, thresholds or Thresholds()) for p in pairs) if not res.ok]
+    if failures:
+        counts: Dict[str, int] = {}
+        tally_reasons(failures, counts)
+        return [], counts
+    return pairs, {}

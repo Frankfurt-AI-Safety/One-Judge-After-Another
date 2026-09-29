@@ -91,3 +91,85 @@ def test_chance_balance_is_the_floor_of_one_population():
     assert set(ref["total_variation"]) == set(CATEGORICAL_FIELDS)
     assert all(v >= 0 for part in ref.values() for v in part.values())
     assert ref["total_variation"]["credit_good"] > 0          # two samples of 10 differ by chance
+
+
+# --------------------------------------------------------------------------- nulling, end to end
+def _states(n=10, d=16, seed=0):
+    import torch
+
+    g = torch.Generator().manual_seed(seed)
+    shift = torch.randn(d, generator=g)
+    return torch.randn(n, d, generator=g) + shift, torch.randn(n, d, generator=g)
+
+
+def test_in_sample_nulling_zeroes_the_mean_gap_leave_one_out_does_not(monkeypatch):
+    import torch
+
+    from runners import run_realfield as rf
+
+    w = torch.randn(16, generator=torch.Generator().manual_seed(1))
+
+    def rewards(model, h, dtype, direction=None, gates=None, **kw):
+        base = h.float() @ w
+        if direction is None:
+            return base, base
+        u = direction / direction.norm()
+        return base, (h.float() - (h.float() @ u)[:, None] * u) @ w
+
+    monkeypatch.setattr(rf, "rewards_from_hidden", rewards)
+    h_a, h_b = _states()
+    in_sample = rf.pair_gaps(None, h_a, h_b, torch.float32, direction=(h_a - h_b).mean(0))
+    assert abs(sum(in_sample) / len(in_sample)) < 1e-5              # the old "nulled" gap: 0 by construction
+    loo = rf.leave_one_out_gaps(None, h_a, h_b, torch.float32)
+    diffs = h_a - h_b
+    for k in (0, 7):                                                  # pair k nulled with the others' direction
+        u = (diffs.sum(0) - diffs[k]) / (diffs.sum(0) - diffs[k]).norm()
+        expect = float(((diffs[k] - (diffs[k] @ u) * u)) @ w)
+        assert loo[k] == pytest.approx(expect, abs=1e-5)
+    assert abs(sum(loo) / len(loo)) > 1e-3
+
+
+def _german_data(path, n=12):
+    """A synthetic german.data: n male records, divorced (A91) and married (A93) in turn, alike on MATCH_KEYS."""
+    path.write_text("".join(f"A14 12 A34 A43 {1000 + 37 * i} A61 A73 2 {'A91' if i % 2 == 0 else 'A93'} A101 2 A121 "
+                            f"{30 + i} A143 A152 1 A173 1 A192 A201 1\n" for i in range(n)))
+    return path
+
+
+def test_main_end_to_end_on_a_tiny_model(manifest, tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    import yaml
+
+    from runners import run_realfield as rf
+    from tests.test_run_cross_marker import _model, _tokenizer
+
+    monkeypatch.setenv("ONEJUDGE_EMBED_CACHE", "off")
+    monkeypatch.chdir(tmp_path)
+    raw = _german_data(tmp_path / "german.data")
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text(yaml.safe_dump({"name": "t", "bias_type": "demographic", "model_path": "org/Tiny-RM",
+                                   "dataset_source": str(manifest), "probe_records": 6, "batch_size": 16,
+                                   "max_length": 1024, "extra": {"domain": "credit"}}))
+    loads = []
+
+    def load_model(self):
+        loads.append(1)
+        self.model, self.tokenizer = _model(), _tokenizer()
+        self.config.model_revision = "abc123"
+
+    monkeypatch.setattr(rf.DemographicBiasExperiment, "load_model", load_model)
+    monkeypatch.setattr("sys.argv", ["run_realfield.py", "--config", str(cfg), "--raw", str(raw), "--n-boot", "50"])
+    rf.main()
+    result = json.loads((tmp_path / "artifacts/results/demographic/realfield_marital_Tiny-RM.json").read_text())
+    assert result["n_per_group"] == 6 and result["n_unmatched"] == 0
+    assert result["meta"]["config"]["model_revision"] == "abc123"
+    assert result["meta"]["data"]["german.data"]["sha256"] == hashlib.sha256(raw.read_bytes()).hexdigest()
+    assert result["meta"]["data"]["pairs.jsonl"]["sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+    gap = result["reward_gap_divorced_minus_married"]
+    assert set(gap) == {"baseline", "nulled_heldout", "nulled_synthetic_marital"}
+    assert set(result["reliability"]) == {"real_marital", "synthetic_marital", "synthetic_sex"}
+    with pytest.raises(SystemExit, match="exists"):
+        rf.main()
+    assert len(loads) == 1
