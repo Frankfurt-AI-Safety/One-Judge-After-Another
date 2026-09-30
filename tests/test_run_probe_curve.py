@@ -78,7 +78,79 @@ def test_rule_takes_the_n_from_which_every_larger_point_passes():
 
 
 def test_rule_reports_none_when_the_largest_point_is_unstable():
+    # the direction is reported (smallest_passing_n None) and keeps the largest N (answer)
     curve = [_point(25, 0.5, 1.0), _point(300, 0.85, 1.0)]
-    assert probe_rule(curve)["smallest_passing_n"] is None
+    assert probe_rule(curve)["smallest_passing_n"] is None and probe_rule(curve)["answer"] == 300
     assert probe_rule(curve, threshold=0.8)["smallest_passing_n"] == 300
     assert probe_rule([_point(25, float("nan"), 1.0), _point(300, 0.95, 1.0)])["passes"][25] is False
+
+
+def test_the_default_grid_runs_to_500():
+    from runners.run_probe_curve import DEFAULT_GRID
+
+    assert DEFAULT_GRID[-1] == 500 and list(DEFAULT_GRID) == sorted(DEFAULT_GRID)
+
+
+def test_domain_answer_keeps_the_largest_n_for_a_failing_direction():
+    from runners.run_probe_curve import domain_answer
+
+    rule = lambda n, largest=500: {"rule": {"smallest_passing_n": n, "answer": largest if n is None else n}}
+    assert domain_answer({"explicit/sex": rule(100), "proxy/age": rule(None)}) == \
+        {"probe_records": 500, "failing_directions": ["proxy/age"]}
+    assert domain_answer({"explicit/sex": rule(100), "proxy/age": rule(75)})["probe_records"] == 100
+
+
+@pytest.fixture
+def run(manifest, tmp_path, monkeypatch):
+    import yaml
+
+    from runners import run_probe_curve as rpc
+
+    monkeypatch.setenv("ONEJUDGE_EMBED_CACHE", "off")
+    monkeypatch.chdir(tmp_path)
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump({
+        "name": "t", "bias_type": "demographic", "model_path": "org/Tiny-RM", "dataset_source": str(manifest),
+        "batch_size": 16, "max_length": 1024, "extra": {"domain": "credit"}}))
+    loads = []
+
+    def load_model(self):
+        loads.append(1)
+        self.model, self.tokenizer = _model(), _tokenizer()
+        self.config.model_revision = "abc123"
+
+    from scoring.demographic_experiment import DemographicBiasExperiment
+    monkeypatch.setattr(DemographicBiasExperiment, "load_model", load_model)
+
+    def _run(*extra):
+        monkeypatch.setattr("sys.argv", ["run_probe_curve.py", "--config", str(cfg_path), "--grid", "4,8,12",
+                                         "--n-boot", "20", *extra])
+        rpc.main()
+        import json
+        return json.loads((tmp_path / "artifacts/results/demographic/pilot/probecurve_credit_Tiny-RM.json").read_text())
+
+    _run.loads = loads
+    return _run
+
+
+def test_main_end_to_end(run, manifest):
+    import hashlib
+
+    result = run("--axes", "sex,intersection")
+    assert result["meta"]["config"]["model_revision"] == "abc123"
+    assert result["meta"]["data"]["pairs.jsonl"]["sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert set(result["directions"]) == {"explicit/sex", "explicit/intersection", "proxy/sex", "proxy/intersection"}
+    assert result["probe_records"] == max(d["rule"]["answer"] for d in result["directions"].values())
+    with pytest.raises(SystemExit, match="exists"):
+        run()
+    assert len(run.loads) == 1
+
+
+def test_bad_inputs_stop_before_the_model_loads(run):
+    with pytest.raises(SystemExit, match="no axes"):
+        run("--axes", "grade_level")
+    with pytest.raises(SystemExit, match="grid sets"):
+        run("--probe-records", "50")
+    with pytest.raises(SystemExit, match="too few records"):
+        run("--grid", "4,16")
+    assert run.loads == []

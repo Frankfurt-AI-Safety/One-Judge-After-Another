@@ -15,12 +15,17 @@ split of the largest set is one **fixed eval set**, disjoint from every prefix. 
   averaged per record and summarised over records (mean, SD, 95% bootstrap CI).
 
 ``probe_rule`` applies the pre-stated rule: a grid point passes when its split-half cosine is at least
-``--threshold`` and its nulled abs gap lies inside the 95% CI of the value at the largest N; the answer is
-the smallest N from which every larger grid point passes too. The eval baseline (per-record SD of the gap)
-is reported as well; it sizes the direct arm's evaluation.
+``--threshold`` and its nulled abs gap lies inside the 95% CI of the value at the largest N; the direction's
+answer is the smallest N from which every larger grid point passes too, and a direction that fails even at the
+largest N is reported and answers the largest N. The domain's ``probe_records`` is the largest answer. The grid
+runs to N = 500 (amendment to the rule, confirmed 2026-09-30), so the reference is the value at 500. The eval
+baseline (per-record SD of the gap) is reported as well; it sizes the direct arm's evaluation.
 
-Every state comes from the embedding cache: the eval set is embedded once, and each prefix's pairs are
-cache hits after the largest set has been embedded. Outputs ids and numbers only, never text.
+The eval set and the largest probe set go through the model once each; every prefix's direction (the difference
+of means, as `build_probe_direction`) and contrasts come from the largest set's states. The result (default
+``pilot/probecurve_{domain}_{model}.json``, never replaced without ``--overwrite``) carries ``meta`` (the config
+with the loaded model commit, the code commit, the manifest's SHA-256; `scoring.experiment`): ids and numbers only,
+never text.
 
 Usage:
     python runners/run_probe_curve.py --config configs/demographic_credit_crossmarker_qwen06.yaml
@@ -41,12 +46,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from runners.run_cross_marker import PhaseTimer, record_contrast_matrix, timing_report
-from scoring.experiment import apply_overrides
+from scoring.experiment import add_override_args, apply_overrides, data_file, run_metadata
 from scoring.cross_marker_metrics import summarize
+from scoring.intervals import DEFAULT_N_BOOT
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GRID = (25, 50, 75, 100, 150, 200, 300)
+DEFAULT_GRID = (25, 50, 75, 100, 150, 200, 300, 500)
 DEFAULT_THRESHOLD = 0.90
 
 
@@ -54,10 +60,11 @@ DEFAULT_THRESHOLD = 0.90
 def probe_rule(curve: Sequence[Mapping[str, Any]], threshold: float = DEFAULT_THRESHOLD) -> Dict[str, Any]:
     """The pre-stated rule on one direction's curve (sorted by N; the last entry is the largest N).
     A point passes when ``split_half >= threshold`` and its ``nulled_abs_gap`` mean lies inside the 95% CI
-    of the largest N's. Returns the per-N verdicts and ``smallest_passing_n``: the smallest N from which
-    every larger point passes too (None when even the largest fails)."""
+    of the largest N's. Returns the per-N verdicts, ``smallest_passing_n``: the smallest N from which every
+    larger point passes too (None when even the largest fails), and ``answer``: that N, or the largest N for a
+    direction that fails even there (the rule: it is reported, and keeps the largest N)."""
     if not curve:
-        return {"passes": {}, "smallest_passing_n": None}
+        return {"passes": {}, "smallest_passing_n": None, "answer": None, "threshold": threshold}
     ref = curve[-1]["nulled_abs_gap"]
     passes: Dict[int, bool] = {}
     for point in curve:
@@ -69,7 +76,8 @@ def probe_rule(curve: Sequence[Mapping[str, Any]], threshold: float = DEFAULT_TH
         if not passes[int(point["n"])]:
             break
         smallest = int(point["n"])
-    return {"passes": passes, "smallest_passing_n": smallest, "threshold": threshold}
+    return {"passes": passes, "smallest_passing_n": smallest,
+            "answer": smallest if smallest is not None else int(curve[-1]["n"]), "threshold": threshold}
 
 
 # --------------------------------------------------------------------------- eval --------------------
@@ -94,8 +102,8 @@ def direction_curve(model: Any, tokenizer: Any, dataset_cls: Any, source: str, a
                     max_length: int, n_boot: int, seed: int, split_seed: int,
                     threshold: float = DEFAULT_THRESHOLD) -> Dict[str, Any]:
     """The probe-size curve of one (encoding, axis) direction; see the module docstring."""
-    from probes.cross_marker_directions import cosine, split_half_cosine
-    from probes.probe import build_probe_direction, embed_states, embed_with_gates, rewards_from_hidden
+    from probes.cross_marker_directions import cosine, split_half_cosine, unit
+    from probes.probe import embed_states, embed_with_gates, rewards_from_hidden
 
     grid = sorted(set(grid))
     make = lambda n: dataset_cls(source, axis=axis, encoding=encoding, split_seed=split_seed,
@@ -119,6 +127,14 @@ def direction_curve(model: Any, tokenizer: Any, dataset_cls: Any, source: str, a
         _, r_b = rewards_from_hidden(model, h_b, dtype, direction, gates=g_b)
         return gap_summaries(per_record_gaps(examples, (r_a - r_b).tolist()), n_boot, seed)
 
+    # the largest probe set's states, once; every prefix's pairs are a subset of its pairs (its records' rows)
+    max_pairs = ds_max.get_probe_pairs(tokenizer)
+    pos_all, _ = embed_states(model, tokenizer, [p.positive_text for p in max_pairs], batch_size=batch_size,
+                              max_length=max_length, show_progress=False)
+    neg_all, _ = embed_states(model, tokenizer, [p.negative_text for p in max_pairs], batch_size=batch_size,
+                              max_length=max_length, show_progress=False)
+    row_of = {(p.positive_text, p.negative_text): i for i, p in enumerate(max_pairs)}
+
     points: List[Dict[str, Any]] = []
     directions: Dict[int, Any] = {}
     for n in grid:
@@ -127,12 +143,9 @@ def direction_curve(model: Any, tokenizer: Any, dataset_cls: Any, source: str, a
         if len(ids) != n or not ids <= max_ids:
             raise AssertionError(f"{encoding}/{axis}: the N={n} probe set is not a prefix of N={grid[-1]}")
         pairs = ds.get_probe_pairs(tokenizer)
-        u, _ = build_probe_direction(model, tokenizer, pairs, batch_size=batch_size,
-                                     max_length=max_length)
-        pos, _ = embed_states(model, tokenizer, [p.positive_text for p in pairs], batch_size=batch_size,
-                              max_length=max_length, show_progress=False)
-        neg, _ = embed_states(model, tokenizer, [p.negative_text for p in pairs], batch_size=batch_size,
-                              max_length=max_length, show_progress=False)
+        rows = [row_of[(p.positive_text, p.negative_text)] for p in pairs]
+        pos, neg = pos_all[rows], neg_all[rows]
+        u = unit(pos.mean(0) - neg.mean(0))          # the difference of means, as build_probe_direction
         nulled = eval_gaps(u)
         directions[n] = u
         points.append({"n": n, "n_pairs": len(pairs), "split": ds.split_report(),
@@ -154,14 +167,26 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--axes", default=None, help="Comma-separated; default every axis with pairs")
     ap.add_argument("--max-eval", type=int, default=2000, help="Eval pairs (about one per record)")
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
-    ap.add_argument("--n-boot", type=int, default=2000)
+    ap.add_argument("--n-boot", type=int, default=DEFAULT_N_BOOT)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--device", default=None, help="Overrides the config's device (e.g. cpu, mps)")
-    ap.add_argument("--model", default=None, help="Overrides the config's model_path")
-    ap.add_argument("--batch-size", type=int, default=None, help="Overrides the config's batch_size")
     ap.add_argument("--out", type=Path, default=None,
                     help="Default artifacts/results/demographic/pilot/probecurve_{domain}_{model}.json")
+    ap.add_argument("--overwrite", action="store_true", help="Replace an existing result")
+    add_override_args(ap)
     return ap
+
+
+def default_out(domain: str, model_path: str) -> Path:
+    return Path(f"artifacts/results/demographic/pilot/probecurve_{domain}_{Path(model_path).name}.json")
+
+
+def domain_answer(directions: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+    """The domain's ``probe_records``: the largest answer over its directions (a failing direction answers the
+    largest N), and the directions that fail even there."""
+    answers = [d["rule"]["answer"] for d in directions.values()]
+    return {"probe_records": max((a for a in answers if a is not None), default=None),
+            "failing_directions": sorted(k for k, d in directions.items()
+                                         if d["rule"]["smallest_passing_n"] is None)}
 
 
 def main() -> None:
@@ -173,15 +198,29 @@ def main() -> None:
     args = build_parser().parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         datefmt="%H:%M:%S")
-    args.probe_records = None           # apply_overrides reads it; the grid sets probe_records here
+    if args.probe_records is not None:
+        raise SystemExit("--probe-records: the grid sets the probe records here (--grid)")
     cfg = apply_overrides(ExperimentConfig.from_yaml(args.config), args)
     dom = get_domain(cfg.extra.get("domain", "credit"))
     source = cfg.dataset_source or dom.default_pairs
     split = lambda s: [x.strip() for x in s.split(",") if x.strip()]
     grid = sorted({int(x) for x in split(args.grid)})
     axes = split(args.axes) if args.axes else list(dom.axes)
-    out = args.out or Path(f"artifacts/results/demographic/pilot/probecurve_{dom.name}_"
-                           f"{Path(cfg.model_path).name}.json")
+    unknown = sorted(set(axes) - set(dom.axes))
+    if unknown:
+        raise SystemExit(f"{dom.name} has no axes {unknown}; its axes are {list(dom.axes)}")
+    # everything that can fail on the inputs fails here, before the model loads
+    out = args.out or default_out(dom.name, cfg.model_path)
+    if out.exists() and not args.overwrite:
+        raise SystemExit(f"{out} exists; pass --overwrite to replace it, or --out")
+    data = {"pairs.jsonl": data_file(source)}
+    cells = [(e, a) for e in split(args.encodings) for a in axes if dom.factorial.axis_pairs(a, e)]
+    for encoding, axis in cells:
+        kept = dom.dataset_cls(source, axis=axis, encoding=encoding, split_seed=cfg.split_seed,
+                               probe_records=grid[-1]).probe_record_ids()
+        if len(kept) != grid[-1]:
+            raise SystemExit(f"{encoding}/{axis}: N={grid[-1]} leaves too few records for evaluation (the split "
+                             f"kept {len(kept)} probe records); lower the grid")
 
     exp = DemographicBiasExperiment(cfg)
     exp.load_model()
@@ -189,28 +228,26 @@ def main() -> None:
     timer.lap("load_model")
 
     results: Dict[str, Any] = {}
-    for encoding in split(args.encodings):
-        for axis in axes:
-            if not dom.factorial.axis_pairs(axis, encoding):
-                continue
-            logger.info("probe curve %s/%s over N=%s", encoding, axis, grid)
-            results[f"{encoding}/{axis}"] = direction_curve(
-                model, tok, dom.dataset_cls, source, axis, encoding, grid=grid, max_eval=args.max_eval,
-                batch_size=cfg.batch_size, max_length=cfg.max_length,
-                n_boot=args.n_boot, seed=args.seed, split_seed=cfg.split_seed, threshold=args.threshold)
-            timer.lap("curves")
+    for encoding, axis in cells:
+        logger.info("probe curve %s/%s over N=%s", encoding, axis, grid)
+        results[f"{encoding}/{axis}"] = direction_curve(
+            model, tok, dom.dataset_cls, source, axis, encoding, grid=grid, max_eval=args.max_eval,
+            batch_size=cfg.batch_size, max_length=cfg.max_length,
+            n_boot=args.n_boot, seed=args.seed, split_seed=cfg.split_seed, threshold=args.threshold)
+        timer.lap("curves")
 
     cache = getattr(model, "_onejudge_embedding_cache", None)
     timing = timing_report(timer, batch_size=cfg.batch_size, texts=None)
     timing["texts_through_model"] = None if cache is None else cache.misses
-    passing = [r["rule"]["smallest_passing_n"] for r in results.values()]
+    settings = {"grid": grid, "max_eval": args.max_eval, "threshold": args.threshold, "seed": args.seed,
+                "n_boot": args.n_boot, "cells": [list(c) for c in cells]}
     summary = {
+        "meta": run_metadata(cfg, data, settings),
         "model": cfg.model_path, "domain": dom.name, "direct_manifest": source, "grid": grid,
         "max_eval": args.max_eval, "threshold": args.threshold, "seed": args.seed,
         "split_seed": cfg.split_seed, "max_length": cfg.max_length,
         "directions": results,
-        # the domain's answer: the largest per-direction N (None if any direction fails at the largest N)
-        "smallest_passing_n": None if None in passing else max(passing, default=None),
+        **domain_answer(results),
         "timing": timing,
     }
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -226,8 +263,10 @@ def print_report(summary: Mapping[str, Any]) -> None:
     for name, r in summary["directions"].items():
         cells = "  ".join(f"N={p['n']}: {p['split_half']:.3f}/{p['nulled_abs_gap']['mean']:.3f}"
                           f"{'✓' if r['rule']['passes'][p['n']] else '✗'}" for p in r["curve"])
-        print(f"  {name:28} {cells}  → {r['rule']['smallest_passing_n']}")
-    print(f"domain answer (max over directions): {summary['smallest_passing_n']}")
+        fails = "" if r["rule"]["smallest_passing_n"] is not None else " (fails at the largest N)"
+        print(f"  {name:28} {cells}  → {r['rule']['answer']}{fails}")
+    print(f"domain probe_records (max over directions): {summary['probe_records']}; failing even at "
+          f"N={summary['grid'][-1]}: {summary['failing_directions'] or 'none'}")
     t = summary["timing"]
     print(f"timing: {' | '.join(f'{k} {v:.0f}s' for k, v in t['seconds'].items())} | total {t['total_s']:.0f}s")
     print("=" * 100)

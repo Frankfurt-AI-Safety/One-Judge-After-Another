@@ -60,9 +60,72 @@ def test_blinded_to_every_mean():
     assert size_crossmarker(changed, deltas=[0.05, 0.1], families=[1, 12]) == before
 
 
+def _curve(model, a, b, largest=300):
+    rule = lambda n: {"smallest_passing_n": n, "answer": largest if n is None else n}
+    return {"domain": "credit", "model": model,
+            "directions": {"explicit/sex": {"rule": rule(a)}, "proxy/sex": {"rule": rule(b)}}}
+
+
 def test_probe_answer_is_the_largest_over_directions_and_models():
-    curve = lambda model, a, b: {"domain": "credit", "model": model,
-                                 "directions": {"explicit/sex": {"rule": {"smallest_passing_n": a}},
-                                                "proxy/sex": {"rule": {"smallest_passing_n": b}}}}
-    assert probe_answers([curve("small", 50, 100), curve("8b", 75, 150)])["credit"]["answer"] == 150
-    assert probe_answers([curve("small", 50, None)])["credit"]["answer"] is None
+    assert probe_answers([_curve("small", 50, 100), _curve("8b", 75, 150)])["credit"]["answer"] == 150
+
+
+def test_a_direction_failing_at_the_largest_n_is_reported_and_keeps_it():
+    # the pre-stated rule: a direction that fails even at the largest N is reported, and the domain keeps that N
+    d = probe_answers([_curve("small", 50, None, largest=500)])["credit"]
+    assert d["answer"] == 500 and d["failing"] == {"small": ["proxy/sex"]}
+
+
+def test_the_three_way_interaction_is_outside_the_rule():
+    # the rule sizes the two-way interactions; a larger three-way r must not become the binding contrast
+    summary = _summary()
+    for group in summary["metrics"]["explicit"]["baseline"]["margins"]["D"].values():
+        group["interactions"]["three_way"] = _stat(20.0, 2.0)
+    inter = [r for r in size_crossmarker(summary, [0.2], [1]) if r["family"] == "interactions"]
+    assert {r["binding_contrast"] for r in inter} == {"interaction:sex_x_age"}
+    assert all(r["outside_rule"] == {"interaction:three_way": 10.0} for r in inter)
+
+
+def test_an_undefined_r_is_listed_never_dropped():
+    summary = _summary()
+    for group in summary["metrics"]["explicit"]["baseline"]["margins"]["D"].values():
+        group["interactions"] = {"sex_x_age": {"n": 5, "sd": 0.0, "scale_sd": 0.0}}
+    inter = [r for r in size_crossmarker(summary, [0.2], [1]) if r["family"] == "interactions"]
+    assert len(inter) == 2 and all(r["r"] is None and r["unsized"] == ["interaction:sex_x_age"] for r in inter)
+    assert all(v is None for r in inter for v in r["required"].values())
+
+
+def test_the_answer_is_the_maximum_over_models():
+    from runners.pilot_sizing import max_over_models
+
+    small = _summary()
+    large = copy.deepcopy(small)
+    large["model"] = "Skywork/Skywork-Reward-V2-Llama-3.1-8B"
+    large["selection"]["available_weak"] = 180
+    for group in large["metrics"]["explicit"]["baseline"]["margins"]["D"].values():
+        group["disparity"]["age"] = _stat(4.0, 2.0)                    # r 2.0 against the small model's 1.5
+    rows = size_crossmarker(small, [0.2], [1]) + size_crossmarker(large, [0.2], [1])
+    best = {(r["group"], r["family"]): r for r in max_over_models(rows)}
+    assert best[("strong", "main")]["required"]["delta=0.2,m=1"] == required_n(2.0, 0.2, 1)
+    assert best[("weak", "main")]["available"] == 180 and len(best[("weak", "main")]["models"]) == 2
+
+
+def test_main_refuses_an_unknown_input_and_records_its_inputs(tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    from runners import pilot_sizing
+
+    good, bad = tmp_path / "cm.json", tmp_path / "scrub.json"
+    good.write_text(json.dumps({**_summary(), "meta": {"code": {"git_commit": "c0ffee", "git_dirty": False},
+                                                        "config": {"model_revision": "abc123"}}}))
+    bad.write_text(json.dumps({"results": {}}))
+    out = tmp_path / "sizing.json"
+    monkeypatch.setattr("sys.argv", ["pilot_sizing.py", "--inputs", str(good), str(bad), "--out", str(out)])
+    with pytest.raises(SystemExit, match="neither"):
+        pilot_sizing.main()
+    monkeypatch.setattr("sys.argv", ["pilot_sizing.py", "--inputs", str(good), "--out", str(out)])
+    pilot_sizing.main()
+    record = json.loads(out.read_text())["inputs"][0]
+    assert record["sha256"] == hashlib.sha256(good.read_bytes()).hexdigest()
+    assert record["code"] == {"git_commit": "c0ffee", "git_dirty": False} and record["model_revision"] == "abc123"
