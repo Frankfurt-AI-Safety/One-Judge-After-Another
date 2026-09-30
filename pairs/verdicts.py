@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 VERDICT_VARIANTS = ("fair", "discriminatory", "neutral", "neutral_decline", "evasive")
 
@@ -245,17 +245,29 @@ _REJECT_BALANCE = ["but I would still not advance them",
                    "but I would still hold them back from an interview"]
 
 
-def reasoning_cells_varied(subject: str, years: Any, claim_type: str, rng: random.Random) -> Dict[str, str]:
-    """Paraphrased four-cell 2×2 for one claim type (truth value + conclusion preserved per cell)."""
+def reasoning_cells_varied(subject: str, years: Any, claim_type: str, rng: random.Random,
+                           paraphrases: Optional[Sequence[int]] = None) -> Dict[str, str]:
+    """Paraphrased four-cell 2×2 for one claim type (truth value + conclusion preserved per cell).
+
+    ``paraphrases`` restricts every pool (the stems and the four connective pools) to those entries, by index;
+    None draws from the whole pools. The reasoning probe fits its directions on some entries and evaluates on
+    the others, so the evaluated wording is one the direction never saw."""
+    def pick(pool: Sequence[str]) -> str:
+        if paraphrases is None:
+            return rng.choice(pool)
+        if max(paraphrases) >= len(pool) or min(paraphrases) < 0:
+            raise IndexError(f"paraphrases {list(paraphrases)} outside a pool of {len(pool)}")
+        return rng.choice([pool[k] for k in paraphrases])
+
     pool = CLAIM_TYPES[claim_type]
     fill = lambda s: s.format(S=subject[0].upper() + subject[1:], Y=years)
-    stem_true = fill(rng.choice(pool["true"]))
-    stem_false = fill(rng.choice(pool["false"]))
+    stem_true = fill(pick(pool["true"]))
+    stem_false = fill(pick(pool["false"]))
     return {
-        "true_reject": f"{stem_true}, {rng.choice(_REJECT_CONN)}.",
-        "true_advance": f"{stem_true}, {rng.choice(_ADVANCE_BALANCE)}.",
-        "false_advance": f"{stem_false}, {rng.choice(_ADVANCE_CONN)}.",
-        "false_reject": f"{stem_false}, {rng.choice(_REJECT_BALANCE)}.",
+        "true_reject": f"{stem_true}, {pick(_REJECT_CONN)}.",
+        "true_advance": f"{stem_true}, {pick(_ADVANCE_BALANCE)}.",
+        "false_advance": f"{stem_false}, {pick(_ADVANCE_CONN)}.",
+        "false_reject": f"{stem_false}, {pick(_REJECT_BALANCE)}.",
     }
 
 
@@ -286,6 +298,8 @@ def build_reasoning_item(
     rng: random.Random,
     template_id: str = "",
     vary: bool = False,
+    claim_type: Optional[str] = None,
+    paraphrases: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
     """Build one reasoning-2×2 item: the USER decision prompt (applicant carries the premise clause)
     plus the four cells of the {claim correctness}×{conclusion} factorial.
@@ -293,6 +307,9 @@ def build_reasoning_item(
     ``vary=False`` (default) = the fixed availability wording (reproducible; used by reasoning-flip /
     probe). ``vary=True`` samples a **claim type** (``CLAIM_TYPES``) + **paraphrases** per item, so the
     correctness concept is decorrelated from any single surface phrase (for the LEACE/MLP test).
+    With ``vary=True``, ``claim_type`` fixes the claim type instead of sampling it (``availability`` reads no
+    record field; ``experience`` reads the unported ``years_experience``), and ``paraphrases`` restricts the
+    pools (`reasoning_cells_varied`).
     """
     if premise not in REASONING_PREMISES:
         raise ValueError(f"premise must be one of {sorted(REASONING_PREMISES)}, got {premise!r}")
@@ -302,10 +319,15 @@ def build_reasoning_item(
         else render_fn(record, marker=clause)
     user_prompt = _decision_request(DECISION_PROMPT, profile, record)
     if vary:
-        claim_type = rng.choice(list(CLAIM_TYPES))
+        if claim_type is None:
+            claim_type = rng.choice(list(CLAIM_TYPES))
+        elif claim_type not in CLAIM_TYPES:
+            raise ValueError(f"claim_type must be one of {sorted(CLAIM_TYPES)}, got {claim_type!r}")
         cells = reasoning_cells_varied(spec["subject"], getattr(record, "years_experience", "several"),
-                                       claim_type, rng)
+                                       claim_type, rng, paraphrases)
     else:
+        if claim_type is not None or paraphrases is not None:
+            raise ValueError("claim_type and paraphrases need vary=True (the fixed wording has neither)")
         claim_type = "availability"
         cells = reasoning_cells(spec["subject"])
     return {

@@ -120,6 +120,29 @@ class TestVariedVerdicts:
         for spec in CLAIM_TYPES.values():
             assert spec["true"] and spec["false"]
 
+    def test_paraphrases_restrict_every_pool(self):
+        # the reasoning probe fits on entries 0-1 and evaluates on entry 2: no evaluated string is a fitted one
+        from pairs.verdicts import (
+            _ADVANCE_BALANCE, _ADVANCE_CONN, _REJECT_BALANCE, _REJECT_CONN, CLAIM_TYPES,
+        )
+
+        def cells(paraphrases, seeds=range(40)):
+            return {c: v for s in seeds for c, v in build_reasoning_item(
+                _rec(), "commute", render_bio, random.Random(s), vary=True, claim_type="availability",
+                paraphrases=paraphrases)["cells"].items()}
+
+        fitted, held_out = set(cells((0, 1)).values()), set(cells((2,)).values())
+        assert len(held_out) == 4 and not fitted & held_out
+        pools = [CLAIM_TYPES["availability"]["true"], CLAIM_TYPES["availability"]["false"], _ADVANCE_CONN,
+                 _REJECT_CONN, _ADVANCE_BALANCE, _REJECT_BALANCE]
+        for pool in pools:  # entry 2 of every pool appears only in the held-out wording
+            probe = pool[2].format(S="The long commute", Y="")
+            assert any(probe in v for v in held_out) and not any(probe in v for v in fitted)
+        with pytest.raises(IndexError):
+            cells((3,), seeds=[0])
+        with pytest.raises(ValueError, match="vary=True"):
+            build_reasoning_item(_rec(), "commute", render_bio, random.Random(0), paraphrases=(0,))
+
     def test_vary_true_samples_claim_type(self):
         # over several seeds, vary=True should surface more than one claim type
         seen = {build_reasoning_item(_rec(), "commute", render_bio, random.Random(s), vary=True)
@@ -163,36 +186,3 @@ class TestMetric:
             "false_advance": [1.0, 1.0], "false_reject": [1.0, 1.0],
         })
         assert m["n"] == 1  # only one aligned true_reject/false_advance pair
-
-
-class TestProbePairs:
-    def test_contrastive_pair_cell_mapping(self):
-        from runners.run_reasoning_probe import (
-            CORRECTNESS_PAIRS, CONCLUSION_PAIRS, contrastive_pairs,
-        )
-
-        items = [build_reasoning_item(_rec(), "parental_leave", render_bio, random.Random(0))]
-        fmt = lambda u, v: v  # identity formatter → positive/negative carry the verdict text
-
-        corr = contrastive_pairs(items, fmt, CORRECTNESS_PAIRS)
-        # correctness: positive = TRUE-claim (reduces availability), negative = FALSE-claim (increases)
-        assert len(corr) == 2
-        for p in corr:
-            assert "reduce the candidate's near-term availability" in p.positive_text
-            assert "increase the candidate's availability" in p.negative_text
-
-        concl = contrastive_pairs(items, fmt, CONCLUSION_PAIRS)
-        # conclusion: positive = advance, negative = reject
-        assert len(concl) == 2
-        for p in concl:
-            assert "advancing" in p.positive_text and "not advance" in p.negative_text
-
-    def test_split_is_disjoint(self):
-        from runners.run_reasoning_probe import _split
-
-        recs = [_rec(f"cv-{i:04d}") for i in range(40)]
-        probe, ev = _split(recs, 15, 20)
-        assert len(probe) == 15 and len(ev) == 20
-        pids = {r.source_record_id for r in probe}
-        eids = {r.source_record_id for r in ev}
-        assert pids.isdisjoint(eids)

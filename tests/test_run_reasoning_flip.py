@@ -46,15 +46,6 @@ def test_intervals_share_the_point_estimates_and_pair_by_record():
 
 
 @pytest.fixture
-def hiring(tmp_path, monkeypatch):
-    """A hiring manifest from `generate_bios` on a synthetic parquet: (pairs.jsonl, parquet)."""
-    from tests.test_bios_pipeline import TestGenerateBiosCLI
-
-    raw, out = TestGenerateBiosCLI()._main(tmp_path, monkeypatch)
-    return out / "pairs.jsonl", raw
-
-
-@pytest.fixture
 def run(hiring, tmp_path, monkeypatch):
     """`main` on the hiring manifest; ``model_fn``/``tok_fn`` stand in for the loader."""
     from substrates.bios_clean import DEFAULT_N_BIOS, load_factorial_bios
