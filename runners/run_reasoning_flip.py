@@ -12,8 +12,7 @@ and report the 2×2 factorial effects (correctness vs conclusion, `compute_reaso
 null-space-projected, each with its bootstrap interval over records.
 
 The premises, the decision prompt (it names the target role) and the nulling directions are hiring's, so any other
-domain is refused. The verdicts use the fixed wording (``vary=False``) and read no record field but ``role``; the
-unported ``years_experience`` claim of `pairs.verdicts` is used only by `run_reasoning_erasure.py`.
+domain is refused. The verdicts use the fixed wording (``vary=False``) and read no record field but ``role``.
 
 Records: hiring's qualified bios, from the same pool and with the same labels as the manifest
 (`substrates.domains`), **minus the probe records** of both nulling directions; ``--n-items`` of them in seeded

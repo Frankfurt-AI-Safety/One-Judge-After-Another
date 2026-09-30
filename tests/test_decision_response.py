@@ -236,24 +236,25 @@ class TestMetric:
 
 
 class TestSubstratePortingGap:
-    """The reasoning arm was authored against the synthetic CandidateRecord.
-
-    `build_reasoning_item(vary=True)` reads `getattr(record, "years_experience", "several")` for its
-    "experience" claim type, so on a Bias-in-Bios record it does not fail -- it silently falls back to
-    "several years". Pinned here so the gap is visible rather than discovered in a results table.
-    (The decision-response arm no longer reads record fields, see test below.)
+    """The reasoning arm was authored against the synthetic CandidateRecord. Its "experience" claim type read
+    `getattr(record, "years_experience", "several")`, so on a Bias-in-Bios record it silently fell back to
+    "several years", and the claim's truth value was not grounded in the record. The claim type was removed
+    on 2026-09-30: the reasoning items now read no record field but the role, in every wording.
     """
 
-    def test_reasoning_years_silently_falls_back_on_real_records(self):
-        assert not hasattr(_rec(), "years_experience")
-        for seed in range(50):
-            item = build_reasoning_item(_rec(), "parental_leave", render_bio, random.Random(seed),
-                                        template_id="bios_v1", vary=True)
-            if item["meta"]["claim_type"] == "experience":
-                joined = " ".join(item["cells"].values())
-                assert "several years" in joined, "fallback wording changed -- update this note"
-                return
-        pytest.fail("no 'experience' claim type drawn in 50 seeds")
+    def test_reasoning_items_read_no_record_field_but_the_role(self):
+        from pairs.verdicts import REASONING_PREMISES
+
+        class OnlyARole:
+            source_record_id, role = "r", "a surgeon"
+
+        render = lambda record, marker="": f"A bio.{marker}"
+        for premise in REASONING_PREMISES:
+            for vary, connective in ((False, True), (True, True), (True, False)):
+                for seed in range(20):
+                    item = build_reasoning_item(OnlyARole(), premise, render, random.Random(seed), vary=vary,
+                                                connective=connective)
+                    assert "years" not in " ".join(item["cells"].values())
 
     def test_decision_verdicts_use_no_record_fields(self):
         item = build_decision_item(_rec(), "sex", "explicit", render_bio,

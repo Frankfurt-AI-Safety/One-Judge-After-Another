@@ -22,13 +22,12 @@ def test_the_eval_wording_is_unseen_and_items_do_not_depend_on_their_neighbours(
 
     dom = get_domain("cv")
     recs = [_rec(f"r{i}") for i in range(12)]
-    probe = rrp.reasoning_items(dom, "parental_leave", recs, rrp.PROBE_PARAPHRASES, 42)
+    probe = rrp.reasoning_items(dom, "parental_leave", recs, rrp.FIT_PARAPHRASES, 42)
     evals = rrp.reasoning_items(dom, "parental_leave", recs, rrp.EVAL_PARAPHRASES, 42)
     fitted = {v for it in probe for v in it["cells"].values()}
     assert not fitted & {v for it in evals for v in it["cells"].values()}
-    assert all(it["meta"]["claim_type"] == "availability" for it in probe + evals)
     # an item's draws depend on its record, not on its position in the split
-    assert rrp.reasoning_items(dom, "parental_leave", recs[5:6], rrp.PROBE_PARAPHRASES, 42)[0]["cells"] == \
+    assert rrp.reasoning_items(dom, "parental_leave", recs[5:6], rrp.FIT_PARAPHRASES, 42)[0]["cells"] == \
         probe[5]["cells"]
 
 

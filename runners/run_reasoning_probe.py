@@ -10,7 +10,7 @@ The 2×2 (`pairs.verdicts`, availability claim) gives matched contrastive pairs,
 Each pair pairs a "so" with a "but" connective and the two pairs swap them, so the connective averages out.
 
 **Held out twice.** The directions are fitted on a probe split of applicants whose verdicts draw paraphrases
-``PROBE_PARAPHRASES`` of every pool (the claim stems and the four connective pools; entry 0 is close to the flip's
+``FIT_PARAPHRASES`` of every pool (the claim stems and the four connective pools; entry 0 is close to the flip's
 fixed wording), and measured on a disjoint eval split whose verdicts use ``EVAL_PARAPHRASES``, wording the
 direction never saw (until 2026-09-30 both splits used the one fixed wording, so "held out" held only the
 applicant out and the direction was the difference of two fixed strings). On the eval split:
@@ -56,7 +56,9 @@ from scoring.dataset_base import format_conversation
 from substrates.bios_ingest import DEFAULT_BIOS_PATH
 from substrates.domains import get_domain
 from pairs.manifest import file_sha256
-from pairs.verdicts import REASONING_CELLS, REASONING_PREMISES, build_reasoning_item
+from pairs.verdicts import (
+    EVAL_PARAPHRASES, FIT_PARAPHRASES, REASONING_CELLS, REASONING_PREMISES, build_reasoning_item,
+)
 from scoring.experiment import ExperimentConfig, add_override_args, apply_overrides, run_metadata
 from scoring.demographic_experiment import DemographicBiasExperiment, compute_reasoning_metrics, reasoning_intervals
 from scoring.intervals import DEFAULT_N_BOOT, cluster_bootstrap, win
@@ -68,21 +70,20 @@ logger = logging.getLogger(__name__)
 RESULTS_DIR = Path("artifacts/results/demographic")
 DOMAIN = "cv"
 PREMISES = ("parental_leave", "commute")  # demographic + non-demographic control
-CLAIM_TYPE = "availability"               # the claim that reads no record field
-PROBE_PARAPHRASES, EVAL_PARAPHRASES = (0, 1), (2,)
 
 # matched contrastive pairs (positive cell, negative cell): two per item, holding the other factor fixed
 CONCEPTS = {"correctness": [("true_reject", "false_reject"), ("true_advance", "false_advance")],
             "conclusion": [("true_advance", "true_reject"), ("false_advance", "false_reject")]}
 
 
-def reasoning_items(dom, premise: str, records: List[Any], paraphrases: Sequence[int], seed: int) -> List[Dict]:
-    """One varied item per record (the availability claim, pools restricted to ``paraphrases``), its draws seeded
-    by (seed, premise, record) so an item does not depend on the others."""
+def reasoning_items(dom, premise: str, records: List[Any], paraphrases: Sequence[int], seed: int,
+                    connective: bool = True) -> List[Dict]:
+    """One varied item per record (pools restricted to ``paraphrases``; `pairs.verdicts.build_reasoning_item`), its
+    draws seeded by (seed, premise, record) so an item does not depend on the others."""
     tids = list(dom.template_ids)
     return [build_reasoning_item(r, premise, dom.render_fn, random.Random(f"{seed}:{premise}:{r.source_record_id}"),
-                                 template_id=tids[i % len(tids)], vary=True, claim_type=CLAIM_TYPE,
-                                 paraphrases=paraphrases)
+                                 template_id=tids[i % len(tids)], vary=True, paraphrases=paraphrases,
+                                 connective=connective)
             for i, r in enumerate(records)]
 
 
@@ -137,7 +138,7 @@ def run_premise(exp, cfg, dom, premise: str, probe_recs: List[Any], eval_recs: L
                 ) -> Tuple[Dict[str, Any], Dict[str, torch.Tensor], SplitStates]:
     """One premise: its directions (fitted on the probe split), their held-out accuracy and nulling on the eval
     split. Returns the result, the directions and the eval states (for the cross-premise transfer)."""
-    probe = SplitStates(exp, cfg, reasoning_items(dom, premise, probe_recs, PROBE_PARAPHRASES, seed))
+    probe = SplitStates(exp, cfg, reasoning_items(dom, premise, probe_recs, FIT_PARAPHRASES, seed))
     evals = SplitStates(exp, cfg, reasoning_items(dom, premise, eval_recs, EVAL_PARAPHRASES, seed))
     base, _ = rewards_from_hidden(exp.model, evals.hidden, evals.dtype, None, gates=evals.gates)
     dirs = {concept: fit_direction(probe, concept) for concept in CONCEPTS}
@@ -219,7 +220,7 @@ def main() -> None:
 
     print("\n" + "=" * 104)
     print(f"REASONING-PROBE — held-out applicants and wording — {cfg.model_path}  "
-          f"(probe={len(probe_recs)} with paraphrases {PROBE_PARAPHRASES}, eval={len(eval_recs)} with "
+          f"(probe={len(probe_recs)} with paraphrases {FIT_PARAPHRASES}, eval={len(eval_recs)} with "
           f"{EVAL_PARAPHRASES})")
     print("=" * 104)
     for r in results:
@@ -243,7 +244,7 @@ def main() -> None:
           "direction that carries over to unseen wording.")
 
     settings = {"probe_items": args.probe_items, "eval_items": args.eval_items, "seed": args.seed, "n_boot": n_boot,
-                "premises": list(PREMISES), "claim_type": CLAIM_TYPE, "probe_paraphrases": list(PROBE_PARAPHRASES),
+                "premises": list(PREMISES), "fit_paraphrases": list(FIT_PARAPHRASES),
                 "eval_paraphrases": list(EVAL_PARAPHRASES)}
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(

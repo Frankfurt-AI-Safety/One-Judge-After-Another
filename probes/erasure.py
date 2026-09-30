@@ -121,6 +121,18 @@ def probe_recoverability(
     }
 
 
+def bag_of_words(train_texts: Sequence[str], eval_texts: Sequence[str]):
+    """Binary bag-of-words vectors (float32 tensors) of ``train_texts`` and ``eval_texts``, the vocabulary taken from
+    the training texts: a representation with nothing but word identity. Run through the same erasure and probes as
+    the model's states, it is the **lexical control**: what surface features alone recover. A model's
+    non-linear recovery after LEACE says more than the text's surface only where it exceeds this control."""
+    from sklearn.feature_extraction.text import CountVectorizer
+
+    vec = CountVectorizer(binary=True, lowercase=True, token_pattern=r"[A-Za-z']+").fit(train_texts)
+    as_tensor = lambda texts: torch.tensor(vec.transform(texts).toarray(), dtype=torch.float32)
+    return as_tensor(train_texts), as_tensor(eval_texts)
+
+
 def apply_eraser(eraser, X: torch.Tensor) -> torch.Tensor:
     """Apply a fitted LEACE eraser to activations X."""
     return eraser(X.float())

@@ -81,73 +81,79 @@ class TestBuilder:
             build_reasoning_item(_rec(), "nope", render_bio, random.Random(0))
 
     def test_vary_false_is_fixed_wording(self):
-        # default (vary=False) keeps the reproducible availability wording + claim_type
+        # default (vary=False) keeps the reproducible availability wording
         item = build_reasoning_item(_rec(), "parental_leave", render_bio, random.Random(0))
-        assert item["meta"]["claim_type"] == "availability"
         assert "reduce the candidate's near-term availability" in item["cells"]["true_reject"]
 
 
 class TestVariedVerdicts:
-    @pytest.mark.parametrize("claim_type", ["availability", "experience"])
-    def test_paraphrase_preserves_truth_and_conclusion(self, claim_type):
-        from pairs.verdicts import CLAIM_TYPES, reasoning_cells_varied
+    @pytest.mark.parametrize("seed", range(5))
+    def test_paraphrase_preserves_truth_and_conclusion(self, seed):
+        from pairs.verdicts import (
+            _ADVANCE_BALANCE, _ADVANCE_CONN, _REJECT_BALANCE, _REJECT_CONN, AVAILABILITY_STEMS,
+            reasoning_cells_varied,
+        )
 
-        cells = reasoning_cells_varied("being on parental leave", 10, claim_type, random.Random(0))
+        cells = reasoning_cells_varied("being on parental leave", random.Random(seed))
         true_stem = cells["true_reject"].split(",")[0]
         false_stem = cells["false_advance"].split(",")[0]
         # the two TRUE cells share the true stem; the two FALSE cells share the false stem
         assert cells["true_advance"].startswith(true_stem)
         assert cells["false_reject"].startswith(false_stem)
-        # truth value preserved: true stem ∈ true pool, false stem ∈ false pool, and they differ
-        filled = lambda key: {p.format(S="Being on parental leave", Y=10)
-                              for p in CLAIM_TYPES[claim_type][key]}
+        # truth value preserved: true stem ∈ true pool, false stem ∈ false pool
+        filled = lambda key: {p.format(S="Being on parental leave") for p in AVAILABILITY_STEMS[key]}
         assert true_stem in filled("true") and true_stem not in filled("false")
         assert false_stem in filled("false")
         # conclusion preserved: each cell's connective comes from the right (advance/reject) pool
-        from pairs.verdicts import (
-            _ADVANCE_BALANCE, _ADVANCE_CONN, _REJECT_BALANCE, _REJECT_CONN,
-        )
         conn = lambda cell, stem: cell[len(stem) + 2:-1]  # strip ", " prefix and trailing "."
         assert conn(cells["true_reject"], true_stem) in _REJECT_CONN
         assert conn(cells["true_advance"], true_stem) in _ADVANCE_BALANCE
         assert conn(cells["false_advance"], false_stem) in _ADVANCE_CONN
         assert conn(cells["false_reject"], false_stem) in _REJECT_BALANCE
 
-    def test_claim_types_have_both_directions(self):
-        from pairs.verdicts import CLAIM_TYPES
+    @pytest.mark.parametrize("seed", range(5))
+    def test_without_a_connective_the_decision_is_its_own_sentence(self, seed):
+        # correctness and conclusion are then independent factors: no word encodes their combination
+        from pairs.verdicts import _ADVANCE_DECISION, _REJECT_DECISION, AVAILABILITY_STEMS, reasoning_cells_varied
 
-        assert set(CLAIM_TYPES) >= {"availability", "experience"}
-        for spec in CLAIM_TYPES.values():
-            assert spec["true"] and spec["false"]
+        cells = reasoning_cells_varied("the long commute", random.Random(seed), connective=False)
+        stems = {k: {p.format(S="The long commute") for p in AVAILABILITY_STEMS[k]} for k in ("true", "false")}
+        for cell, text in cells.items():
+            stem, decision = text[:-1].split(". ")
+            assert stem in stems["true" if cell.startswith("true_") else "false"]
+            assert decision in (_ADVANCE_DECISION if cell.endswith("_advance") else _REJECT_DECISION)
+            assert not {"so", "but"} & set(text.lower().replace(".", "").split())
+        assert _ADVANCE_DECISION[0] == "I recommend advancing them to an interview"
+        with pytest.raises(ValueError, match="vary=True"):
+            build_reasoning_item(_rec(), "commute", render_bio, random.Random(0), connective=False)
 
     def test_paraphrases_restrict_every_pool(self):
-        # the reasoning probe fits on entries 0-1 and evaluates on entry 2: no evaluated string is a fitted one
+        # the reasoning probe and erasure fit on some entries and evaluate on the others: no evaluated string is a
+        # fitted one
         from pairs.verdicts import (
-            _ADVANCE_BALANCE, _ADVANCE_CONN, _REJECT_BALANCE, _REJECT_CONN, CLAIM_TYPES,
+            _ADVANCE_BALANCE, _ADVANCE_CONN, _ADVANCE_DECISION, _REJECT_BALANCE, _REJECT_CONN, _REJECT_DECISION,
+            AVAILABILITY_STEMS, EVAL_PARAPHRASES, FIT_PARAPHRASES,
         )
 
-        def cells(paraphrases, seeds=range(40)):
-            return {c: v for s in seeds for c, v in build_reasoning_item(
-                _rec(), "commute", render_bio, random.Random(s), vary=True, claim_type="availability",
-                paraphrases=paraphrases)["cells"].items()}
+        assert not set(FIT_PARAPHRASES) & set(EVAL_PARAPHRASES)
 
-        fitted, held_out = set(cells((0, 1)).values()), set(cells((2,)).values())
-        assert len(held_out) == 4 and not fitted & held_out
-        pools = [CLAIM_TYPES["availability"]["true"], CLAIM_TYPES["availability"]["false"], _ADVANCE_CONN,
-                 _REJECT_CONN, _ADVANCE_BALANCE, _REJECT_BALANCE]
-        for pool in pools:  # entry 2 of every pool appears only in the held-out wording
-            probe = pool[2].format(S="The long commute", Y="")
-            assert any(probe in v for v in held_out) and not any(probe in v for v in fitted)
+        def cells(paraphrases, connective=True, seeds=range(40)):
+            return {v for s in seeds for v in build_reasoning_item(
+                _rec(), "commute", render_bio, random.Random(s), vary=True, paraphrases=paraphrases,
+                connective=connective)["cells"].values()}
+
+        for connective, pools in ((True, [_ADVANCE_CONN, _REJECT_CONN, _ADVANCE_BALANCE, _REJECT_BALANCE]),
+                                  (False, [_ADVANCE_DECISION, _REJECT_DECISION])):
+            fitted, held_out = cells(FIT_PARAPHRASES, connective), cells(EVAL_PARAPHRASES, connective)
+            assert len(held_out) == 4 and not fitted & held_out
+            for pool in [AVAILABILITY_STEMS["true"], AVAILABILITY_STEMS["false"], *pools]:
+                for k in EVAL_PARAPHRASES:  # an eval entry of every pool appears only in the held-out wording
+                    probe = pool[k].format(S="The long commute")
+                    assert any(probe in v for v in held_out) and not any(probe in v for v in fitted)
         with pytest.raises(IndexError):
             cells((3,), seeds=[0])
         with pytest.raises(ValueError, match="vary=True"):
             build_reasoning_item(_rec(), "commute", render_bio, random.Random(0), paraphrases=(0,))
-
-    def test_vary_true_samples_claim_type(self):
-        # over several seeds, vary=True should surface more than one claim type
-        seen = {build_reasoning_item(_rec(), "commute", render_bio, random.Random(s), vary=True)
-                ["meta"]["claim_type"] for s in range(12)}
-        assert len(seen) >= 2
 
 
 class TestMetric:

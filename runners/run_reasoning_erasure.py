@@ -1,22 +1,37 @@
 #!/usr/bin/env python3
 """
-LEACE + non-linear-probe test: is the **reasoning-correctness** concept (and **conclusion
-polarity**) genuinely *low-complexity* in the RM's activations, or only *linearly* erasable while still
-**non-linearly recoverable** (high-complexity / entangled — the TaCo signature)?
+LEACE + non-linear-probe test (hiring only): is the **reasoning-correctness** concept (and **conclusion
+polarity**) *low-complexity* in the RM's activations, or only *linearly* erasable while still **non-linearly
+recoverable** (high-complexity / entangled — the TaCo signature)?
 
-For each premise we build diversified verdict items (`vary=True`: paraphrases + multiple claim types, so
-the concept is decorrelated from any single phrase), split train/eval by applicant, extract verdict
-activations (`get_embeddings`) labeled by **correctness** (TRUE-claim cells=1) and **conclusion**
-(advance cells=1), and for each concept report held-out **linear vs non-linear (MLP) probe accuracy**
-under three conditions:
+Items (`pairs.verdicts`, the availability claim): per premise, one item per applicant, its four cells labeled by
+**correctness** (TRUE-claim cells = 1) and **conclusion** (advance cells = 1). Two design choices keep surface
+features from answering the question (decided 2026-09-30, after the same pipeline on bag-of-words vectors of the
+earlier verdicts recovered correctness after LEACE at 0.98):
+  - **no connective**: the decision is a sentence of its own. With "so" / "but", correctness = XOR("so", advance),
+    so a non-linear probe recovers it from the connective and the decision once the linear information is gone;
+  - **held-out wording**: the probe split's verdicts draw entries ``FIT_PARAPHRASES`` of every pool, the eval split's
+    ``EVAL_PARAPHRASES``. Each class is a union of several phrasings, and on shared pools a non-linear probe maps a
+    phrasing to its label after LEACE; on unseen phrasings it cannot.
+Every item's draws are seeded by (seed, premise, record) (`run_reasoning_probe.reasoning_items`).
+
+For each premise and concept, held-out **linear vs non-linear (MLP) probe accuracy** (`probes.erasure`) under three
+conditions:
   - **none**     — no erasure (sanity: both probes ≫ chance ⇒ decodable);
   - **diffmean** — project out the difference-of-means direction (our method);
   - **leace**    — provably-optimal linear erasure.
-LEACE guarantees linear → chance on the states it was fitted on (the probe split); on the held-out states
-it is approximate, so the linear row after LEACE is a check, not a given. **MLP accuracy after LEACE is the
-answer**, read from the 95% interval of ``mlp_above_chance`` (clustered by applicant: the four cells of one
-item are correlated), one-sided: clearly above 0 ⇒ non-linearly recoverable / entangled; reaching 0 or below
-⇒ low-complexity (the baseline is the majority-class share, >= 0.5, so a probe at chance sits at or below it).
+LEACE guarantees linear → chance on the states it was fitted on (the probe split); on the held-out states it is
+approximate, so the linear row after LEACE is a check, not a given. **MLP accuracy after LEACE is the answer**, read
+from the 95% interval of ``mlp_above_chance`` (clustered by applicant: the four cells of one item are correlated),
+one-sided: clearly above 0 ⇒ non-linearly recoverable / entangled; reaching 0 or below ⇒ low-complexity (the
+baseline is the majority-class share, >= 0.5, so a probe at chance sits at or below it). Each row comes with the
+**lexical control** (``lexical_control``): the same pipeline on bag-of-words vectors of the same verdicts
+(`probes.erasure.bag_of_words`). The model's recovery says more than the text's surface only where it exceeds it.
+
+Records: hiring's qualified bios from the manifest's pool (`substrates.domains`), in seeded order: the first
+``--probe-items`` are the probe split, the next ``--eval-items`` the eval split. The result
+``erasure_cv_{model}.json`` (never replaced without ``--overwrite``) carries ``meta`` (the config with the loaded
+model commit, the code commit, the Bias-in-Bios parquet's SHA-256; `scoring.experiment`) and both splits' record ids.
 
 Usage:
     python runners/run_reasoning_erasure.py --config configs/demographic_cv_reasoning_qwen06.yaml \
@@ -27,7 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
+import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -38,107 +53,159 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import torch
 
 from scoring.dataset_base import format_conversation
+from substrates.bios_ingest import DEFAULT_BIOS_PATH
 from substrates.domains import get_domain
-from pairs.verdicts import REASONING_CELLS, build_reasoning_item
-from scoring.experiment import ExperimentConfig
+from pairs.manifest import file_sha256
+from pairs.verdicts import EVAL_PARAPHRASES, FIT_PARAPHRASES, REASONING_CELLS
+from scoring.experiment import ExperimentConfig, add_override_args, apply_overrides, run_metadata
 from scoring.demographic_experiment import DemographicBiasExperiment
+from scoring.intervals import DEFAULT_N_BOOT
 from probes.probe import get_embeddings
 from probes.erasure import (
-    apply_diffmean, apply_eraser, diffmean_direction, leace_erase, probe_recoverability,
+    apply_diffmean, apply_eraser, bag_of_words, diffmean_direction, leace_erase, probe_recoverability,
 )
+from runners.run_decision_response import select_items
+from runners.run_reasoning_probe import reasoning_items
 
-PREMISES = ["parental_leave", "commute"]
+logger = logging.getLogger(__name__)
+RESULTS_DIR = Path("artifacts/results/demographic")
+DOMAIN = "cv"
+PREMISES = ("parental_leave", "commute")
 CONCEPTS = ("correctness", "conclusion")
+METHODS = ("none", "diffmean", "leace")
 
 
-def _label(cell: str, concept: str) -> int:
+def label(cell: str, concept: str) -> int:
     if concept == "correctness":
         return int(cell.startswith("true_"))
     return int(cell.endswith("_advance"))  # conclusion: advance=1, reject=0
 
 
-def _embed_and_label(exp, cfg, dom, premise, records, rng
-                     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], List[int]]:
-    """States, labels per concept, and each state's item (applicant) index: the cluster of the intervals."""
-    tok = exp.tokenizer
-    tids = list(dom.template_ids)
-    items = [build_reasoning_item(r, premise, dom.render_fn, rng, template_id=tids[i % len(tids)], vary=True)
-             for i, r in enumerate(records)]
-    texts, labels, groups = [], {c: [] for c in CONCEPTS}, []
-    for n, it in enumerate(items):
-        for cell in REASONING_CELLS:
-            texts.append(format_conversation(tok, it["user_prompt"], it["cells"][cell]))
-            groups.append(n)
-            for c in CONCEPTS:
-                labels[c].append(_label(cell, c))
-    X = get_embeddings(exp.model, tok, texts, cfg.batch_size, cfg.max_length)
-    return X, {c: torch.tensor(labels[c]) for c in CONCEPTS}, groups
+class Split:
+    """A split's items flattened to one row per (item, cell): the verdicts, the formatted conversations, the labels per
+    concept and each row's item (applicant) index, the cluster of the intervals."""
+
+    def __init__(self, tokenizer, items: List[Dict]):
+        self.verdicts, self.texts, self.groups = [], [], []
+        self.labels: Dict[str, List[int]] = {c: [] for c in CONCEPTS}
+        for n, it in enumerate(items):
+            for cell in REASONING_CELLS:
+                self.verdicts.append(it["cells"][cell])
+                self.texts.append(format_conversation(tokenizer, it["user_prompt"], it["cells"][cell]))
+                self.groups.append(n)
+                for c in CONCEPTS:
+                    self.labels[c].append(label(cell, c))
 
 
-def _erasure_row(Xtr, ytr, Xev, yev, groups_ev, method: str) -> Dict[str, Any]:
-    if method == "none":
-        return probe_recoverability(Xtr, ytr, Xev, yev, groups_ev=groups_ev)
-    if method == "diffmean":
-        d = diffmean_direction(Xtr, ytr)
-        return probe_recoverability(apply_diffmean(d, Xtr), ytr, apply_diffmean(d, Xev), yev, groups_ev=groups_ev)
-    if method == "leace":
-        er = leace_erase(Xtr, ytr)
-        return probe_recoverability(apply_eraser(er, Xtr), ytr, apply_eraser(er, Xev), yev, groups_ev=groups_ev)
-    raise ValueError(method)
+def erasure_rows(Xtr: torch.Tensor, ytr: List[int], Xev: torch.Tensor, yev: List[int], groups_ev: List[int],
+                 n_boot: int, seed: int) -> Dict[str, Any]:
+    """Held-out linear and MLP recoverability without erasure, after the diffmean projection and after LEACE (both
+    fitted on the training states)."""
+    rows = {}
+    for method in METHODS:
+        if method == "none":
+            tr, ev = Xtr, Xev
+        elif method == "diffmean":
+            d = diffmean_direction(Xtr, ytr)
+            tr, ev = apply_diffmean(d, Xtr), apply_diffmean(d, Xev)
+        else:
+            eraser = leace_erase(Xtr, ytr)
+            tr, ev = apply_eraser(eraser, Xtr), apply_eraser(eraser, Xev)
+        rows[method] = probe_recoverability(tr, ytr, ev, yev, seed=seed, groups_ev=groups_ev, n_boot=n_boot)
+    return rows
 
 
-def main() -> None:
+def run_premise(exp, cfg, dom, premise: str, probe_recs: List[Any], eval_recs: List[Any], seed: int, n_boot: int
+                ) -> List[Dict[str, Any]]:
+    """One premise: per concept, the erasure rows on the model's states and on the lexical control."""
+    train = Split(exp.tokenizer, reasoning_items(dom, premise, probe_recs, FIT_PARAPHRASES, seed, connective=False))
+    evals = Split(exp.tokenizer, reasoning_items(dom, premise, eval_recs, EVAL_PARAPHRASES, seed, connective=False))
+    Xtr = get_embeddings(exp.model, exp.tokenizer, train.texts, cfg.batch_size, cfg.max_length, show_progress=False)
+    Xev = get_embeddings(exp.model, exp.tokenizer, evals.texts, cfg.batch_size, cfg.max_length, show_progress=False)
+    Ltr, Lev = bag_of_words(train.verdicts, evals.verdicts)
+    return [{"premise": premise, "concept": c, "n_train": len(train.texts), "n_eval": len(evals.texts),
+             "rows": erasure_rows(Xtr, train.labels[c], Xev, evals.labels[c], evals.groups, n_boot, seed),
+             "lexical_control": erasure_rows(Ltr, train.labels[c], Lev, evals.labels[c], evals.groups, n_boot, seed)}
+            for c in CONCEPTS]
+
+
+def default_out(model_path: str) -> Path:
+    return RESULTS_DIR / f"erasure_{DOMAIN}_{Path(model_path).name}.json"
+
+
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, default=Path("configs/demographic_cv_reasoning_qwen06.yaml"))
     ap.add_argument("--probe-items", type=int, default=200)
     ap.add_argument("--eval-items", type=int, default=200)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--out", type=Path, default=None)
-    args = ap.parse_args()
+    ap.add_argument("--out", type=Path, default=None, help=f"Default {RESULTS_DIR}/erasure_cv_{{model}}.json")
+    ap.add_argument("--overwrite", action="store_true", help="Replace an existing result")
+    add_override_args(ap)
+    return ap
 
-    cfg = ExperimentConfig.from_yaml(args.config)
-    dom = get_domain(cfg.extra.get("domain", "credit"))
-    out = args.out or Path(f"artifacts/results/demographic/erasure_{dom.name}_qwen06.json")
+
+def _gap(row: Dict[str, Any]) -> Tuple[float, float, float]:
+    g = row["intervals"]["mlp_above_chance"]
+    return g["estimate"], g["ci_low"], g["ci_high"]
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                        datefmt="%H:%M:%S")
+    cfg = apply_overrides(ExperimentConfig.from_yaml(args.config), args)
+    domain = cfg.extra.get("domain")
+    if domain != DOMAIN:
+        raise SystemExit(f"the reasoning arm is hiring-only (its premises and prompt are hiring's): "
+                         f"set extra.domain: {DOMAIN} (the config has {domain!r})")
+    if args.probe_items < 2 or args.eval_items < 2:
+        raise SystemExit("--probe-items and --eval-items must be at least 2")
+    dom = get_domain(DOMAIN)
+    # everything that can fail on the inputs fails here, before the model loads
+    out = args.out or default_out(cfg.model_path)
+    if out.exists() and not args.overwrite:
+        raise SystemExit(f"{out} exists; pass --overwrite to replace it, or --out")
+    data = {Path(DEFAULT_BIOS_PATH).name: {"path": str(DEFAULT_BIOS_PATH), "sha256": file_sha256(DEFAULT_BIOS_PATH)}}
+    wanted = args.probe_items + args.eval_items
+    records, selection = select_items(dom.load_records(), dom.is_strong, set(), wanted, args.seed)
+    if len(records) < wanted:
+        raise SystemExit(f"{selection['available']} strong records, fewer than --probe-items + --eval-items = {wanted}")
+    probe_recs, eval_recs = records[:args.probe_items], records[args.probe_items:]
+    n_boot = int(cfg.extra.get("n_boot", DEFAULT_N_BOOT))
+
     exp = DemographicBiasExperiment(cfg)
     exp.load_model()
 
-    records = [r for r in dom.load_records() if getattr(r, "qualified", True)]
-    random.Random(args.seed).shuffle(records)
-    probe_recs = records[:args.probe_items]
-    eval_recs = records[args.probe_items:args.probe_items + args.eval_items]
-    assert len(eval_recs) == args.eval_items, "not enough records for probe+eval split"
-
     results: List[Dict[str, Any]] = []
     for premise in PREMISES:
-        print(f"[erasure] embedding {dom.name}/{premise} ...", flush=True)
-        Xtr, ytr, _ = _embed_and_label(exp, cfg, dom, premise, probe_recs, random.Random(args.seed))
-        Xev, yev, groups_ev = _embed_and_label(exp, cfg, dom, premise, eval_recs, random.Random(args.seed + 1))
-        for concept in CONCEPTS:
-            rows = {m: _erasure_row(Xtr, ytr[concept], Xev, yev[concept], groups_ev, m)
-                    for m in ("none", "diffmean", "leace")}
-            results.append({"premise": premise, "concept": concept, "rows": rows})
-            print(f"  [{premise}/{concept}] done", flush=True)
+        print(f"[erasure] {dom.name}/{premise} ...", flush=True)
+        results += run_premise(exp, cfg, dom, premise, probe_recs, eval_recs, args.seed, n_boot)
 
-    print("\n" + "=" * 96)
-    print(f"REASONING ERASURE — LEACE + non-linear probe — {cfg.model_path}")
-    print("=" * 96)
-    print(f"{'premise':15} {'concept':12} {'method':9} {'linear':>8} {'MLP':>8} {'chance':>8}  "
-          f"{'MLP − chance [95% CI, by applicant]':>36}")
+    print("\n" + "=" * 112)
+    print(f"REASONING ERASURE — LEACE + non-linear probe — {cfg.model_path}  (probe={len(probe_recs)}, "
+          f"eval={len(eval_recs)} applicants; held-out wording, no connective)")
+    print("=" * 112)
+    print(f"{'premise':15} {'concept':12} {'method':9} {'linear':>7} {'MLP':>7}  {'MLP − chance [95% CI]':>28}  "
+          f"{'lexical control':>28}")
     for r in results:
-        for m in ("none", "diffmean", "leace"):
-            row = r["rows"][m]
-            gap = row["intervals"]["mlp_above_chance"]
-            print(f"{r['premise']:15} {r['concept']:12} {m:9} {row['linear_acc']:>8.3f} "
-                  f"{row['mlp_acc']:>8.3f} {row['chance']:>8.3f}  "
-                  f"{gap['estimate']:>+14.3f} [{gap['ci_low']:+.3f}, {gap['ci_high']:+.3f}]")
-        print("-" * 96)
-    print("MLP after LEACE: interval clearly above 0 ⇒ non-linearly recoverable (entangled); reaching 0 or below "
-          "⇒ low-complexity.")
+        for m in METHODS:
+            row, lex = r["rows"][m], r["lexical_control"][m]
+            print(f"{r['premise']:15} {r['concept']:12} {m:9} {row['linear_acc']:>7.3f} {row['mlp_acc']:>7.3f}  "
+                  f"{'{:+.3f} [{:+.3f}, {:+.3f}]'.format(*_gap(row)):>28}  "
+                  f"{'{:+.3f} [{:+.3f}, {:+.3f}]'.format(*_gap(lex)):>28}")
+        print("-" * 112)
+    print("MLP after LEACE: interval clearly above 0 (and above the lexical control) ⇒ non-linearly recoverable "
+          "(entangled); reaching 0 or below ⇒ low-complexity.")
 
+    settings = {"probe_items": args.probe_items, "eval_items": args.eval_items, "seed": args.seed, "n_boot": n_boot,
+                "premises": list(PREMISES), "fit_paraphrases": list(FIT_PARAPHRASES),
+                "eval_paraphrases": list(EVAL_PARAPHRASES), "connective": False}
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"model": cfg.model_path, "domain": dom.name, "seed": args.seed,
-                               "probe_items": args.probe_items, "eval_items": args.eval_items,
-                               "results": results}, indent=2))
+    out.write_text(json.dumps(
+        {"meta": run_metadata(cfg, data, settings), "model": cfg.model_path, "domain": dom.name, "seed": args.seed,
+         "selection": selection, "probe_records": [str(r.source_record_id) for r in probe_recs],
+         "eval_records": [str(r.source_record_id) for r in eval_recs], "results": results}, indent=2))
     print(f"saved → {out}")
 
 
