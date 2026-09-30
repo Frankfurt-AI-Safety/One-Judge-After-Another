@@ -64,6 +64,7 @@ def leace_erase(X: torch.Tensor, y):
 def probe_recoverability(
     X_tr: torch.Tensor, y_tr, X_ev: torch.Tensor, y_ev, seed: int = 0,
     groups_ev: Optional[Sequence[Hashable]] = None, n_boot: Optional[int] = None,
+    reference_ok: Optional[Sequence[bool]] = None,
 ) -> Dict[str, Any]:
     """Held-out recoverability of concept ``y`` from activations: linear vs non-linear probe accuracy,
     with the majority-class ``chance`` baseline. Features standardized on the train split.
@@ -73,6 +74,10 @@ def probe_recoverability(
     whole eval clusters (`scoring.intervals.cluster_bootstrap`). ``groups_ev`` names each eval state's
     cluster: states that share an item (e.g. an applicant's four reasoning cells) are correlated, and
     resampling them one by one would give too narrow an interval. Without it every state is its own cluster.
+
+    ``reference_ok`` (one flag per eval state: did a reference predictor, e.g. a no-model rule, get it right?)
+    adds ``reference_acc`` and the paired ``linear_minus_reference`` / ``mlp_minus_reference`` on the same states
+    and replicates: what the probe recovers beyond the reference.
     """
     from sklearn.linear_model import LogisticRegression
     from sklearn.neural_network import MLPClassifier
@@ -86,6 +91,8 @@ def probe_recoverability(
     yev = _labels(y_ev, train=False).cpu().numpy()
     if groups_ev is not None and len(groups_ev) != len(yev):
         raise ValueError(f"{len(groups_ev)} groups for {len(yev)} eval states")
+    if reference_ok is not None and len(reference_ok) != len(yev):
+        raise ValueError(f"{len(reference_ok)} reference flags for {len(yev)} eval states")
 
     scaler = StandardScaler().fit(Xtr)
     Xtr, Xev = scaler.transform(Xtr), scaler.transform(Xev)
@@ -96,8 +103,9 @@ def probe_recoverability(
     lin_ok = lin.predict(Xev) == yev
     mlp_ok = mlp.predict(Xev) == yev
 
-    # items: (linear correct, MLP correct, label) per eval state
-    items = list(zip(lin_ok.tolist(), mlp_ok.tolist(), yev.tolist()))
+    # items: (linear correct, MLP correct, label, reference correct) per eval state
+    ref = [False] * len(yev) if reference_ok is None else [bool(x) for x in reference_ok]
+    items = list(zip(lin_ok.tolist(), mlp_ok.tolist(), yev.tolist(), ref))
     keys = list(range(len(items))) if groups_ev is None else list(groups_ev)
 
     def acc(k: int):
@@ -110,6 +118,9 @@ def probe_recoverability(
     stats = {"linear_acc": acc(0), "mlp_acc": acc(1), "chance": chance,
              "linear_above_chance": lambda s: acc(0)(s) - chance(s),
              "mlp_above_chance": lambda s: acc(1)(s) - chance(s)}
+    if reference_ok is not None:
+        stats.update({"reference_acc": acc(3), "linear_minus_reference": lambda s: acc(0)(s) - acc(3)(s),
+                      "mlp_minus_reference": lambda s: acc(1)(s) - acc(3)(s)})
     intervals = cluster_bootstrap(clusters_of(items, keys), stats,
                                   n_boot=DEFAULT_N_BOOT if n_boot is None else n_boot, seed=seed)
     return {
