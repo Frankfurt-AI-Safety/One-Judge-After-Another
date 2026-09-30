@@ -129,3 +129,62 @@ def test_main_refuses_an_unknown_input_and_records_its_inputs(tmp_path, monkeypa
     record = json.loads(out.read_text())["inputs"][0]
     assert record["sha256"] == hashlib.sha256(good.read_bytes()).hexdigest()
     assert record["code"] == {"git_commit": "c0ffee", "git_dirty": False} and record["model_revision"] == "abc123"
+
+
+# --------------------------------------------------------------------------- comparative -------------
+def _comparative():
+    entry = lambda sd, coded_sd: {"merit": {"marker_effect": _stat(sd, 2.0, n=40)},
+                                  "coded": {"marker_effect": _stat(coded_sd, 2.0, n=40)}}
+    block = lambda k: {"n_pairs": 40, "sex": entry(1.0 * k, 9.0), "intersection": entry(3.0 * k, 9.0),
+                       "unmarked": {"position_effect": _stat(5.0, 2.0)}}
+    report = {"strong_strong": {"anchor_pool": 351, "partner_pool": 351}, "strong_weak":
+              {"anchor_pool": 200, "partner_pool": 95}, "weak_weak": {"anchor_pool": 138, "partner_pool": 138}}
+    return {"model": "M", "domain": "credit", "pairing": report, "pairs": [], "selection": {},
+            "metrics": {"explicit": {"baseline": {"strong_strong": block(1), "strong_weak": block(2),
+                                                  "weak_weak": block(1), "all": block(1)}}}}
+
+
+def test_comparative_pairs_from_the_merit_marker_effects():
+    from runners.pilot_sizing import size_comparative
+
+    rows = {r["group"]: r for r in size_comparative(_comparative(), deltas=[0.2], families=[1])}
+    assert set(rows) == {"strong_strong", "strong_weak", "weak_weak"}             # not the pooled "all"
+    ss, sw = rows["strong_strong"], rows["strong_weak"]
+    assert ss["binding_contrast"] == "marker_effect:intersection" and ss["r"] == 1.5 and ss["n_pilot"] == 40
+    assert sw["r"] == 3.0 and sw["required"]["delta=0.2,m=1"] == required_n(3.0, 0.2, 1)
+    # the coded response sizes nothing; its r is listed
+    assert ss["outside_rule"] == {"marker_effect:sex:coded": 4.5, "marker_effect:intersection:coded": 4.5}
+    # capacity before the checks: half the pool, or the smaller side of strong-weak
+    assert (ss["available"], sw["available"], rows["weak_weak"]["available"]) == (175, 95, 69)
+    assert sw["exceeds_available"]["delta=0.2,m=1"] == (required_n(3.0, 0.2, 1) > 95)
+
+
+def test_comparative_sizing_is_blinded():
+    from runners.pilot_sizing import size_comparative
+
+    before = size_comparative(_comparative(), deltas=[0.1], families=[1, 4])
+    changed = copy.deepcopy(_comparative())
+    for block in changed["metrics"]["explicit"]["baseline"].values():
+        for axis in ("sex", "intersection"):
+            for kind in ("merit", "coded"):
+                block[axis][kind]["marker_effect"].update(mean=-5.0, d_z=-9.0, ci_low=-6.0, ci_high=-4.0,
+                                                          scaled_mean=-2.0)
+    assert size_comparative(changed, deltas=[0.1], families=[1, 4]) == before
+
+
+def test_main_tells_a_comparative_summary_from_a_cross_marker_one(tmp_path, monkeypatch):
+    import json
+
+    from runners import pilot_sizing
+
+    cm, cmp = tmp_path / "cm.json", tmp_path / "cmp.json"
+    cm.write_text(json.dumps(_summary()))
+    cmp.write_text(json.dumps(_comparative()))
+    out = tmp_path / "sizing.json"
+    monkeypatch.setattr("sys.argv", ["pilot_sizing.py", "--inputs", str(cm), str(cmp), "--out", str(out)])
+    pilot_sizing.main()
+    result = json.loads(out.read_text())
+    assert [i["kind"] for i in result["inputs"]] == ["cross_marker", "comparative"]
+    assert {r["group"] for r in result["pairs_per_pairing"]} == {"strong_strong", "strong_weak", "weak_weak"}
+    assert {r["group"] for r in result["records_per_group"]} == {"strong", "weak"}
+    assert len(result["pairs_per_pairing_max_over_models"]) == 3

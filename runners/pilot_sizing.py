@@ -17,11 +17,18 @@ rule's answer). The three-way interaction is not in the rule's families: its r i
 sizes nothing. A contrast whose r is undefined is listed as ``unsized``, never dropped. **Blinded:** only ``n``,
 ``sd`` and ``scale_sd`` are read; means, CIs and d_z never are, so the choice of n cannot follow the effects.
 
+**Pairs per pairing (comparative).** The same formula on the comparative design's record pairs
+(`scoring/comparative_metrics.py`): for each pairing (strong–strong, strong–weak, weak–weak) and encoding, the
+merit response's marker effect on every contrast axis and the intersection corner, r = sd / scale_sd (``scale_sd`` =
+SD across pairs of the unmarked choice margin), binding = the largest r. The coded response's marker effects are
+listed (``outside_rule``) but size nothing. ``available`` is the pairing's capacity before the name and length
+checks (strong–strong / weak–weak: half the pool; strong–weak: the smaller side), so it is an upper bound.
+
 **Probe records.** Each probe-curve JSON's answer per direction (``rule.answer``: the smallest passing N, or the
 largest N for a direction that fails even there, which is reported) and per domain; the domain's answer is the
 maximum over directions, encodings and models.
 
-Every input must be a cross-marker summary or a probe curve (anything else is refused); the output lists the
+Every input must be a cross-marker summary, a comparative summary or a probe curve (anything else is refused); the output lists the
 inputs with their SHA-256, code commit and model commit.
 
 Usage:
@@ -111,6 +118,53 @@ def size_crossmarker(summary: Mapping[str, Any], deltas: Sequence[float], famili
     return rows
 
 
+def pairing_capacity(report: Mapping[str, Any], pairing: str) -> Optional[int]:
+    """Pairs a pairing can form at most from its pools (`pairs.comparative.draw_pairs` report), before the name
+    and length checks: half the shared pool for strong–strong / weak–weak, the smaller side for strong–weak."""
+    r = report.get(pairing)
+    if not r:
+        return None
+    if pairing == "strong_weak":
+        return min(r["anchor_pool"], r["partner_pool"])
+    return r["anchor_pool"] // 2
+
+
+def size_comparative(summary: Mapping[str, Any], deltas: Sequence[float], families: Sequence[int],
+                     alpha: float = 0.05, power: float = 0.80, reward: str = "baseline",
+                     kind: str = "merit") -> List[Dict[str, Any]]:
+    """One row per (encoding, pairing): the binding (largest-r) marker effect of the ``kind`` response over the
+    contrast axes and the pairs it needs; the other response kinds are listed under ``outside_rule``."""
+    from pairs.comparative import KINDS, PAIRINGS
+
+    rows: List[Dict[str, Any]] = []
+    report = summary.get("pairing", {})
+    for encoding, by_reward in summary.get("metrics", {}).items():
+        for pairing, block in by_reward.get(reward, {}).items():
+            if pairing not in PAIRINGS:
+                continue
+            items, outside = {}, {}
+            for axis, entry in block.items():
+                if not isinstance(entry, Mapping):
+                    continue
+                for k in KINDS:
+                    if k in entry and "marker_effect" in entry[k]:
+                        p = precision(entry[k]["marker_effect"])
+                        (items if k == kind else outside)[f"marker_effect:{axis}" + ("" if k == kind else f":{k}")] = p
+            available = pairing_capacity(report, pairing)
+            rs = {name: p["r"] for name, p in items.items() if p["r"] is not None}
+            binding = max(rs, key=rs.get) if rs else None
+            need = {f"delta={d:g},m={m}": (required_n(rs[binding], d, m, alpha, power) if binding else None)
+                    for d in deltas for m in families}
+            rows.append({"model": summary.get("model"), "domain": summary.get("domain"), "encoding": encoding,
+                         "group": pairing, "family": MAIN, "n_pilot": items[binding]["n"] if binding else None,
+                         "available": available, "binding_contrast": binding, "r": rs.get(binding),
+                         "r_by_contrast": rs, "unsized": sorted(set(items) - set(rs)),
+                         "outside_rule": {k: v["r"] for k, v in outside.items()}, "required": need,
+                         "exceeds_available": {k: (available is not None and v is not None and v > available)
+                                               for k, v in need.items()}})
+    return rows
+
+
 def max_over_models(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     """The rule's answer per (domain, encoding, group, family): the largest required n over the models, next to
     the smallest pool; a model whose family is unsized makes that answer None (it cannot be sized)."""
@@ -173,6 +227,7 @@ def main() -> None:
     families = [int(x) for x in args.families.split(",")]
 
     rows: List[Dict[str, Any]] = []
+    pair_rows: List[Dict[str, Any]] = []
     curves: List[Dict[str, Any]] = []
     inputs: List[Dict[str, Any]] = []
     for path in args.inputs:
@@ -180,13 +235,17 @@ def main() -> None:
         if "directions" in data and "grid" in data:
             curves.append(data)
             inputs.append(input_record(path, data, "probe_curve"))
+        elif "metrics" in data and "pairing" in data and "pairs" in data:   # before the cross-marker test
+            pair_rows += size_comparative(data, deltas, families, args.alpha, args.power)
+            inputs.append(input_record(path, data, "comparative"))
         elif "metrics" in data and "selection" in data:
             rows += size_crossmarker(data, deltas, families, args.alpha, args.power)
             inputs.append(input_record(path, data, "cross_marker"))
         else:
-            raise SystemExit(f"{path}: neither a cross-marker summary nor a probe curve")
+            raise SystemExit(f"{path}: neither a cross-marker or comparative summary nor a probe curve")
     result = {"inputs": inputs, "deltas": deltas, "families": families, "alpha": args.alpha, "power": args.power,
               "records_per_group": rows, "records_per_group_max_over_models": max_over_models(rows),
+              "pairs_per_pairing": pair_rows, "pairs_per_pairing_max_over_models": max_over_models(pair_rows),
               "probe_records": probe_answers(curves)}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2))
@@ -213,6 +272,17 @@ def print_table(result: Mapping[str, Any]) -> None:
     for r in result["records_per_group_max_over_models"]:
         label = f"{r['domain']} / {r['encoding']} / {r['group']} / {r['family']} ({len(r['models'])} models)"
         print(f"  {label:79}  {cells(r)}  {r['available']}")
+    if result.get("pairs_per_pairing"):
+        print("-" * 110)
+        print("PAIRS PER PAIRING (comparative; merit marker effects) — per model, then the maximum over models; "
+              "avail = capacity before the name/length checks")
+        for r in result["pairs_per_pairing"]:
+            label = f"{r['domain']} / {Path(str(r['model'])).name} / {r['encoding']} / {r['group']}"
+            rr = "  None" if r["r"] is None else f"{r['r']:6.2f}"
+            print(f"  {label:72} {rr}  {cells(r)}  {r['available']}   ({r['binding_contrast']})")
+        for r in result["pairs_per_pairing_max_over_models"]:
+            label = f"{r['domain']} / {r['encoding']} / {r['group']} ({len(r['models'])} models)"
+            print(f"  {label:79}  {cells(r)}  {r['available']}")
     print("-" * 110)
     print("PROBE RECORDS — per domain (max over directions, encodings, models; a direction failing even at the "
           "largest N answers that N)")

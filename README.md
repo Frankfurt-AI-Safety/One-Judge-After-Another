@@ -77,6 +77,12 @@ before any run:
   interval (`<macro>Lo` / `<macro>Hi`), skips results without `meta`, and lists the write-up macros an export
   would break.
 
+**Written after the reviews, not yet reviewed line by line** (2026-09-30): the comparative (two-applicant) arm —
+`pairs/comparative.py`, `scoring/comparative_metrics.py`, `probes/comparative_directions.py`,
+`runners/run_comparative.py`, three `configs/*comparative*` and their tests — plus its support in
+`runners/pilot_sizing.py`. It follows the reviewed conventions (data hashes, `meta`, `--overwrite`, record-pair
+bootstrap, probe-record exclusion, cross-fitting, `gate_fixed`) but has had only its tests and two MPS smoke runs.
+
 `cluster/` has changed a lot since the prototype and has not had its review session yet. Treat its code as
 unverified; `cluster/pilot.sh` still uses the old result names.
 
@@ -104,7 +110,10 @@ the disparity of the decision margin D = r(approve) − r(decline) between prote
 with decision-format cross-influence on strong and weak records and its own mechanism layer
 (cross-fitted prompt / interaction / unfair directions, cross-nulling, placement check). The blatant
 decision-response arm (`runners/run_decision_response.py`) is the floor: does the RM at least punish an
-openly stated discriminatory verdict?
+openly stated discriminatory verdict? The **comparative arm** (`runners/run_comparative.py`, exploratory) puts two
+applications in the USER turn and scores the choice of one: record pairs strong–strong, strong–weak and weak–weak,
+the applicants differing in one axis (or all three), each pair under both marker assignments and both orders, so
+the records and the position cancel from the marker effect r(choose protected) − r(choose reference).
 
 ## Quick start
 
@@ -161,6 +170,11 @@ Deliberately **not** carried over:
 - **No multi-seed runs** anywhere yet. Every arm now reports cluster-bootstrap 95% intervals (records,
   or essays for A2; `scoring/intervals.py`), the reasoning arm included since 2026-09-30. The intervals are
   uncorrected until the headline family and its multiplicity correction are fixed.
+- **The comparative arm has not run on the cluster** (built 2026-09-30, exploratory until the headline family is
+  fixed; pair counts from the pilot). Its own direction and the direct → comparative transfer are built; the full
+  3×3 transfer matrix (direct / cross-marker / comparative directions) and LEACE with a non-linear probe on the
+  comparative states are not. The tiny test models cannot show its direction: their last-token state does not
+  register a marker swap ~600 tokens back.
 - **Direct-form cross-influence was dropped** (2026-09-24): its premise, that the RM judges applicant
   quality in an off-task recitation, does not hold. It is measured in decision format now; the old runner
   is in the git history.

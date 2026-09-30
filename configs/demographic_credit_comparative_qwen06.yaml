@@ -1,0 +1,47 @@
+# Demographic bias — COMPARATIVE (two-applicant) decision design, credit, Skywork-Reward-V2-Qwen3-0.6B.
+# Exploratory until the headline family is fixed (decisions 2026-09-30).
+#
+# USER: two loan applications (the budget allows one) with the two applicants differing in one of sex / age /
+# marital status (or all three: the intersection corner); ASSISTANT: approves one, with a merit reason or a coded
+# doubt (income stability) about the other.
+# Pairings strong_strong / strong_weak / weak_weak; per pair and contrast both marker assignments x both
+# orders, so the records and the position cancel. Items come from cells.jsonl next to dataset_source:
+#   python runners/generate_credit.py
+#
+#   python runners/run_comparative.py --config configs/demographic_credit_comparative_qwen06.yaml
+# Credit is the binding pool: ~800 records, ~70% good; after the probe records ~150-190 weak records remain, so
+# strong_weak and weak_weak get ~50-75 pairs each (each record is in at most one pair).
+
+name: demographic_credit_comparative_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+
+# The direct manifest: its directions are projected out (RQ5 transfer) and its probe records are never
+# paired; cells.jsonl is read from the same directory.
+dataset_source: data/demographic/credit/pairs.jsonl
+probe_records: 150  # TODO(pilot): records, stratified by quality (as in the cross-marker config)
+split_seed: 42
+
+batch_size: 8
+max_length: 2048
+device: auto
+
+
+extra:
+  domain: credit
+  comparative:
+    n_pairs:             # TODO(pilot): fixed by pilot-then-freeze
+      strong_strong: 150
+      strong_weak: 150
+      weak_weak: 150
+    encodings: [explicit, proxy]
+    templates: null      # all templates in cells.jsonl
+    include_unmarked: true   # the gate for gate_fixed and the scale of the scaled effects
+    paraphrases: 3
+    seed: 42
+    n_boot: 2000
+    # direct = the direct arm's directions (RQ5 transfer); own = this design's "chosen is protected"
+    # direction, cross-fitted over n_folds folds of pairs
+    directions: [direct, own]
+    n_folds: 5

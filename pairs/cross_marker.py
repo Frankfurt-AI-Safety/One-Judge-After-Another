@@ -48,7 +48,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
 from pairs.factorial import DESIGNS, Cell, FactorialDesign, ProxyNames, stable_rng
 from pairs.markers import BLACK_FEMALE_NAMES, BLACK_MALE_NAMES, FEMALE_NAMES, MALE_NAMES
@@ -311,6 +311,7 @@ class CellBlock:
     texts: Dict[Cell, str]     # cell -> rendered document, marker clause included
     clauses: Dict[Cell, str]   # cell -> the clause (leading space)
     unmarked: str              # the document with no marker (the renderer's marker="" output)
+    names: FrozenSet[str] = frozenset()   # the block's proxy first names (none for explicit blocks)
 
     def is_strong(self, quality_field: str) -> bool:
         return bool(self.real_fields[quality_field])
@@ -346,7 +347,16 @@ def block_from_row(row: Dict[str, Any], design: FactorialDesign) -> CellBlock:
         raise BlockMismatch(f"{row.get('id')}: the clauses start at {len(starts)} different positions")
     return CellBlock(record_id=str(row["source_record_id"]), template_id=str(row["template_id"]),
                      encoding=str(row["encoding"]), real_fields=dict(row.get("real_fields") or {}),
-                     texts=texts, clauses=clauses, unmarked=unmarked.pop())
+                     texts=texts, clauses=clauses, unmarked=unmarked.pop(),
+                     names=proxy_names(row.get("exemplar") or {}))
+
+
+def proxy_names(exemplar: Dict[str, Any]) -> FrozenSet[str]:
+    """The first names a block's proxy clauses use (`ProxyNames.as_exemplar`): the female/male pair (credit,
+    hiring) or the sex x ethnicity grid (education). Empty for an explicit block."""
+    grid = exemplar.get("names") or {}
+    pair = [exemplar[k] for k in ("female_name", "male_name") if k in exemplar]
+    return frozenset(str(n) for n in [*grid.values(), *pair])
 
 
 def load_cell_blocks(path: Path, design: FactorialDesign,

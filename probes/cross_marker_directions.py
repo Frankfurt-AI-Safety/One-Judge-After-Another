@@ -37,7 +37,7 @@ removes the mean disparity by construction.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Hashable, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 
@@ -146,12 +146,13 @@ def cosine(u: torch.Tensor, v: torch.Tensor) -> float:
     return float(unit(u.float()) @ unit(v.float()))
 
 
-def fold_assignment(record_ids: Sequence[str], strong: Mapping[str, bool], k: int,
+def fold_assignment(record_ids: Sequence[str], strong: Mapping[str, Hashable], k: int,
                     seed: int) -> Dict[str, int]:
-    """record -> fold in 0..k-1, dealt round-robin after a seeded shuffle within each quality group, so
-    every fold holds strong and weak records in the pool's proportion."""
+    """record -> fold in 0..k-1, dealt round-robin after a seeded shuffle within each group of ``strong`` (the
+    quality label; the comparative design passes the pairing), so every fold holds the groups in the pool's
+    proportion. Each group has its own shuffle, so the order the groups are visited in changes nothing."""
     folds: Dict[str, int] = {}
-    for group in (True, False):
+    for group in sorted({strong[r] for r in record_ids}, key=repr):
         ids = sorted(r for r in record_ids if strong[r] == group)
         stable_rng(seed, "cross_marker_folds", group).shuffle(ids)
         for i, rid in enumerate(ids):
