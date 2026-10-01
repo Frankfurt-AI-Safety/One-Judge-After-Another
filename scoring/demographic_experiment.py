@@ -228,22 +228,43 @@ def _interaction(tr: float, ta: float, fa: float, fr: float) -> float:
     return ((tr - ta) - (fr - fa)) / 2
 
 
-_REASONING_STATS = {
-    **{f"mean_{c}": (lambda c: lambda s: _mean([i[c] for i in s if c in i]))(c) for c in _REASONING_CELLS},
-    "correctness_effect": lambda s: _correctness(*_cell_means(s)),
-    "conclusion_effect": lambda s: _conclusion(*_cell_means(s)),
-    "interaction": lambda s: _interaction(*_cell_means(s)),
-    "prefers_correct_over_favorable_rate": lambda s: _rate([win(i["true_reject"], i["false_advance"])
+_HEADLINE = ("prefers_correct_over_favorable_rate", "gap_correct_minus_favorable")
+
+
+def reasoning_stats(favourable_true: bool = False) -> Dict[str, Any]:
+    """The statistics of a premise's 2×2. ``interaction`` is coherence-relative: > 0 rewards the conclusion that
+    follows from the claim, so its sign flips for a favourable-truth premise (`pairs.verdicts.ReasoningPremise`),
+    whose coherent cells are true_advance and false_reject. The headline pair (true_reject vs false_advance: correct
+    but harmful vs wrong but favourable) exists only where the true claim is unfavourable; a favourable-truth premise
+    has no such pair (both cells are incoherent there), so it has no headline statistics."""
+    sign = -1.0 if favourable_true else 1.0
+    stats = {
+        **{f"mean_{c}": (lambda c: lambda s: _mean([i[c] for i in s if c in i]))(c) for c in _REASONING_CELLS},
+        "correctness_effect": lambda s: _correctness(*_cell_means(s)),
+        "conclusion_effect": lambda s: _conclusion(*_cell_means(s)),
+        "interaction": lambda s: sign * _interaction(*_cell_means(s)),
+    }
+    if not favourable_true:
+        stats.update({
+            "prefers_correct_over_favorable_rate": lambda s: _rate([win(i["true_reject"], i["false_advance"])
+                                                                    for i in s if _has(i, "true_reject",
+                                                                                       "false_advance")]),
+            "gap_correct_minus_favorable": lambda s: _mean([i["true_reject"] - i["false_advance"]
                                                             for i in s if _has(i, "true_reject", "false_advance")]),
-    "gap_correct_minus_favorable": lambda s: _mean([i["true_reject"] - i["false_advance"]
-                                                    for i in s if _has(i, "true_reject", "false_advance")]),
-}
-# the statistics compared between runs on the same records (nulled − baseline, premise − control)
-REASONING_EFFECTS = ("correctness_effect", "conclusion_effect", "interaction", "prefers_correct_over_favorable_rate",
-                     "gap_correct_minus_favorable")
+        })
+    return stats
 
 
-def compute_reasoning_metrics(scores: Dict[str, List[float]]) -> Dict[str, float]:
+def reasoning_effects(favourable_true: bool = False) -> Tuple[str, ...]:
+    """The statistics compared between runs on the same records (nulled − baseline, premise − control)."""
+    return ("correctness_effect", "conclusion_effect", "interaction") + (() if favourable_true else _HEADLINE)
+
+
+_REASONING_STATS = reasoning_stats()
+REASONING_EFFECTS = reasoning_effects()
+
+
+def compute_reasoning_metrics(scores: Dict[str, List[float]], favourable_true: bool = False) -> Dict[str, float]:
     """Reasoning 2×2 = {claim correctness} × {conclusion}. Disentangle "does the RM reward factually
     correct reasoning vs the conclusion?".
 
@@ -253,38 +274,63 @@ def compute_reasoning_metrics(scores: Dict[str, List[float]]) -> Dict[str, float
     Returns the four cell-mean rewards plus the 2×2 factorial effects (on mean reward):
       ``correctness_effect`` = mean(TRUE-claim cells) − mean(FALSE-claim cells)   [>0 ⇒ rewards correctness]
       ``conclusion_effect``  = mean(advance cells) − mean(reject cells)           [>0 ⇒ rewards "advance"]
-      ``interaction``        = (true_reject − true_advance) − (false_reject − false_advance), halved
-                               [>0 ⇒ rewards a conclusion that follows from the claim: reject after a true
-                               "reduces availability", advance after a false "increases" one]
+      ``interaction``        = (true_reject − true_advance) − (false_reject − false_advance), halved, its sign
+                               flipped for a ``favourable_true`` premise [>0 ⇒ rewards the conclusion that follows
+                               from the claim: reject after a true unfavourable claim, advance after a true
+                               favourable one]
       ``prefers_correct_over_favorable_rate`` = P(reward(true_reject) > reward(false_advance)), a tie ½  [headline]
       ``gap_correct_minus_favorable`` = mean(true_reject − false_advance).
-    ``n`` counts the items with both headline cells.
+    The headline pair only where the true claim is unfavourable (`reasoning_stats`). ``n`` counts the items with all
+    four cells: pooled over paraphrase folds, an item per record and fold.
     """
     items = _items({k: scores.get(k, []) for k in _REASONING_CELLS})
-    return {"n": sum(1 for i in items if _has(i, "true_reject", "false_advance")),
-            **{k: f(items) for k, f in _REASONING_STATS.items()}}
+    return {"n": sum(1 for i in items if all(c in i for c in _REASONING_CELLS)),
+            **{k: f(items) for k, f in reasoning_stats(favourable_true).items()}}
 
 
-def _paired_difference(names: Sequence[str]) -> Dict[str, Any]:
+def _paired_difference(names: Sequence[str], stats: Dict[str, Any] = _REASONING_STATS) -> Dict[str, Any]:
     """The statistics ``names`` on items ``(x, y)`` of the same record, as f(y) − f(x)."""
-    return {k: (lambda f: lambda s: f([y for _, y in s]) - f([x for x, _ in s]))(_REASONING_STATS[k])
-            for k in names}
+    return {k: (lambda f: lambda s: f([y for _, y in s]) - f([x for x, _ in s]))(stats[k]) for k in names}
 
 
-def reasoning_intervals(baseline: Dict[str, List[float]], nulled: Dict[str, List[float]] | None = None,
-                        n_boot: int = DEFAULT_N_BOOT, seed: int = 0) -> Dict[str, Any]:
-    """Bootstrap intervals over items (one item per record, so items are independent) for the reasoning 2×2:
-    each metric at baseline, and with ``nulled`` (the same items, nulled) each metric nulled and the effects'
-    nulled − baseline. All of them are signed, so a percentile interval is fine (`scoring.intervals`)."""
+Cells = Dict[str, List[float]]
+
+
+def _record_clusters(*columns: "Cells | Sequence[Cells]") -> List[List[Any]]:
+    """Bootstrap clusters of the reasoning 2×2: one per record, holding the record's item of every column (zipped:
+    the columns score the same records in the same order). A column is one scoring (``{cell: [score per record]}``) or
+    a list of them, one per paraphrase fold (`pairs.verdicts.PARAPHRASE_FOLDS`): a record then contributes one item per
+    fold, resampled together, so the interval covers the records while the estimate pools the wordings."""
+    folds = [c if isinstance(c, (list, tuple)) else [c] for c in columns]
+    if len({len(f) for f in folds}) != 1:
+        raise ValueError(f"every column needs the same folds: {[len(f) for f in folds]}")
+    items = [[_items(fold) for fold in col] for col in folds]          # column → fold → record → item
+    n = {len(fold) for col in items for fold in col}
+    if len(n) != 1:
+        raise ValueError(f"every column must score the same records: {sorted(n)} items")
+    n_records, n_folds = n.pop(), len(items[0])
+    if len(columns) == 1:
+        return [[items[0][f][k] for f in range(n_folds)] for k in range(n_records)]
+    return [[tuple(col[f][k] for col in items) for f in range(n_folds)] for k in range(n_records)]
+
+
+def reasoning_intervals(baseline: "Cells | Sequence[Cells]", nulled: "Cells | Sequence[Cells] | None" = None,
+                        n_boot: int = DEFAULT_N_BOOT, seed: int = 0, favourable_true: bool = False,
+                        with_baseline: bool = True) -> Dict[str, Any]:
+    """Bootstrap intervals over records (one item per record, or one per record and paraphrase fold:
+    `_record_clusters`) for the reasoning 2×2: each metric at baseline, and with ``nulled`` (the same items, nulled)
+    each metric nulled and the effects' nulled − baseline. All of them are signed, so a percentile interval is fine
+    (`scoring.intervals`). The statistics are a ``favourable_true`` premise's where it is one (`reasoning_stats`);
+    ``with_baseline=False`` skips the baseline's (a caller reading the same baseline with many directions)."""
     from scoring.intervals import cluster_bootstrap
 
-    base = _items(baseline)
-    out = {"baseline": cluster_bootstrap([[x] for x in base], _REASONING_STATS, n_boot, seed)}
+    stats = reasoning_stats(favourable_true)
+    out = {"baseline": cluster_bootstrap(_record_clusters(baseline), stats, n_boot, seed)} if with_baseline else {}
     if nulled is not None:
-        null = _items(nulled)
-        out["nulled"] = cluster_bootstrap([[x] for x in null], _REASONING_STATS, n_boot, seed)
-        out["nulled_minus_baseline"] = cluster_bootstrap([[p] for p in zip(base, null)],
-                                                         _paired_difference(REASONING_EFFECTS), n_boot, seed)
+        out["nulled"] = cluster_bootstrap(_record_clusters(nulled), stats, n_boot, seed)
+        out["nulled_minus_baseline"] = cluster_bootstrap(_record_clusters(baseline, nulled),
+                                                         _paired_difference(reasoning_effects(favourable_true), stats),
+                                                         n_boot, seed)
     return out
 
 
@@ -300,28 +346,34 @@ def reasoning_contrast_intervals(premise: Dict[str, List[float]], control: Dict[
     return cluster_bootstrap([[p] for p in zip(b, a)], _paired_difference(REASONING_EFFECTS), n_boot, seed)
 
 
-def reasoning_nulling_contrast_intervals(premise_base: Dict[str, List[float]], premise_null: Dict[str, List[float]],
-                                         control_base: Dict[str, List[float]], control_null: Dict[str, List[float]],
-                                         n_boot: int = DEFAULT_N_BOOT, seed: int = 0) -> Dict[str, Any]:
+def reasoning_nulling_contrast_intervals(premise_base: "Cells | Sequence[Cells]",
+                                         premise_null: "Cells | Sequence[Cells]",
+                                         control_base: "Cells | Sequence[Cells]",
+                                         control_null: "Cells | Sequence[Cells]",
+                                         n_boot: int = DEFAULT_N_BOOT, seed: int = 0,
+                                         favourable_true: bool = False) -> Dict[str, Any]:
     """(premise nulled − baseline) − (control nulled − baseline) for the effects, the control nulled with the
     premise's own direction, on the same records (item k of all four is record k), with the bootstrap interval over
-    records. The control states nothing demographic, so the direction should leave it alone: the contrast is what
+    records (each column may be a list of paraphrase folds: `_record_clusters`). The control states nothing
+    demographic, so the direction should leave it alone: the contrast is what
     nulling changes in the premise beyond the same direction's change in the control (a placebo contrast; the two
     also differ in non-demographic words). With a linear head each change is −(w·u) times the shift of the
     verdicts' coordinate on the direction. Read it on the reward effects; the rate's contrast (bounded, near-tie
-    noise after nulling) is descriptive only."""
+    noise after nulling) is descriptive only. The same difference of two nulling changes is the cross-domain transfer
+    gap (`runners/run_reasoning_transfer.py`): a domain's own direction against another domain's, on the same items."""
     from scoring.intervals import cluster_bootstrap
 
-    cols = [_items(c) for c in (premise_base, premise_null, control_base, control_null)]
-    if len({len(c) for c in cols}) != 1:
-        raise ValueError(f"premise and control must score the same records: {[len(c) for c in cols]} items")
+    try:
+        clusters = _record_clusters(premise_base, premise_null, control_base, control_null)
+    except ValueError as err:
+        raise ValueError(f"premise and control must score the same records: {err}") from None
 
     def did(f):
         part = lambda s, i: f([q[i] for q in s])
         return lambda s: (part(s, 1) - part(s, 0)) - (part(s, 3) - part(s, 2))
 
-    return cluster_bootstrap([[q] for q in zip(*cols)], {k: did(_REASONING_STATS[k]) for k in REASONING_EFFECTS},
-                             n_boot, seed)
+    stats = reasoning_stats(favourable_true)
+    return cluster_bootstrap(clusters, {k: did(stats[k]) for k in reasoning_effects(favourable_true)}, n_boot, seed)
 
 
 class DemographicBiasExperiment(BiasExperiment):

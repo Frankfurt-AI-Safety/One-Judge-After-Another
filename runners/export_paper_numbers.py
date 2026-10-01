@@ -49,10 +49,11 @@ EDU_STAGE_PAIRS = "data/demographic/education/asap2_stage/pairs.jsonl"
 # The reasoning arm's macros per domain: (suffix, premise -> tag), the premises of `pairs.verdicts.REASONING_FRAMES`.
 # Hiring's macros carry no suffix (their names predate the port to credit and education, 2026-10-01).
 REASONING_TAGS: Dict[str, Tuple[str, Dict[str, str]]] = {
-    "cv": ("", {"parental_leave": "PL", "intersection": "Intersection", "abroad": "Abroad"}),
-    "credit": ("Credit", {"age": "Age", "intersection": "Intersection", "sabbatical": "Sabbatical"}),
+    "cv": ("", {"parental_leave": "PL", "intersection": "Intersection", "abroad": "Abroad", "no_notice": "NoNotice"}),
+    "credit": ("Credit", {"age": "Age", "intersection": "Intersection", "sabbatical": "Sabbatical",
+                          "pay_raise": "PayRaise"}),
     "education": ("Edu", {"low_income": "LowIncome", "intersection": "Intersection",
-                          "out_of_district": "OutOfDistrict"}),
+                          "out_of_district": "OutOfDistrict", "in_district": "InDistrict"}),
 }
 
 
@@ -104,7 +105,8 @@ def source_record(name: str, data: Mapping[str, Any]) -> Dict[str, Any]:
 
 def collect(results_dir: Path, model: str = DEFAULT_MODEL) -> Tuple[Dict[str, str], Dict[str, Any]]:
     """Return (macros, report). Each macro maps a LaTeX command name (letters only) to a value; the report lists
-    the ``missing`` files and keys, the ``skipped`` files (no ``meta``: produced before the reviewed runners) and
+    the ``missing`` files and keys, the ``skipped`` files (no ``meta``: produced before the reviewed runners; or a
+    reasoning probe / erasure result of an older design) and
     the ``sources`` read."""
     m: Dict[str, str] = {}
     report: Dict[str, Any] = {"missing": [], "skipped": [], "sources": []}
@@ -222,11 +224,25 @@ def collect(results_dir: Path, model: str = DEFAULT_MODEL) -> Tuple[Dict[str, st
                 put_ci(f"decisionDiscWinNeutralDecline{tag}", by[axis]["disc_win_rate_vs_neutral_decline"], sign=False)
 
     # --- the reasoning arm, per domain (`REASONING_TAGS`); every name ends with the domain's suffix ---------------
-    from pairs.verdicts import REASONING_FRAMES
+    from pairs.verdicts import PARAPHRASE_FOLDS, REASONING_FRAMES
+
+    design_folds = [list(map(list, f)) for f in PARAPHRASE_FOLDS]
+
+    def current_design(key: str) -> Optional[Dict[str, Any]]:
+        """A reasoning probe or erasure result of the current design (no connective, these paraphrase folds), else
+        None and listed as skipped: an older result's numbers mean something else (2026-10-01 redesign)."""
+        d = need(key)
+        settings = (d or {}).get("meta", {}).get("settings", {})
+        if d and (settings.get("connective") is not False or settings.get("paraphrase_folds") != design_folds):
+            report["skipped"].append(f"{files[key]} (an older design of the reasoning arm)")
+            # nothing of it is exported, so it is no source of the export either
+            report["sources"] = [src for src in report["sources"] if src["file"] != files[key]]
+            return None
+        return d
 
     for domain, (suffix, tag) in REASONING_TAGS.items():
         frame = REASONING_FRAMES[domain]
-        pri, ctl = tag[frame.primary], tag[frame.control]
+        pri, ctl, fav = tag[frame.primary], tag[frame.control], tag[frame.favourable]
         # reasoning flip 2x2: correctness / conclusion effects, and each premise − the control
         d = need(f"reasoning_{domain}")
         if d:
@@ -241,23 +257,27 @@ def collect(results_dir: Path, model: str = DEFAULT_MODEL) -> Tuple[Dict[str, st
                 if prem in d.get("nulling_vs_control", {}):
                     put_ci(f"reasonNullingVs{ctl}{t}{suffix}", d["nulling_vs_control"][prem]["correctness_effect"])
         # reasoning probe (held-out applicants and wording) + cross-premise transfer
-        d = need(f"reasoning_probe_{domain}")
+        d = current_design(f"reasoning_probe_{domain}")
         if d:
             by = {r["premise"]: r["directions"] for r in d["results"]}
-            for prem in (frame.primary, frame.control):
+            for prem in (frame.primary, frame.control, frame.favourable):
                 if prem in by:
                     put_ci(f"probeCorrAccHeldout{tag[prem]}{suffix}", by[prem]["correctness"]["paired_acc_heldout"],
                            sign=False, pct=True)
                     put_ci(f"probeConclAccHeldout{tag[prem]}{suffix}", by[prem]["conclusion"]["paired_acc_heldout"],
                            sign=False, pct=True)
             t = d["transfer"]
-            m[f"cosCorrectness{pri}vs{ctl}{suffix}"] = _fmt(t["cosines"]["correctness"])
+            folds = t["cosines"]["correctness"][frame.primary][frame.control]      # one cosine per paraphrase fold
+            m[f"cosCorrectness{pri}vs{ctl}{suffix}"] = _fmt(sum(folds) / len(folds))
+            # the valence check: the control's correctness direction on the favourable-truth premise (opposite truth)
+            put_ci(f"probeCorrAcc{ctl}On{fav}{suffix}",
+                   t[f"{frame.control}_on_{frame.favourable}"]["correctness"]["paired_acc"], sign=False, pct=True)
             iv = t[f"{frame.control}_on_{frame.primary}"]["correctness"]["intervals"]
             put_ci(f"transfer{ctl}To{pri}base{suffix}", iv["baseline"]["correctness_effect"])
             put_ci(f"transfer{ctl}To{pri}null{suffix}", iv["nulled"]["correctness_effect"])
             put_ci(f"transfer{ctl}To{pri}change{suffix}", iv["nulled_minus_baseline"]["correctness_effect"])
         # LEACE / non-linear-probe erasure of the demographic premise, read against the lexical control
-        d = need(f"erasure_{domain}")
+        d = current_design(f"erasure_{domain}")
         if d:
             rows = {(r["premise"], r["concept"]): r for r in d["results"]}
             r = rows.get((frame.primary, "correctness"))
@@ -348,7 +368,8 @@ def main() -> None:
     for name in sorted(macros):
         lines.append(f"\\newcommand{{\\{name}}}{{{macros[name]}}}")
     for label, items in (("missing result files / keys (macros skipped)", report["missing"]),
-                         ("skipped: no meta, produced before the reviewed runners", report["skipped"])):
+                         ("skipped: no meta (before the reviewed runners), or an older reasoning design",
+                          report["skipped"])):
         if items:
             lines += ["", f"% {label}: " + ", ".join(sorted(items))]
     lines.append("")

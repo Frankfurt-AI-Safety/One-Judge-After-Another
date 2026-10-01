@@ -103,8 +103,9 @@ RESULTS_DIR = Path("artifacts/results/demographic")
 
 def premise_axes(domain: str) -> Dict[str, Any]:
     """premise → the axis whose direction nulls it (None: the control, nulled with every other axis's direction as
-    the placebo), in frame order."""
-    return {p: spec.axis for p, spec in REASONING_FRAMES[domain].premises.items()}
+    the placebo), in frame order; the flip's premises only (the favourable-truth premise is the probe's)."""
+    frame = REASONING_FRAMES[domain]
+    return {p: frame.premises[p].axis for p in frame.flip_premises}
 
 
 def _by_cell(values: Any, n: int) -> Dict[str, List[float]]:

@@ -115,3 +115,36 @@ def test_a_training_split_needs_both_classes_and_bool_labels_work():
         diffmean_direction(X, torch.zeros(100, dtype=torch.long))
     assert torch.equal(diffmean_direction(X, y.bool()), diffmean_direction(X, y))
     assert torch.equal(diffmean_direction(X, y.float()), diffmean_direction(X, y))
+
+
+def test_joint_leace_closes_the_xor_route_single_leace_leaves_open():
+    # states with no truth code at all: valence, premise and conclusion only. Pooled over two premises of opposite
+    # truth configuration, truth = valence XOR premise — linearly invisible, so LEACE on truth alone removes nothing
+    # and an MLP rebuilds truth from the two (a false "entangled" reading). Erasing truth and valence jointly removes
+    # the valence route: the MLP falls to chance.
+    import numpy as np
+    from probes.erasure import apply_eraser, leace_erase, probe_recoverability
+
+    rng = np.random.default_rng(0)
+    n = 1200
+    valence, premise, conclusion = (rng.integers(0, 2, n) for _ in range(3))
+    truth = (valence == premise).astype(int)                 # premise 1 = favourable-truth: its true claim is favourable
+    X = torch.tensor(np.column_stack([2 * valence - 1, 2 * premise - 1, 2 * conclusion - 1,
+                                      rng.normal(0, 0.1, (n, 5))]), dtype=torch.float32)
+    tr, ev = slice(0, 800), slice(800, n)
+
+    def mlp_after(erase):
+        eraser = leace_erase(X[tr], erase)
+        return probe_recoverability(apply_eraser(eraser, X[tr]), truth[tr].tolist(), apply_eraser(eraser, X[ev]),
+                                    truth[ev].tolist(), n_boot=0, mlp_seeds=3)["mlp_acc"]
+
+    assert mlp_after(truth[tr].tolist()) > 0.9                                   # the false positive
+    assert abs(mlp_after([truth[tr].tolist(), valence[tr].tolist()]) - 0.5) < 0.1   # closed
+
+
+def test_the_mlp_vote_needs_an_odd_number_of_seeds():
+    X = torch.randn(40, 3)
+    y = [0, 1] * 20
+    with pytest.raises(ValueError, match="odd"):
+        from probes.erasure import probe_recoverability
+        probe_recoverability(X, y, X, y, n_boot=0, mlp_seeds=2)

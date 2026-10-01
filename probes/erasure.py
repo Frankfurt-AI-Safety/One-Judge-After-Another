@@ -21,7 +21,7 @@ and both classes must occur in a training split.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Hashable, Optional, Sequence
+from typing import Any, Dict, Hashable, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -55,16 +55,22 @@ def diffmean_direction(X: torch.Tensor, y) -> torch.Tensor:
 
 
 def leace_erase(X: torch.Tensor, y):
-    """Fit a LEACE eraser on (X, y). Returns a callable eraser; apply to any tensor of the same dim."""
+    """Fit a LEACE eraser on (X, y). Returns a callable eraser; apply to any tensor of the same dim. ``y`` is one 0/1
+    label per row, or several concepts' labels (a list of label sequences), erased jointly: then no linear function of
+    the states predicts any of them (a single concept's erasure leaves the others, from which a non-linear probe can
+    rebuild it where the concepts combine, e.g. correctness = valence XOR premise)."""
     from concept_erasure import LeaceEraser
 
+    if isinstance(y, (list, tuple)) and y and isinstance(y[0], (list, tuple, torch.Tensor)):
+        z = torch.stack([_labels(c, train=True).float() for c in y], dim=1)
+        return LeaceEraser.fit(X.float(), z)
     return LeaceEraser.fit(X.float(), _labels(y, train=True))
 
 
 def probe_recoverability(
     X_tr: torch.Tensor, y_tr, X_ev: torch.Tensor, y_ev, seed: int = 0,
     groups_ev: Optional[Sequence[Hashable]] = None, n_boot: Optional[int] = None,
-    reference_ok: Optional[Sequence[bool]] = None,
+    reference_ok: Optional[Sequence[bool]] = None, return_items: bool = False, mlp_seeds: int = 1,
 ) -> Dict[str, Any]:
     """Held-out recoverability of concept ``y`` from activations: linear vs non-linear probe accuracy,
     with the majority-class ``chance`` baseline. Features standardized on the train split.
@@ -78,12 +84,15 @@ def probe_recoverability(
     ``reference_ok`` (one flag per eval state: did a reference predictor, e.g. a no-model rule, get it right?)
     adds ``reference_acc`` and the paired ``linear_minus_reference`` / ``mlp_minus_reference`` on the same states
     and replicates: what the probe recovers beyond the reference.
+
+    ``return_items`` adds ``items`` (per eval state: linear correct, MLP correct, label, reference correct), which
+    `recoverability_summary` pools over several fits (the reasoning erasure test's paraphrase folds). ``mlp_seeds`` > 1
+    fits that many MLPs (seeds ``seed``, ``seed + 1``, …; an odd number) and takes their majority vote per state: one
+    early-stopped fit can miss a non-linear structure another finds.
     """
     from sklearn.linear_model import LogisticRegression
     from sklearn.neural_network import MLPClassifier
     from sklearn.preprocessing import StandardScaler
-
-    from scoring.intervals import DEFAULT_N_BOOT, cluster_bootstrap, clusters_of
 
     Xtr = X_tr.float().cpu().numpy()
     Xev = X_ev.float().cpu().numpy()
@@ -98,15 +107,33 @@ def probe_recoverability(
     Xtr, Xev = scaler.transform(Xtr), scaler.transform(Xev)
 
     lin = LogisticRegression(max_iter=1000, C=1.0).fit(Xtr, ytr)
-    mlp = MLPClassifier(hidden_layer_sizes=(256,), max_iter=500, early_stopping=True,
-                        random_state=seed).fit(Xtr, ytr)
+    if mlp_seeds < 1 or mlp_seeds % 2 == 0:
+        raise ValueError(f"mlp_seeds must be odd and positive (a majority vote), got {mlp_seeds}")
+    votes = sum(MLPClassifier(hidden_layer_sizes=(256,), max_iter=500, early_stopping=True,
+                              random_state=seed + k).fit(Xtr, ytr).predict(Xev) for k in range(mlp_seeds))
     lin_ok = lin.predict(Xev) == yev
-    mlp_ok = mlp.predict(Xev) == yev
+    mlp_ok = (votes * 2 > mlp_seeds).astype(int) == yev
 
     # items: (linear correct, MLP correct, label, reference correct) per eval state
     ref = [False] * len(yev) if reference_ok is None else [bool(x) for x in reference_ok]
     items = list(zip(lin_ok.tolist(), mlp_ok.tolist(), yev.tolist(), ref))
     keys = list(range(len(items))) if groups_ev is None else list(groups_ev)
+    out = {**recoverability_summary(items, keys, seed=seed, n_boot=n_boot, reference=reference_ok is not None),
+           "n_train": int(len(ytr)), "n_eval": int(len(yev))}
+    if return_items:
+        out["items"] = items
+    return out
+
+
+def recoverability_summary(items: Sequence[Tuple[bool, bool, int, bool]], keys: Sequence[Hashable], seed: int = 0,
+                           n_boot: Optional[int] = None, reference: bool = False) -> Dict[str, Any]:
+    """Accuracies, ``chance`` (the majority-class share) and their intervals over resamples of whole ``keys``
+    clusters, from per-state ``items`` (linear correct, MLP correct, label, reference correct) — of one fit, or of
+    several pooled (then a key names the same unit, e.g. an applicant, in every fit)."""
+    from scoring.intervals import DEFAULT_N_BOOT, cluster_bootstrap, clusters_of
+
+    if len(keys) != len(items):
+        raise ValueError(f"{len(keys)} cluster keys for {len(items)} items")
 
     def acc(k: int):
         return lambda s: float(np.mean([it[k] for it in s]))
@@ -118,18 +145,12 @@ def probe_recoverability(
     stats = {"linear_acc": acc(0), "mlp_acc": acc(1), "chance": chance,
              "linear_above_chance": lambda s: acc(0)(s) - chance(s),
              "mlp_above_chance": lambda s: acc(1)(s) - chance(s)}
-    if reference_ok is not None:
+    if reference:
         stats.update({"reference_acc": acc(3), "linear_minus_reference": lambda s: acc(0)(s) - acc(3)(s),
                       "mlp_minus_reference": lambda s: acc(1)(s) - acc(3)(s)})
     intervals = cluster_bootstrap(clusters_of(items, keys), stats,
                                   n_boot=DEFAULT_N_BOOT if n_boot is None else n_boot, seed=seed)
-    return {
-        "linear_acc": float(lin_ok.mean()),
-        "mlp_acc": float(mlp_ok.mean()),
-        "chance": chance(items),
-        "n_train": int(len(ytr)), "n_eval": int(len(yev)),
-        "intervals": intervals,
-    }
+    return {"linear_acc": acc(0)(items), "mlp_acc": acc(1)(items), "chance": chance(items), "intervals": intervals}
 
 
 def bag_of_words(train_texts: Sequence[str], eval_texts: Sequence[str]):

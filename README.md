@@ -161,7 +161,16 @@ Deliberately **not** carried over:
   intersection premise is the factorial's corner and names the whole identity as the cause, though its claim follows
   from one component. Age is partly a legitimate
   credit risk factor, so "sound but discriminatory" is weaker there. The control is nulled with each demographic
-  direction too (a placebo), and `nulling_vs_control` reports what nulling changes beyond that. The criteria a premise must meet are in the
+  direction too (a placebo), and `nulling_vs_control` reports what nulling changes beyond that. The reasoning
+  probe, the erasure test and the cross-domain transfer (`runners/run_reasoning_transfer.py`; new, reviewed and
+  redesigned twice on 2026-10-01) state the decision without a connective, add a favourable-truth premise per domain
+  (no notice period / a permanent pay raise / the in-district fee) so truth and valence are crossed, fit correctness
+  and valence across the two non-demographic premises, and hold the wording out in three folds of six-entry pools
+  (two held out each, with no word that separates true from false shared between entries of any claim). The
+  erasure test erases correctness and valence jointly (pooled over the two premises, each is the other XOR the
+  premise). Whether a correctness direction is a reasoning direction is read against a bag-of-words lexical control
+  (erasure test, transfer runner) and, in the probe, from the valence check (with a positive control; inconclusive
+  where the direction does not transfer between premises). The criteria a premise must meet are in the
   working notes (2026-10-01). Every reasoning item reads no record field but the role
   (`tests/test_decision_response.py::TestSubstratePortingGap`; the "experience" claim, which had no truth value on
   a Bias-in-Bios record, was deleted on 2026-09-30). The blatant decision-response arm covers all three domains and

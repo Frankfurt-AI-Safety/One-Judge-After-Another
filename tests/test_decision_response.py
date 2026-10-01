@@ -260,10 +260,11 @@ class TestSubstratePortingGap:
         render = lambda record, marker="": f"A profile.{marker}"
         for domain, frame in REASONING_FRAMES.items():
             for premise in frame.premises:
-                for vary, connective in ((False, True), (True, True), (True, False)):
+                # a favourable-truth premise has only the varied wording (no fixed, connective one)
+                for vary in ((False, True) if premise in frame.flip_premises else (True,)):
                     for seed in range(20):
                         build_reasoning_item(Guarded("r1", domain == "cv"), premise, render, random.Random(seed),
-                                             vary=vary, connective=connective, domain=domain)
+                                             vary=vary, domain=domain)
 
     def test_decision_verdicts_use_no_record_fields(self):
         item = build_decision_item(_rec(), "sex", "explicit", render_bio,

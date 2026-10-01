@@ -42,23 +42,28 @@ def _reasoning(tmp_path, domain):
     """The three reasoning results of ``domain`` (premise effects 1.0, versus the control −0.2 / −0.7, held-out
     accuracy 0.8, the control's direction nulling the demographic premise's correctness effect to 0.2, MLP after
     LEACE 0.8 and the lexical control at 0.5)."""
-    from pairs.verdicts import REASONING_FRAMES
+    from pairs.verdicts import PARAPHRASE_FOLDS, REASONING_FRAMES
 
     frame = REASONING_FRAMES[domain]
-    primary, control = frame.primary, frame.control
+    primary, control, favourable = frame.primary, frame.control, frame.favourable
+    # the probe and erasure results of the current design (no connective, these folds); others are skipped
+    design = {"meta": {**_meta(), "settings": {"connective": False,
+                                                "paraphrase_folds": [list(map(list, f)) for f in PARAPHRASE_FOLDS]}}}
     effects = lambda c: {"correctness_effect": _iv(c), "conclusion_effect": _iv(0.1)}
     _write(tmp_path, f"reasoning_{domain}", {
         "results": [{"premise": p, "intervals": {"baseline": effects(1.0)}} for p in frame.premises],
         "versus_control": {primary: effects(-0.2), "intersection": effects(-0.7)},
         "nulling_vs_control": {primary: effects(-0.4), "intersection": effects(-0.1)}})
     acc = {"paired_acc_heldout": _iv(0.8, 0.75, 0.85)}
-    _write(tmp_path, f"reasoning_probe_{domain}", {
-        "results": [{"premise": p, "directions": {"correctness": acc, "conclusion": acc}} for p in (primary, control)],
-        "transfer": {"cosines": {"correctness": 0.94, "conclusion": 0.9},
+    _write(tmp_path, f"reasoning_probe_{domain}", {**design,
+        "results": [{"premise": p, "directions": {"correctness": acc, "conclusion": acc}}
+                    for p in (primary, control, favourable)],
+        "transfer": {"cosines": {"correctness": {primary: {control: [0.92, 0.94, 0.96]}}},
                      f"{control}_on_{primary}": {"correctness": {"intervals": {
-                         "baseline": effects(1.0), "nulled": effects(0.2), "nulled_minus_baseline": effects(-0.8)}}}}})
+                         "baseline": effects(1.0), "nulled": effects(0.2), "nulled_minus_baseline": effects(-0.8)}}},
+                     f"{control}_on_{favourable}": {"correctness": {"paired_acc": _iv(0.3, 0.25, 0.35)}}}})
     row = lambda gap: {"linear_acc": 0.5, "mlp_acc": 0.5 + gap, "intervals": {"mlp_above_chance": _iv(gap)}}
-    _write(tmp_path, f"erasure_{domain}", {"results": [{"premise": primary, "concept": "correctness",
+    _write(tmp_path, f"erasure_{domain}", {**design, "results": [{"premise": primary, "concept": "correctness",
                                                         "rows": {k: row(0.3) for k in ("none", "diffmean", "leace")},
                                                         "lexical_control": {k: row(0.0)
                                                                             for k in ("none", "diffmean", "leace")}}]})
@@ -134,6 +139,9 @@ def test_the_other_arms_carry_their_intervals(tmp_path):
     assert m["reasonNullingVsAbroadPL"] == "-0.40" and m["reasonNullingVsAbroadIntersectionHi"] == "+0.00"
     assert (m["probeCorrAccHeldoutPL"], m["probeCorrAccHeldoutPLLo"]) == ("80\\%", "75\\%")
     assert m["cosCorrectnessPLvsAbroad"] == "0.94" and m["transferAbroadToPLchange"] == "-0.80"
+    # the valence check: the control's correctness direction on the favourable-truth premise
+    assert (m["probeCorrAccAbroadOnNoNotice"], m["probeCorrAccAbroadOnNoNoticeHi"]) == ("30\\%", "35\\%")
+    assert m["probeCorrAccHeldoutNoNotice"] == "80\\%"
     assert m["erasureMlpLeaceCorrPL"] == "80\\%" and m["erasureMlpAboveChanceLeaceCorrPLlexical"] == "+0.00"
     assert (m["additivityCosCredit"], m["additivityResidualCredit"], m["additivityThreeWayPCredit"]) == (
         "0.999", "0.023", "0.0001")
@@ -160,6 +168,14 @@ def test_the_reasoning_arm_of_credit_and_education_carries_the_domain(tmp_path):
     assert m["transferOutOfDistrictToLowIncomenullEdu"] == "+0.20"
     assert "reasonCorrectnessPL" not in m and "reasoning_cv_Tiny-RM.json" in report["missing"]
     assert all(re.fullmatch(r"[A-Za-z]+", name) for name in m)
+
+
+def test_a_reasoning_result_of_an_older_design_is_skipped(tmp_path):
+    # before the 2026-10-01 redesign the probe read connective wording on one held-out entry: other numbers
+    name = _write(tmp_path, "reasoning_probe_cv", {"results": [], "transfer": {}})
+    m, report = collect(tmp_path, MODEL)
+    assert any(name in s for s in report["skipped"]) and "probeCorrAccHeldoutPL" not in m
+    assert name not in [src["file"] for src in report["sources"]]           # nothing of it was exported
 
 
 def test_the_header_lists_the_sources_and_warns_on_mixed_commits(tmp_path):
