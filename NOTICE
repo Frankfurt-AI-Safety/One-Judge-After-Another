@@ -17,8 +17,9 @@ Modifications made by the Frankfurt AI Safety RM-Bias Working Group, 2026:
     (decision-response, reasoning 2x2).
   * Added LEACE + non-linear-probe concept-erasure analysis on top of the upstream
     difference-of-means probe and null-space projection (probes/).
-  * Added cluster deployment for the hessian.AI 42 cluster (cluster/) and a static
-    experiment-review site generator (review_site/).
+  * Added the decision-format arms: the cross-marker decision design, the comparative
+    (two-applicant) design and the placement matrix across the three marker placements.
+  * Added cluster deployment for the hessian.AI 42 cluster (cluster/).
   * Removed the upstream length / position / sycophancy / uncertainty bias arms, the
     RewardBench and perplexity evaluations, and the MLX (Apple Silicon) backend. This
     repository does not reproduce the upstream results.

@@ -27,14 +27,17 @@ WORKDIR /opt/app
 # torch is deliberately left to the base image: the NGC build is tuned for this hardware and
 # reinstalling it from PyPI would replace a matched CUDA build with a generic one.
 COPY requirements.txt requirements-analysis.txt ./
+# transformers < 5: version 5 needs a newer torch than the image's 2.3 (requirements.txt states only the lower
+# bound, which the Mac's newer torch allows); the same bound as the pip --target route in cluster/README.md §1.
 RUN sed -i '/^torch/d' requirements.txt \
     && python -m pip install --upgrade pip \
-    && python -m pip install -r requirements-analysis.txt
+    && python -m pip install -r requirements-analysis.txt "transformers<5"
 
 # Fail the build rather than the job if the stack is not actually importable.
 RUN python -c "import torch, transformers, sklearn, concept_erasure, textstat; \
 print('torch', torch.__version__, '| transformers', transformers.__version__); \
-assert torch.__version__ >= '2.1', 'base image torch too old for these reward models'"
+assert torch.__version__ >= '2.1', 'base image torch too old for these reward models'; \
+assert int(transformers.__version__.split('.')[0]) < 5, 'transformers 5 needs a newer torch than the image'"
 
 # Code and data are NOT copied in: they live on PFSS and are bind-mounted at run time
 # (cluster/config.yaml), so a code change never requires an image rebuild.

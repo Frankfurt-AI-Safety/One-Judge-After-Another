@@ -26,12 +26,12 @@ Review in the following order: substrates -> pairs -> probes -> scoring -> runne
 | 3 | `probes/` | **the mechanistic core**: difference-of-means, null-space projection, LEACE | 1,418 lines | **done** (2026-09-27) |
 | 4 | `scoring/` | model loading, the record split, metrics and their intervals | 2,338 lines | **done** (2026-09-28) |
 | 5 | `runners/` | CLI entry points — one per experiment arm | 4,817 lines | **done** (2026-09-30) |
-| 6 | `cluster/` | hessian.AI 42 cluster deployment | 591 lines | not yet |
+| 6 | `cluster/` | hessian.AI 42 cluster deployment | ~800 lines | revised for the pilot (2026-10-01) |
 | — | `tests/` `configs/` | read alongside the stage they cover | 8,953 lines | with their stage |
 
 **Review status.** `substrates/` (finished 2026-09-24, including the class-imbalance audit's substrate items),
 `pairs/` and `probes/` (both finished 2026-09-27), `scoring/` (finished 2026-09-28) and `runners/` (finished
-2026-09-30) have been reviewed line by line; `cluster/` remains. During the `pairs/` session the education corpus became ASAP 2.0 only, which rewrote
+2026-09-30) have been reviewed line by line; `cluster/` was revised for the pilot re-run on 2026-10-01 (see below). During the `pairs/` session the education corpus became ASAP 2.0 only, which rewrote
 `substrates/education_ingest.py` and `education_clean.py` (with tests; see the working notes of 2026-09-27). The
 `probes/` session changed what the pipeline does in three places worth knowing before any run: an input longer
 than `max_length` is refused (`InputTooLong`) instead of truncated; the embedding cache's fingerprint names the
@@ -86,8 +86,12 @@ capacity per pairing by exact quotas; credit ≈ 60–65 pairs each), the pairs 
 `--directions`, the strong–weak statistics are read against the unmarked prompts (exchange rate, overturn, rescue),
 and every setting changed on the CLI enters the result name — in `run_cross_marker.py` too.
 
-`cluster/` has changed a lot since the prototype and has not had its review session yet. Treat its code as
-unverified; `cluster/pilot.sh` still uses the old result names.
+`cluster/` was revised for the pilot re-run on 2026-10-01, without a separate review round (the user's choice, to
+run the pilot): `stage.sh` stages a committed tree only and records its commit (`STAGED_COMMIT`, read by
+`pairs.manifest.code_provenance`, since the staged copy has no `.git`); `prepare_data.sh` regenerates every manifest
+on the cluster and `check_data.py` checks them; `pilot.sh` runs the sizing steps and a test run of every arm in the
+lanes `smoke`, `small`, `8b` and `70b` (in parallel on the workspace's 4 GPUs). The lanes were dry-run locally
+(`smoke` on MPS); the cluster run is their real test.
 
 `probes/` is small and load-bearing: it is where the actual intervention lives, and where a
 subtle error would be least visible in the results.
@@ -116,7 +120,10 @@ decision-response arm (`runners/run_decision_response.py`) is the floor: does th
 openly stated discriminatory verdict? The **comparative arm** (`runners/run_comparative.py`, exploratory) puts two
 applications in the USER turn and scores the choice of one: record pairs strong–strong, strong–weak and weak–weak,
 the applicants differing in one axis (or all three), each pair under both marker assignments and both orders, so
-the records and the position cancel from the marker effect r(choose protected) − r(choose reference).
+the records and the position cancel from the marker effect r(choose protected) − r(choose reference). The
+**placement matrix** (`runners/run_placement_matrix.py`, exploratory, built and reviewed 2026-10-01) scores the
+comparative pairs' records in all three placements and nulls each placement's direction in the others, with one fold
+assignment and one bootstrap over pairs.
 
 ## Quick start
 
@@ -192,10 +199,11 @@ Deliberately **not** carried over:
   or essays for A2; `scoring/intervals.py`), the reasoning arm included since 2026-09-30. The intervals are
   uncorrected until the headline family and its multiplicity correction are fixed.
 - **The comparative arm has not run on the cluster** (built 2026-09-30, exploratory until the headline family is
-  fixed; pair counts from the pilot). Its own direction and the direct → comparative transfer are built; the full
-  3×3 transfer matrix (direct / cross-marker / comparative directions) and LEACE with a non-linear probe on the
-  comparative states are not. The tiny test models cannot show its direction: their last-token state does not
-  register a marker swap ~600 tokens back.
+  fixed; pair counts from the pilot). Its own direction, the direct → comparative transfer and the placement matrix
+  (`runners/run_placement_matrix.py`, built and reviewed 2026-10-01: direct / cross-marker / comparative
+  directions on the comparative pairs' records, cross-fitted over the comparative pair folds) are built; LEACE with a
+  non-linear probe on the comparative states is not. The tiny test models cannot show its direction: their
+  last-token state does not register a marker swap ~600 tokens back (the matrix is tested on planted states).
 - **Direct-form cross-influence was dropped** (2026-09-24): its premise, that the RM judges applicant
   quality in an off-task recitation, does not hold. It is measured in decision format now; the old runner
   is in the git history.
