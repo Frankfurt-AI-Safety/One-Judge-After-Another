@@ -152,11 +152,20 @@ Deliberately **not** carried over:
 
 ## Known gaps — read before trusting a number
 
-- **The reasoning arm is hiring-only.** Its porting gap is closed (2026-09-30): the "experience" claim type,
-  which read `getattr(record, "years_experience", "several")` and so had no truth value on a Bias-in-Bios record,
-  was deleted; every reasoning item reads no record field but the role
-  (`tests/test_decision_response.py::TestSubstratePortingGap`). The blatant decision-response arm covers all
-  three domains and reads no record fields.
+- **The reasoning arm runs on all three domains since 2026-10-01, but its premises differ in strength.** Per
+  domain (`pairs.verdicts.REASONING_FRAMES`): hiring parental leave → availability, control six months of travel
+  abroad (it replaced a long commute); credit age 30 → fewer years to build a credit history, control an unpaid
+  sabbatical → less income (another claim, bearing on repayment more directly; credit's 13 records whose employment
+  or job reads unemployed are not drawn); education low income → a fee-charging writing program is harder to afford,
+  control the higher out-of-district fee (not pass/fail grading, which no claim about the household bears on). Each
+  intersection premise is the factorial's corner and names the whole identity as the cause, though its claim follows
+  from one component. Age is partly a legitimate
+  credit risk factor, so "sound but discriminatory" is weaker there. The control is nulled with each demographic
+  direction too (a placebo), and `nulling_vs_control` reports what nulling changes beyond that. The criteria a premise must meet are in the
+  working notes (2026-10-01). Every reasoning item reads no record field but the role
+  (`tests/test_decision_response.py::TestSubstratePortingGap`; the "experience" claim, which had no truth value on
+  a Bias-in-Bios record, was deleted on 2026-09-30). The blatant decision-response arm covers all three domains and
+  reads no record fields.
 - **LEACE has only been applied to the reasoning concepts**, never to a demographic direction.
   The reward-vs-representation claim is scoped accordingly. The earlier "entangled" result is not evidence: the
   surface of the old verdicts alone reproduces it (bag-of-words vectors, MLP after LEACE 0.98); the redesigned

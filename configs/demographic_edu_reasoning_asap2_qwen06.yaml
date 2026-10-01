@@ -1,0 +1,29 @@
+# Demographic bias — REASONING-FLIP 2×2, education (ASAP 2.0), Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Does the RM reward factually-correct causal reasoning, or the conclusion? {claim correctness} ×
+# {conclusion} for a place in a fee-charging summer writing program (the essay is the writing sample; not
+# pass/fail grading, which no claim about the household bears on), over a low-income premise (-> the program is
+# harder for the family to afford), the factorial's protected corner (Black, female, low-income) and a
+# non-demographic control (the student lives outside the program's district, so the higher out-of-district fee
+# applies -> the same claim). High-quality essays only. Runs on the ASAP 2.0 manifest and its pool (generate it
+# with: python runners/generate_education.py).
+# Also run_reasoning_probe.py and run_reasoning_erasure.py on this config.
+#
+#   python runners/run_reasoning_flip.py --config configs/demographic_edu_reasoning_asap2_qwen06.yaml
+
+name: demographic_edu_reasoning_asap2_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+
+dataset_source: data/demographic/education/asap2/pairs.jsonl
+probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
+split_seed: 42
+
+batch_size: 8
+max_length: 2048
+device: auto
+
+
+extra:
+  domain: education

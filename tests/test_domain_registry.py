@@ -6,6 +6,7 @@ the battery, additivity and cross-marker runners. (The direct cross-influence pa
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +22,17 @@ class TestRegistry:
         assert set(DOMAINS) == {"credit", "cv", "education"}
         with pytest.raises(ValueError):
             get_domain("nope")
+
+    def test_corpus_is_the_file_load_records_reads(self, tmp_path, monkeypatch):
+        # the reasoning runners hash `corpus` and check it against the manifest's sources: it must be the file
+        # `load_records` opens. Run where no corpus exists, every loader names the file it looked for.
+        monkeypatch.chdir(tmp_path)
+        for name in DOMAINS:
+            dom = get_domain(name)
+            assert isinstance(dom.corpus, Path) and not dom.corpus.is_absolute()
+            with pytest.raises((FileNotFoundError, SystemExit)) as err:
+                dom.load_records()
+            assert str(dom.corpus) in str(err.value), name
 
     def test_template_ids_match_renderers(self):
         assert get_domain("credit").template_ids == tuple(sorted(TEMPLATES))
@@ -63,6 +75,13 @@ class TestRegistry:
         credit_recs = get_domain("credit").load_records()  # uses the downloaded raw file
         # 1000 records minus the credit_clean rules (49 contradictory, 149 with 3+ dependents)
         assert len(credit_recs) == 803 and hasattr(credit_recs[0], "credit_good")
+        # the reasoning arm's credit frame drops the records whose employment or job reads unemployed (an unpaid
+        # sabbatical contradicts them): 13 of the 564 good-credit ones, the count `pairs/verdicts.py`, the credit
+        # reasoning config and the working notes state
+        from pairs.verdicts import REASONING_FRAMES
+
+        strong = [r for r in credit_recs if r.credit_good]
+        assert len(strong) == 564 and sum(not REASONING_FRAMES["credit"].is_eligible(r) for r in strong) == 13
 
     def test_cv_load_records_needs_corpus(self):
         # The hiring arm now loads real biographies (Bias-in-Bios), user-downloaded like the
@@ -72,8 +91,8 @@ class TestRegistry:
         except FileNotFoundError:
             pytest.skip("Bias-in-Bios corpus not downloaded (data/demographic/cv/raw/)")
         assert len(recs) > 0
-        # These attribute names are load-bearing: run_reasoning_*.py filter on
-        # getattr(r, "qualified", True) and verdicts.py reads .role — both fail silently if renamed.
+        # These attribute names are load-bearing: the reasoning runners select on `is_strong` (.qualified) and
+        # verdicts.py reads .role.
         assert hasattr(recs[0], "qualified") and hasattr(recs[0], "role")
 
     def test_education_load_records_needs_corpus(self):

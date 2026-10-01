@@ -1,7 +1,9 @@
-# Demographic bias — REASONING-FLIP 2×2, CV-screening (hiring only), Skywork-Reward-V2-Qwen3-0.6B.
+# Demographic bias — REASONING-FLIP 2×2, CV-screening (hiring), Skywork-Reward-V2-Qwen3-0.6B.
 #
 # Does the RM reward factually-correct causal reasoning, or the conclusion? {claim correctness} ×
-# {conclusion} over a parental-leave / intersection premise + a non-demographic commute control.
+# {conclusion} over a parental-leave / intersection premise + a non-demographic control (six months of travel
+# abroad; all three reduce near-term availability). Credit and education: demographic_credit_reasoning_qwen06.yaml,
+# demographic_edu_reasoning_asap2_qwen06.yaml.
 # Runs on the Bias-in-Bios hiring manifest and its pool (generate it with: python runners/generate_bios.py);
 # the flip uses the fixed verdict wording, which reads no record field but the role.
 #

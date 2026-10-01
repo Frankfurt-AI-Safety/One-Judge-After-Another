@@ -17,6 +17,7 @@ Imports only the dataset classes from `scoring/` and the marker builders from `p
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
 from pairs.factorial import (
@@ -28,8 +29,9 @@ from scoring.bios_dataset import BIOS_ASSESSMENT_PROMPT, BiosDemographicDataset
 from scoring.education_dataset import EDU_ASSESSMENT_PROMPT, EducationDemographicDataset
 from substrates.bios_clean import DEFAULT_N_BIOS, load_factorial_bios
 from substrates.credit_clean import load_factorial_records
+from substrates.credit_ingest import DEFAULT_RAW_PATH
 from substrates.bios_ingest import DEFAULT_BIOS_PATH
-from substrates.education_clean import load_education_essays
+from substrates.education_clean import load_education_essays, source_path
 from substrates.credit_render import TEMPLATES, render_profile
 from substrates.bios_render import BIOS_TEMPLATES, render_bio
 from substrates.education_render import EDU_TEMPLATES, render_essay
@@ -53,6 +55,9 @@ class DomainSpec:
     # The `real_fields` key in the generator's cells.jsonl holding the same label as `is_strong` (the
     # cross-marker decision design reads records from cells.jsonl, not from the corpus).
     quality_field: Optional[str] = None
+    # The corpus file `load_records` reads, so a runner that reads records can check it against the manifest's
+    # ``sources`` (the reasoning arm).
+    corpus: Optional[Path] = None
 
 
 # Credit: sex × age × marital status as a full factorial (pairs/factorial.py). `family_status`
@@ -72,6 +77,7 @@ CREDIT = DomainSpec(
     make_marker=credit_marker,
     factorial=CREDIT_DESIGN,
     quality_field="credit_good",
+    corpus=Path(DEFAULT_RAW_PATH),
 )
 
 # Hiring: sex × age × family status as a full factorial (pairs/factorial.py), the pregnancy-window
@@ -96,6 +102,7 @@ CV = DomainSpec(
     make_marker=hiring_marker,
     factorial=HIRING_DESIGN,
     quality_field="qualified",
+    corpus=Path(DEFAULT_BIOS_PATH),
 )
 
 EDUCATION = DomainSpec(
@@ -118,6 +125,7 @@ EDUCATION = DomainSpec(
     make_marker=education_marker,
     factorial=EDUCATION_DESIGN,
     quality_field="high_quality",
+    corpus=source_path("asap2"),
 )
 
 DOMAINS = {CREDIT.name: CREDIT, CV.name: CV, EDUCATION.name: EDUCATION}

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Mechanistic probe of the reasoning-flip drivers (hiring only): are **reasoning correctness** and the
+Mechanistic probe of the reasoning-flip drivers (hiring, credit, education): are **reasoning correctness** and the
 **advance/reject conclusion** each represented as a *linear direction* in the RM's activations that can be nulled,
 measured on applicants AND wording the direction was not fitted on?
 
-The 2×2 (`pairs.verdicts`, availability claim) gives matched contrastive pairs, two per item:
+The 2×2 (`pairs.verdicts.REASONING_FRAMES`; the domain is the config's ``extra.domain``) gives matched contrastive
+pairs, two per item ("advance" = the domain's favourable decision):
   - **correctness direction** = DiffMean(true-claim − false-claim verdicts), holding the conclusion fixed;
   - **conclusion direction**  = DiffMean(advance − reject verdicts), holding correctness fixed.
 Each pair pairs a "so" with a "but" connective and the two pairs swap them, so the connective averages out.
@@ -18,19 +19,23 @@ applicant out and the direction was the difference of two fixed strings). On the
 with a record-bootstrap interval (two pairs per record);
 (2) **held-out nulling** — does projecting out the correctness direction collapse the eval correctness effect
 while leaving the conclusion effect (and vice versa)? Each metric with its interval, and nulled − baseline;
-(3) **cross-premise transfer** — the parental-leave eval items nulled with the *commute* direction and vice
-versa: another premise subject on top of the held-out wording. The premises share the paraphrase pools, so this
-does not test another claim form, and the directions' cosine across premises is expected to be high for that
-reason. Cosines are point values (length-type, no bootstrap interval).
+(3) **cross-premise transfer** — the demographic premise's eval items (``frame.primary``: hiring parental leave,
+credit age, education low income) nulled with the *control's* direction (six months abroad, an unpaid sabbatical, the
+out-of-district fee) and vice
+versa: another premise subject on top of the held-out wording. In hiring and education the two premises share the
+claim's paraphrase pools, so this does not test another claim form, and the directions' cosine across premises is
+expected to be high for that reason; credit's control makes another claim (income vs credit history), so there the
+transfer also crosses the claim. Cosines are point values (length-type, no bootstrap interval).
 
 The eval items' cells share their prompt, so a gated head (QRM) reads the same gate for all four: the effects
 compare cells within an item, and no gate-fixed column is needed.
 
-Records: hiring's qualified bios from the manifest's pool (`substrates.domains`), in seeded order: the first
-``--probe-items`` are the probe split, the next ``--eval-items`` the eval split. No demographic direction is used,
-so the demographic probe records are not excluded. The result ``reasoning_probe_cv_{model}.json`` (never replaced
-without ``--overwrite``) carries ``meta`` (the config with the loaded model commit, the code commit, the
-Bias-in-Bios parquet's SHA-256; `scoring.experiment`) and both splits' record ids.
+Records: the domain's strong records of the manifest's pool that no premise contradicts
+(`run_reasoning_flip.reasoning_records`), in seeded order: the first ``--probe-items`` are the probe split, the next
+``--eval-items`` the eval split. No demographic direction is used, so the demographic probe records are not excluded.
+The result ``reasoning_probe_{domain}_{model}{variant}.json`` (``variant`` names every setting the CLI changed;
+never replaced without ``--overwrite``) carries ``meta`` (the config with the loaded model commit, the code commit,
+the SHA-256 of the manifest's cells and of the corpus file; `scoring.experiment`) and both splits' record ids.
 
 Usage:
     python runners/run_reasoning_probe.py --config configs/demographic_cv_reasoning_qwen06.yaml \
@@ -53,23 +58,29 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import torch
 
 from scoring.dataset_base import format_conversation
-from substrates.bios_ingest import DEFAULT_BIOS_PATH
 from substrates.domains import get_domain
-from pairs.manifest import file_sha256
 from pairs.verdicts import (
-    EVAL_PARAPHRASES, FIT_PARAPHRASES, REASONING_CELLS, REASONING_PREMISES, build_reasoning_item,
+    EVAL_PARAPHRASES, FIT_PARAPHRASES, REASONING_CELLS, REASONING_FRAMES, build_reasoning_item,
 )
-from scoring.experiment import ExperimentConfig, add_override_args, apply_overrides, run_metadata
+from scoring.experiment import (
+    ExperimentConfig, add_override_args, apply_overrides, run_metadata, variant_suffix,
+)
 from scoring.demographic_experiment import DemographicBiasExperiment, compute_reasoning_metrics, reasoning_intervals
 from scoring.intervals import DEFAULT_N_BOOT, cluster_bootstrap, win
 from probes.cross_marker_directions import cosine, unit
 from probes.probe import embed_with_gates, rewards_from_hidden
 from runners.run_decision_response import select_items
+from runners.run_reasoning_flip import reasoning_records
 
 logger = logging.getLogger(__name__)
 RESULTS_DIR = Path("artifacts/results/demographic")
-DOMAIN = "cv"
-PREMISES = ("parental_leave", "commute")  # demographic + non-demographic control
+
+
+def probe_premises(domain: str) -> Tuple[str, str]:
+    """The demographic premise and the non-demographic control of the domain's frame."""
+    frame = REASONING_FRAMES[domain]
+    return frame.primary, frame.control
+
 
 # matched contrastive pairs (positive cell, negative cell): two per item, holding the other factor fixed
 CONCEPTS = {"correctness": [("true_reject", "false_reject"), ("true_advance", "false_advance")],
@@ -83,7 +94,7 @@ def reasoning_items(dom, premise: str, records: List[Any], paraphrases: Sequence
     tids = list(dom.template_ids)
     return [build_reasoning_item(r, premise, dom.render_fn, random.Random(f"{seed}:{premise}:{r.source_record_id}"),
                                  template_id=tids[i % len(tids)], vary=True, paraphrases=paraphrases,
-                                 connective=connective)
+                                 connective=connective, domain=dom.name)
             for i, r in enumerate(records)]
 
 
@@ -142,7 +153,8 @@ def run_premise(exp, cfg, dom, premise: str, probe_recs: List[Any], eval_recs: L
     evals = SplitStates(exp, cfg, reasoning_items(dom, premise, eval_recs, EVAL_PARAPHRASES, seed))
     base, _ = rewards_from_hidden(exp.model, evals.hidden, evals.dtype, None, gates=evals.gates)
     dirs = {concept: fit_direction(probe, concept) for concept in CONCEPTS}
-    out: Dict[str, Any] = {"premise": premise, "demographic": REASONING_PREMISES[premise]["demographic"],
+    out: Dict[str, Any] = {"premise": premise,
+                           "demographic": REASONING_FRAMES[dom.name].premises[premise].demographic,
                            "n_probe": probe.n, "n_eval": evals.n,
                            "baseline": compute_reasoning_metrics(_by_cell(base, evals.n)), "directions": {}}
     for concept, u in dirs.items():
@@ -155,8 +167,8 @@ def run_premise(exp, cfg, dom, premise: str, probe_recs: List[Any], eval_recs: L
     return out, dirs, evals
 
 
-def default_out(model_path: str) -> Path:
-    return RESULTS_DIR / f"reasoning_probe_{DOMAIN}_{Path(model_path).name}.json"
+def default_out(domain: str, model_path: str, variant: str = "") -> Path:
+    return RESULTS_DIR / f"reasoning_probe_{domain}_{Path(model_path).name}{variant}.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -166,7 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--eval-items", type=int, default=200)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", type=Path, default=None,
-                    help=f"Default {RESULTS_DIR}/reasoning_probe_cv_{{model}}.json")
+                    help=f"Default {RESULTS_DIR}/reasoning_probe_{{domain}}_{{model}}{{variant}}.json")
     ap.add_argument("--overwrite", action="store_true", help="Replace an existing result")
     add_override_args(ap)
     return ap
@@ -177,26 +189,35 @@ def _ci(entry: Dict[str, float]) -> str:
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    ap = build_parser()
+    args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         datefmt="%H:%M:%S")
+    configured_cfg = ExperimentConfig.from_yaml(args.config)
     cfg = apply_overrides(ExperimentConfig.from_yaml(args.config), args)
     domain = cfg.extra.get("domain")
-    if domain != DOMAIN:
-        raise SystemExit(f"the reasoning arm is hiring-only (its premises and prompt are hiring's): "
-                         f"set extra.domain: {DOMAIN} (the config has {domain!r})")
+    if domain not in REASONING_FRAMES:
+        raise SystemExit(f"the reasoning arm runs on {sorted(REASONING_FRAMES)}: set extra.domain (the config has "
+                         f"{domain!r})")
     if args.probe_items < 2 or args.eval_items < 2:
         raise SystemExit("--probe-items and --eval-items must be at least 2")
-    dom = get_domain(DOMAIN)
+    dom = get_domain(domain)
+    primary, control = probe_premises(domain)
     # everything that can fail on the inputs fails here, before the model loads
-    out = args.out or default_out(cfg.model_path)
+    keys = ("probe_items", "eval_items", "seed")
+    configured = {**{k: ap.get_default(k) for k in keys}, "revision": configured_cfg.model_revision}
+    used = {**{k: getattr(args, k) for k in keys}, "revision": cfg.model_revision}
+    out = args.out or default_out(domain, cfg.model_path, variant_suffix(configured, used))
     if out.exists() and not args.overwrite:
         raise SystemExit(f"{out} exists; pass --overwrite to replace it, or --out")
-    data = {Path(DEFAULT_BIOS_PATH).name: {"path": str(DEFAULT_BIOS_PATH), "sha256": file_sha256(DEFAULT_BIOS_PATH)}}
+    cfg.dataset_source = cfg.dataset_source or dom.default_pairs
+    pool, data, left_out = reasoning_records(dom, REASONING_FRAMES[domain], cfg.dataset_source)
     wanted = args.probe_items + args.eval_items
-    records, selection = select_items(dom.load_records(), dom.is_strong, set(), wanted, args.seed)
+    records, selection = select_items(pool, dom.is_strong, set(), wanted, args.seed)
+    selection.update(left_out)
     if len(records) < wanted:
-        raise SystemExit(f"{selection['available']} strong records, fewer than --probe-items + --eval-items = {wanted}")
+        raise SystemExit(f"{selection['available']} eligible strong records, fewer than --probe-items + "
+                         f"--eval-items = {wanted}")
     probe_recs, eval_recs = records[:args.probe_items], records[args.probe_items:]
     n_boot = int(cfg.extra.get("n_boot", DEFAULT_N_BOOT))
 
@@ -204,7 +225,7 @@ def main() -> None:
     exp.load_model()
 
     results, dirs, evals = [], {}, {}
-    for premise in PREMISES:
+    for premise in (primary, control):
         print(f"[reasoning-probe] {dom.name}/{premise} ...", flush=True)
         result, dirs[premise], evals[premise] = run_premise(exp, cfg, dom, premise, probe_recs, eval_recs, args.seed,
                                                             n_boot)
@@ -214,9 +235,8 @@ def main() -> None:
     transfer: Dict[str, Any] = {
         f"{src}_on_{tgt}": {concept: nulled_effects(exp, evals[tgt], dirs[src][concept], n_boot, args.seed)
                             for concept in CONCEPTS}
-        for tgt, src in (("parental_leave", "commute"), ("commute", "parental_leave"))}
-    transfer["cosines"] = {concept: cosine(dirs["parental_leave"][concept], dirs["commute"][concept])
-                           for concept in CONCEPTS}
+        for tgt, src in ((primary, control), (control, primary))}
+    transfer["cosines"] = {concept: cosine(dirs[primary][concept], dirs[control][concept]) for concept in CONCEPTS}
 
     print("\n" + "=" * 104)
     print(f"REASONING-PROBE — held-out applicants and wording — {cfg.model_path}  "
@@ -235,8 +255,8 @@ def main() -> None:
         print(f"  baseline: correctness_effect {_ci(b['correctness_effect'])}  "
               f"conclusion_effect {_ci(b['conclusion_effect'])}")
     print("\n" + "-" * 104)
-    print(f"cross-premise cosines (shared paraphrase pools): {transfer['cosines']}")
-    for key in ("commute_on_parental_leave", "parental_leave_on_commute"):
+    print(f"cross-premise cosines: {transfer['cosines']}")
+    for key in (f"{control}_on_{primary}", f"{primary}_on_{control}"):
         ch = transfer[key]["correctness"]["intervals"]["nulled_minus_baseline"]["correctness_effect"]
         print(f"  {key}: correctness_effect nulled − baseline {_ci(ch)}")
     print("=" * 104)
@@ -244,7 +264,7 @@ def main() -> None:
           "direction that carries over to unseen wording.")
 
     settings = {"probe_items": args.probe_items, "eval_items": args.eval_items, "seed": args.seed, "n_boot": n_boot,
-                "premises": list(PREMISES), "fit_paraphrases": list(FIT_PARAPHRASES),
+                "premises": [primary, control], "fit_paraphrases": list(FIT_PARAPHRASES),
                 "eval_paraphrases": list(EVAL_PARAPHRASES)}
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(

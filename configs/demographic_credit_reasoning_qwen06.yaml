@@ -1,0 +1,28 @@
+# Demographic bias — REASONING-FLIP 2×2, credit, Skywork-Reward-V2-Qwen3-0.6B.
+#
+# Does the RM reward factually-correct causal reasoning, or the conclusion? {claim correctness} ×
+# {conclusion} over an age premise ("a 30-year-old" -> fewer years to build a credit history), the factorial's
+# protected corner (a 30-year-old married woman) and a non-demographic control (an unpaid sabbatical -> less
+# income this year). Good-credit records only, minus the 13 of 564 whose employment or job reads unemployed (the
+# sabbatical would contradict them).
+# Runs on the German Credit manifest and its pool (generate it with: python runners/generate_credit.py).
+# Also run_reasoning_probe.py and run_reasoning_erasure.py on this config.
+#
+#   python runners/run_reasoning_flip.py --config configs/demographic_credit_reasoning_qwen06.yaml
+
+name: demographic_credit_reasoning_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+
+dataset_source: data/demographic/credit/pairs.jsonl
+probe_records: 150  # TODO(pilot): records, stratified by quality (probe_size counted pairs: ~38 records per axis)
+split_seed: 42
+
+batch_size: 8
+max_length: 2048
+device: auto
+
+
+extra:
+  domain: credit

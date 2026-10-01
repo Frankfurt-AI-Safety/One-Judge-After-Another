@@ -300,5 +300,29 @@ def reasoning_contrast_intervals(premise: Dict[str, List[float]], control: Dict[
     return cluster_bootstrap([[p] for p in zip(b, a)], _paired_difference(REASONING_EFFECTS), n_boot, seed)
 
 
+def reasoning_nulling_contrast_intervals(premise_base: Dict[str, List[float]], premise_null: Dict[str, List[float]],
+                                         control_base: Dict[str, List[float]], control_null: Dict[str, List[float]],
+                                         n_boot: int = DEFAULT_N_BOOT, seed: int = 0) -> Dict[str, Any]:
+    """(premise nulled − baseline) − (control nulled − baseline) for the effects, the control nulled with the
+    premise's own direction, on the same records (item k of all four is record k), with the bootstrap interval over
+    records. The control states nothing demographic, so the direction should leave it alone: the contrast is what
+    nulling changes in the premise beyond the same direction's change in the control (a placebo contrast; the two
+    also differ in non-demographic words). With a linear head each change is −(w·u) times the shift of the
+    verdicts' coordinate on the direction. Read it on the reward effects; the rate's contrast (bounded, near-tie
+    noise after nulling) is descriptive only."""
+    from scoring.intervals import cluster_bootstrap
+
+    cols = [_items(c) for c in (premise_base, premise_null, control_base, control_null)]
+    if len({len(c) for c in cols}) != 1:
+        raise ValueError(f"premise and control must score the same records: {[len(c) for c in cols]} items")
+
+    def did(f):
+        part = lambda s, i: f([q[i] for q in s])
+        return lambda s: (part(s, 1) - part(s, 0)) - (part(s, 3) - part(s, 2))
+
+    return cluster_bootstrap([[q] for q in zip(*cols)], {k: did(_REASONING_STATS[k]) for k in REASONING_EFFECTS},
+                             n_boot, seed)
+
+
 class DemographicBiasExperiment(BiasExperiment):
     """The model loader every demographic runner uses (`BiasExperiment.load_model`)."""

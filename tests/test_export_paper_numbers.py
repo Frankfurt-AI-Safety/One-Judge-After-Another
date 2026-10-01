@@ -38,6 +38,32 @@ def _write(tmp_path, key, data, meta=True):
     return name
 
 
+def _reasoning(tmp_path, domain):
+    """The three reasoning results of ``domain`` (premise effects 1.0, versus the control −0.2 / −0.7, held-out
+    accuracy 0.8, the control's direction nulling the demographic premise's correctness effect to 0.2, MLP after
+    LEACE 0.8 and the lexical control at 0.5)."""
+    from pairs.verdicts import REASONING_FRAMES
+
+    frame = REASONING_FRAMES[domain]
+    primary, control = frame.primary, frame.control
+    effects = lambda c: {"correctness_effect": _iv(c), "conclusion_effect": _iv(0.1)}
+    _write(tmp_path, f"reasoning_{domain}", {
+        "results": [{"premise": p, "intervals": {"baseline": effects(1.0)}} for p in frame.premises],
+        "versus_control": {primary: effects(-0.2), "intersection": effects(-0.7)},
+        "nulling_vs_control": {primary: effects(-0.4), "intersection": effects(-0.1)}})
+    acc = {"paired_acc_heldout": _iv(0.8, 0.75, 0.85)}
+    _write(tmp_path, f"reasoning_probe_{domain}", {
+        "results": [{"premise": p, "directions": {"correctness": acc, "conclusion": acc}} for p in (primary, control)],
+        "transfer": {"cosines": {"correctness": 0.94, "conclusion": 0.9},
+                     f"{control}_on_{primary}": {"correctness": {"intervals": {
+                         "baseline": effects(1.0), "nulled": effects(0.2), "nulled_minus_baseline": effects(-0.8)}}}}})
+    row = lambda gap: {"linear_acc": 0.5, "mlp_acc": 0.5 + gap, "intervals": {"mlp_above_chance": _iv(gap)}}
+    _write(tmp_path, f"erasure_{domain}", {"results": [{"premise": primary, "concept": "correctness",
+                                                        "rows": {k: row(0.3) for k in ("none", "diffmean", "leace")},
+                                                        "lexical_control": {k: row(0.0)
+                                                                            for k in ("none", "diffmean", "leace")}}]})
+
+
 def test_the_names_are_the_runners():
     files = result_files(MODEL)
     assert files["battery_cv"] == "battery_cv_Tiny-RM.json"
@@ -46,8 +72,9 @@ def test_the_names_are_the_runners():
     assert files["battery_education_stage"] == "battery_education_asap2_stage_Tiny-RM.json"
     assert files["maineffect_implausible"] == "maineffect_edupos_asap2_implausible_Tiny-RM.json"
     assert files["decision_cv"] == "decision_cv_Tiny-RM_explicit.json"
-    assert (files["reasoning"], files["reasoning_probe"], files["erasure"]) == (
-        "reasoning_cv_Tiny-RM.json", "reasoning_probe_cv_Tiny-RM.json", "erasure_cv_Tiny-RM.json")
+    for d in ("cv", "credit", "education"):
+        assert (files[f"reasoning_{d}"], files[f"reasoning_probe_{d}"], files[f"erasure_{d}"]) == (
+            f"reasoning_{d}_Tiny-RM.json", f"reasoning_probe_{d}_Tiny-RM.json", f"erasure_{d}_Tiny-RM.json")
     assert files["additivity_credit"] == "additivity_credit_Tiny-RM_explicit.json"
 
 
@@ -93,21 +120,7 @@ def test_the_other_arms_carry_their_intervals(tmp_path):
     _write(tmp_path, "decision_cv", {"results": [{"axis": "sex", "intervals": {"baseline": {
         "discriminatory_win_rate": _iv(0.3), "mean_gap_fair_minus_disc": _iv(1.5),
         "disc_win_rate_vs_neutral_decline": _iv(0.4)}}}]})
-    effects = lambda c: {"correctness_effect": _iv(c), "conclusion_effect": _iv(0.1)}
-    _write(tmp_path, "reasoning", {"results": [{"premise": p, "intervals": {"baseline": effects(1.0)}}
-                                               for p in ("parental_leave", "intersection", "commute")],
-                                   "versus_control": {"parental_leave": effects(-0.2), "intersection": effects(-0.7)}})
-    acc = {"paired_acc_heldout": _iv(0.8, 0.75, 0.85)}
-    _write(tmp_path, "reasoning_probe", {
-        "results": [{"premise": p, "directions": {"correctness": acc, "conclusion": acc}}
-                    for p in ("parental_leave", "commute")],
-        "transfer": {"cosines": {"correctness": 0.94, "conclusion": 0.9},
-                     "commute_on_parental_leave": {"correctness": {"intervals": {
-                         "baseline": effects(1.0), "nulled": effects(0.2), "nulled_minus_baseline": effects(-0.8)}}}}})
-    row = lambda gap: {"linear_acc": 0.5, "mlp_acc": 0.5 + gap, "intervals": {"mlp_above_chance": _iv(gap)}}
-    _write(tmp_path, "erasure", {"results": [{"premise": "parental_leave", "concept": "correctness",
-                                              "rows": {k: row(0.3) for k in ("none", "diffmean", "leace")},
-                                              "lexical_control": {k: row(0.0) for k in ("none", "diffmean", "leace")}}]})
+    _reasoning(tmp_path, "cv")
     _write(tmp_path, "additivity_credit", {"threeway": {"cos_intersection_vs_marginal_sum": 0.9994,
                                                         "residual_share_debiased": 0.023, "noise_floor_share": 0.025,
                                                         "sign_flip_p": 0.0001}})
@@ -115,12 +128,37 @@ def test_the_other_arms_carry_their_intervals(tmp_path):
     assert (m["standpointGapSexAsapTwo"], m["standpointGapSexAsapTwoLo"]) == ("+0.13", "+0.03")
     assert m["standpointMainEffectAsapTwoHi"] == "+0.30" and m["nEvalStandpointAsapTwo"] == "622"
     assert (m["decisionDiscWinSex"], m["decisionDiscWinNeutralDeclineSexLo"]) == ("0.30", "0.30")
-    assert m["reasonCorrectnessVsCommuteIntersection"] == "-0.70" and m["reasonConclusionCommuteHi"] == "+0.20"
+    # hiring's names predate the port: no suffix (the control was the commute until 2026-10-01)
+    assert m["reasonCorrectnessVsAbroadIntersection"] == "-0.70" and m["reasonConclusionAbroadHi"] == "+0.20"
+    assert m["reasonCorrectnessPL"] == "+1.00" and m["reasonCorrectnessVsAbroadPL"] == "-0.20"
+    assert m["reasonNullingVsAbroadPL"] == "-0.40" and m["reasonNullingVsAbroadIntersectionHi"] == "+0.00"
     assert (m["probeCorrAccHeldoutPL"], m["probeCorrAccHeldoutPLLo"]) == ("80\\%", "75\\%")
-    assert m["cosCorrectnessPLvsCommute"] == "0.94" and m["transferCommuteToPLchange"] == "-0.80"
+    assert m["cosCorrectnessPLvsAbroad"] == "0.94" and m["transferAbroadToPLchange"] == "-0.80"
     assert m["erasureMlpLeaceCorrPL"] == "80\\%" and m["erasureMlpAboveChanceLeaceCorrPLlexical"] == "+0.00"
     assert (m["additivityCosCredit"], m["additivityResidualCredit"], m["additivityThreeWayPCredit"]) == (
         "0.999", "0.023", "0.0001")
+    assert all(re.fullmatch(r"[A-Za-z]+", name) for name in m)
+
+
+def test_the_reasoning_arm_of_credit_and_education_carries_the_domain(tmp_path):
+    from runners.export_paper_numbers import REASONING_TAGS
+    from pairs.verdicts import REASONING_FRAMES
+
+    # one tag per premise of every frame, letters only
+    assert {d: set(t) for d, (_, t) in REASONING_TAGS.items()} == \
+        {d: set(f.premises) for d, f in REASONING_FRAMES.items()}
+    _reasoning(tmp_path, "credit")
+    _reasoning(tmp_path, "education")
+    m, report = collect(tmp_path, MODEL)
+    assert m["reasonCorrectnessAgeCredit"] == "+1.00" and m["reasonCorrectnessVsSabbaticalAgeCredit"] == "-0.20"
+    assert m["reasonConclusionSabbaticalCredit"] == "+0.10" and m["reasonNullingVsSabbaticalAgeCredit"] == "-0.40"
+    assert m["probeCorrAccHeldoutAgeCredit"] == "80\\%" and m["transferSabbaticalToAgechangeCredit"] == "-0.80"
+    assert m["cosCorrectnessAgevsSabbaticalCredit"] == "0.94"
+    assert m["erasureMlpAboveChanceLeaceCorrAgelexicalCredit"] == "+0.00"
+    assert m["reasonCorrectnessVsOutOfDistrictLowIncomeEdu"] == "-0.20"
+    assert m["reasonCorrectnessIntersectionEdu"] == "+1.00" and m["erasureMlpLeaceCorrLowIncomeEdu"] == "80\\%"
+    assert m["transferOutOfDistrictToLowIncomenullEdu"] == "+0.20"
+    assert "reasonCorrectnessPL" not in m and "reasoning_cv_Tiny-RM.json" in report["missing"]
     assert all(re.fullmatch(r"[A-Za-z]+", name) for name in m)
 
 

@@ -178,7 +178,7 @@ class TestBuilder:
             build_decision_item(rec, "sex", "explicit", render_bio, random.Random(0), template_id="bios_v1",
                                 marker_fn=hiring_marker)
         with pytest.raises(KeyError, match="role"):
-            build_reasoning_item(rec, "commute", render_bio, random.Random(0), template_id="bios_v1")
+            build_reasoning_item(rec, "abroad", render_bio, random.Random(0), template_id="bios_v1")
         # credit and education name no role, so their records need none
         crec, render, tid, marker_fn = _domain_case("credit")
         assert not hasattr(crec, "role")
@@ -239,22 +239,31 @@ class TestSubstratePortingGap:
     """The reasoning arm was authored against the synthetic CandidateRecord. Its "experience" claim type read
     `getattr(record, "years_experience", "several")`, so on a Bias-in-Bios record it silently fell back to
     "several years", and the claim's truth value was not grounded in the record. The claim type was removed
-    on 2026-09-30: the reasoning items now read no record field but the role, in every wording.
+    on 2026-09-30: the reasoning items now read no record field but the role, in every wording and domain. (Until
+    the port to credit and education this test checked that no verdict says "years"; credit's claim says it by design.)
     """
 
     def test_reasoning_items_read_no_record_field_but_the_role(self):
-        from pairs.verdicts import REASONING_PREMISES
+        from pairs.verdicts import REASONING_FRAMES
 
-        class OnlyARole:
-            source_record_id, role = "r", "a surgeon"
+        class Guarded:
+            """A record that refuses every field but its id and, for hiring (whose prompt names it), the role."""
 
-        render = lambda record, marker="": f"A bio.{marker}"
-        for premise in REASONING_PREMISES:
-            for vary, connective in ((False, True), (True, True), (True, False)):
-                for seed in range(20):
-                    item = build_reasoning_item(OnlyARole(), premise, render, random.Random(seed), vary=vary,
-                                                connective=connective)
-                    assert "years" not in " ".join(item["cells"].values())
+            def __init__(self, rid, role):
+                self.source_record_id = rid
+                if role:
+                    self.role = "a surgeon"
+
+            def __getattr__(self, name):    # called only for the attributes the record lacks
+                raise AssertionError(f"the reasoning item read the record field {name!r}")
+
+        render = lambda record, marker="": f"A profile.{marker}"
+        for domain, frame in REASONING_FRAMES.items():
+            for premise in frame.premises:
+                for vary, connective in ((False, True), (True, True), (True, False)):
+                    for seed in range(20):
+                        build_reasoning_item(Guarded("r1", domain == "cv"), premise, render, random.Random(seed),
+                                             vary=vary, connective=connective, domain=domain)
 
     def test_decision_verdicts_use_no_record_fields(self):
         item = build_decision_item(_rec(), "sex", "explicit", render_bio,

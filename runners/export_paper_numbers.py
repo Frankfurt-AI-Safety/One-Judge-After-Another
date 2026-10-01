@@ -46,6 +46,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 DEFAULT_MODEL = "Skywork/Skywork-Reward-V2-Qwen3-0.6B"
 EDU_STAGE_PAIRS = "data/demographic/education/asap2_stage/pairs.jsonl"
+# The reasoning arm's macros per domain: (suffix, premise -> tag), the premises of `pairs.verdicts.REASONING_FRAMES`.
+# Hiring's macros carry no suffix (their names predate the port to credit and education, 2026-10-01).
+REASONING_TAGS: Dict[str, Tuple[str, Dict[str, str]]] = {
+    "cv": ("", {"parental_leave": "PL", "intersection": "Intersection", "abroad": "Abroad"}),
+    "credit": ("Credit", {"age": "Age", "intersection": "Intersection", "sabbatical": "Sabbatical"}),
+    "education": ("Edu", {"low_income": "LowIncome", "intersection": "Intersection",
+                          "out_of_district": "OutOfDistrict"}),
+}
 
 
 def _fmt(x: Optional[float], dp: int = 2, sign: bool = False, pct: bool = False) -> str:
@@ -77,9 +85,9 @@ def result_files(model: str) -> Dict[str, str]:
         "maineffect_plausible": positioned("plausible"),
         "maineffect_implausible": positioned("implausible"),
         "decision_cv": run_decision_response.default_out("cv", model, "explicit").name,
-        "reasoning": run_reasoning_flip.default_out(model).name,
-        "reasoning_probe": run_reasoning_probe.default_out(model).name,
-        "erasure": run_reasoning_erasure.default_out(model).name,
+        **{f"reasoning_{d}": run_reasoning_flip.default_out(d, model).name for d in REASONING_TAGS},
+        **{f"reasoning_probe_{d}": run_reasoning_probe.default_out(d, model).name for d in REASONING_TAGS},
+        **{f"erasure_{d}": run_reasoning_erasure.default_out(d, model).name for d in REASONING_TAGS},
         "additivity_cv": run_additivity.default_out("cv", model, "explicit").name,
         "additivity_credit": run_additivity.default_out("credit", model, "explicit").name,
     }
@@ -213,45 +221,54 @@ def collect(results_dir: Path, model: str = DEFAULT_MODEL) -> Tuple[Dict[str, st
                 put_ci(f"decisionGapFairDisc{tag}", by[axis]["mean_gap_fair_minus_disc"])
                 put_ci(f"decisionDiscWinNeutralDecline{tag}", by[axis]["disc_win_rate_vs_neutral_decline"], sign=False)
 
-    # --- reasoning flip 2x2 (hiring): correctness / conclusion effects, and each premise − the commute control -
-    d = need("reasoning")
-    if d:
-        by = {r["premise"]: r["intervals"]["baseline"] for r in d["results"]}
-        for tag, prem in {"PL": "parental_leave", "Intersection": "intersection", "Commute": "commute"}.items():
-            if prem in by:
-                put_ci(f"reasonCorrectness{tag}", by[prem]["correctness_effect"])
-                put_ci(f"reasonConclusion{tag}", by[prem]["conclusion_effect"])
-        for tag, prem in (("PL", "parental_leave"), ("Intersection", "intersection")):
-            if prem in d["versus_control"]:
-                put_ci(f"reasonCorrectnessVsCommute{tag}", d["versus_control"][prem]["correctness_effect"])
+    # --- the reasoning arm, per domain (`REASONING_TAGS`); every name ends with the domain's suffix ---------------
+    from pairs.verdicts import REASONING_FRAMES
 
-    # --- reasoning probe (held-out applicants and wording) + cross-premise transfer ----------------------------
-    d = need("reasoning_probe")
-    if d:
-        by = {r["premise"]: r["directions"] for r in d["results"]}
-        for tag, prem in (("PL", "parental_leave"), ("Commute", "commute")):
-            if prem in by:
-                put_ci(f"probeCorrAccHeldout{tag}", by[prem]["correctness"]["paired_acc_heldout"], sign=False, pct=True)
-                put_ci(f"probeConclAccHeldout{tag}", by[prem]["conclusion"]["paired_acc_heldout"], sign=False, pct=True)
-        t = d["transfer"]
-        m["cosCorrectnessPLvsCommute"] = _fmt(t["cosines"]["correctness"])
-        iv = t["commute_on_parental_leave"]["correctness"]["intervals"]
-        put_ci("transferCommuteToPLbase", iv["baseline"]["correctness_effect"])
-        put_ci("transferCommuteToPLnull", iv["nulled"]["correctness_effect"])
-        put_ci("transferCommuteToPLchange", iv["nulled_minus_baseline"]["correctness_effect"])
-
-    # --- LEACE / non-linear-probe erasure (hiring), read against the lexical control ---------------------------
-    d = need("erasure")
-    if d:
-        rows = {(r["premise"], r["concept"]): r for r in d["results"]}
-        r = rows.get(("parental_leave", "correctness"))
-        if r:
-            m["erasureLinearNoneCorrPL"] = _fmt(r["rows"]["none"]["linear_acc"], pct=True)
-            m["erasureLinearLeaceCorrPL"] = _fmt(r["rows"]["leace"]["linear_acc"], pct=True)
-            m["erasureMlpLeaceCorrPL"] = _fmt(r["rows"]["leace"]["mlp_acc"], pct=True)
-            put_ci("erasureMlpAboveChanceLeaceCorrPL", r["rows"]["leace"]["intervals"]["mlp_above_chance"])
-            put_ci("erasureMlpAboveChanceLeaceCorrPLlexical",
-                   r["lexical_control"]["leace"]["intervals"]["mlp_above_chance"])
+    for domain, (suffix, tag) in REASONING_TAGS.items():
+        frame = REASONING_FRAMES[domain]
+        pri, ctl = tag[frame.primary], tag[frame.control]
+        # reasoning flip 2x2: correctness / conclusion effects, and each premise − the control
+        d = need(f"reasoning_{domain}")
+        if d:
+            by = {r["premise"]: r["intervals"]["baseline"] for r in d["results"]}
+            for prem, t in tag.items():
+                if prem in by:
+                    put_ci(f"reasonCorrectness{t}{suffix}", by[prem]["correctness_effect"])
+                    put_ci(f"reasonConclusion{t}{suffix}", by[prem]["conclusion_effect"])
+                if prem in d["versus_control"]:
+                    put_ci(f"reasonCorrectnessVs{ctl}{t}{suffix}", d["versus_control"][prem]["correctness_effect"])
+                # nulling's change beyond what the same direction changes in the control (the placebo)
+                if prem in d.get("nulling_vs_control", {}):
+                    put_ci(f"reasonNullingVs{ctl}{t}{suffix}", d["nulling_vs_control"][prem]["correctness_effect"])
+        # reasoning probe (held-out applicants and wording) + cross-premise transfer
+        d = need(f"reasoning_probe_{domain}")
+        if d:
+            by = {r["premise"]: r["directions"] for r in d["results"]}
+            for prem in (frame.primary, frame.control):
+                if prem in by:
+                    put_ci(f"probeCorrAccHeldout{tag[prem]}{suffix}", by[prem]["correctness"]["paired_acc_heldout"],
+                           sign=False, pct=True)
+                    put_ci(f"probeConclAccHeldout{tag[prem]}{suffix}", by[prem]["conclusion"]["paired_acc_heldout"],
+                           sign=False, pct=True)
+            t = d["transfer"]
+            m[f"cosCorrectness{pri}vs{ctl}{suffix}"] = _fmt(t["cosines"]["correctness"])
+            iv = t[f"{frame.control}_on_{frame.primary}"]["correctness"]["intervals"]
+            put_ci(f"transfer{ctl}To{pri}base{suffix}", iv["baseline"]["correctness_effect"])
+            put_ci(f"transfer{ctl}To{pri}null{suffix}", iv["nulled"]["correctness_effect"])
+            put_ci(f"transfer{ctl}To{pri}change{suffix}", iv["nulled_minus_baseline"]["correctness_effect"])
+        # LEACE / non-linear-probe erasure of the demographic premise, read against the lexical control
+        d = need(f"erasure_{domain}")
+        if d:
+            rows = {(r["premise"], r["concept"]): r for r in d["results"]}
+            r = rows.get((frame.primary, "correctness"))
+            if r:
+                m[f"erasureLinearNoneCorr{pri}{suffix}"] = _fmt(r["rows"]["none"]["linear_acc"], pct=True)
+                m[f"erasureLinearLeaceCorr{pri}{suffix}"] = _fmt(r["rows"]["leace"]["linear_acc"], pct=True)
+                m[f"erasureMlpLeaceCorr{pri}{suffix}"] = _fmt(r["rows"]["leace"]["mlp_acc"], pct=True)
+                put_ci(f"erasureMlpAboveChanceLeaceCorr{pri}{suffix}",
+                       r["rows"]["leace"]["intervals"]["mlp_above_chance"])
+                put_ci(f"erasureMlpAboveChanceLeaceCorr{pri}lexical{suffix}",
+                       r["lexical_control"]["leace"]["intervals"]["mlp_above_chance"])
 
     # --- additivity (RQ1.1, explicit): the vector-sum cosine sees only the three-way term; read the residual ---
     for tag, key in (("CV", "additivity_cv"), ("Credit", "additivity_credit")):

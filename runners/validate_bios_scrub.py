@@ -63,7 +63,7 @@ from scoring.demographic_experiment import DemographicBiasExperiment
 from scoring.intervals import DEFAULT_N_BOOT, cluster_bootstrap
 from probes.erasure import probe_recoverability
 from probes.probe import get_embeddings
-from runners.run_reasoning_flip import bios_source
+from runners.run_reasoning_flip import corpus_source
 
 logger = logging.getLogger(__name__)
 RESULTS_DIR = Path("artifacts/results/demographic")
@@ -157,7 +157,7 @@ def main() -> None:
         raise SystemExit(f"{out} exists; pass --overwrite to replace it, or --out")
     manifest_dir = Path(cfg.dataset_source).parent
     data = {"pairs.jsonl": data_file(cfg.dataset_source), "cells.jsonl": data_file(manifest_dir / "cells.jsonl"),
-            Path(args.raw_path).name: bios_source(cfg.dataset_source, args.raw_path)}
+            Path(args.raw_path).name: corpus_source(cfg.dataset_source, args.raw_path)}
     records = load_factorial_bios(args.raw_path, n=DEFAULT_N_BIOS, seed=data["pairs.jsonl"]["generator_seed"],
                                   keep_raw=True)
     check_pool(records, manifest_dir / "cells.jsonl")
