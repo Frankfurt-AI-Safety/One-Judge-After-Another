@@ -86,15 +86,26 @@ EDU_ATTRIBUTION = (
 )
 
 
+STAGED_COMMIT = "STAGED_COMMIT"     # written by cluster/stage.sh into the staged copy, which has no .git
+
+
 def code_provenance(root: Path = _REPO_ROOT) -> Dict[str, Any]:
     """The git commit the generator ran from and the paths that differed from it (``git status``, ignored
-    files excluded, so generated data does not count). All ``None`` where git or the repo is unavailable."""
+    files excluded, so generated data does not count). Without a repository (the cluster's staged copy: tracked
+    files only, no ``.git``) the commit `cluster/stage.sh` recorded in ``STAGED_COMMIT`` (``"source": "staged"``;
+    stage.sh refuses a dirty tree, so the staged files are that commit's). All ``None`` where neither exists."""
     try:
         commit = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
                                          text=True, stderr=subprocess.DEVNULL).strip()
         status = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"],
                                          text=True, stderr=subprocess.DEVNULL)
     except (OSError, subprocess.CalledProcessError):
+        staged = Path(root) / STAGED_COMMIT
+        if staged.is_file():
+            recorded = json.loads(staged.read_text())
+            return {"git_commit": recorded["git_commit"], "git_dirty": recorded["git_dirty"],
+                    "git_dirty_paths": recorded.get("git_dirty_paths", []), "source": "staged",
+                    "staged_utc": recorded.get("staged_utc")}
         return {"git_commit": None, "git_dirty": None, "git_dirty_paths": None}
     paths = sorted(line[3:] for line in status.splitlines() if line.strip())
     return {"git_commit": commit, "git_dirty": bool(paths), "git_dirty_paths": paths}

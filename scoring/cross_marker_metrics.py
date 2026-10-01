@@ -797,3 +797,19 @@ def sweep_point(index: RewardIndex, values: Sequence[float], axis: str) -> Dict[
     d = index.margin(v, "D")
     by_template = _auc_marked(d, index, sorted(index.templates), range(len(design.cells)))
     return {"disparity": float(effects[key].mean()), "auc_marked": _mean(by_template.values())}
+
+
+def record_axis_effect(index: RewardIndex, values: Sequence[float], axis: str,
+                       margin: Optional[str] = "D") -> np.ndarray:
+    """Per record (``index.records`` order) the axis effect of one reward column over the record's templates: the
+    main effect on ``axis`` (the corner for ``intersection``) of each cell's ``margin`` (``"D"``: the decision
+    disparity, `sweep_point`'s), or, with ``margin=None``, of the index's single response itself (the direct
+    placement: the reward of the document, so the effect is the direct gap). ``values`` are in index order."""
+    mean = index.record_mean(index.array(values))
+    if margin is None:
+        if len(index.responses) != 1:
+            raise ValueError(f"margin=None needs one response, the index has {index.responses}")
+        m = mean[..., 0]
+    else:
+        m = index.margin(mean, margin)
+    return _effects(m, index.design)["corner" if axis == "intersection" else f"main:{axis}"]

@@ -68,6 +68,16 @@ def test_code_provenance_outside_a_repo_is_none(tmp_path):
         "git_commit": None, "git_dirty": None, "git_dirty_paths": None}
 
 
+def test_a_staged_copy_without_git_reports_the_commit_stage_sh_recorded(tmp_path):
+    # the cluster's copy holds tracked files only, no .git: cluster/stage.sh writes the commit next to them
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / "STAGED_COMMIT").write_text(json.dumps({"git_commit": "abc123", "git_dirty": False,
+                                                      "git_dirty_paths": [], "staged_utc": "2026-10-01T20:00:00"}))
+    assert code_provenance(staged) == {"git_commit": "abc123", "git_dirty": False, "git_dirty_paths": [],
+                                       "source": "staged", "staged_utc": "2026-10-01T20:00:00"}
+
+
 def test_manifest_records_version_and_code(tmp_path):
     paths = write_manifest(tmp_path, [], seed=1, discard_report={}, thresholds={}, domain="d", attribution="a")
     m = json.loads(paths["manifest"].read_text())

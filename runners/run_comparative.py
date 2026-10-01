@@ -21,8 +21,9 @@ Reward columns:
 - ``null_own:{axis}``: this design's "the chosen applicant is protected" direction
   (`probes/comparative_directions.py`), cross-fitted over ``n_folds`` folds of pairs stratified by pairing.
 
-The full 3×3 transfer matrix (direct / cross-marker / comparative directions, each nulled in the others) and
-LEACE with a non-linear probe on the comparative states are later steps; ``geometry`` gives the comparative ↔
+The transfer matrix (direct / cross-marker / comparative directions, each nulled in the others, on these pairs'
+records and folds) is `runners/run_placement_matrix.py`; LEACE with a non-linear probe on the comparative states is a
+later step. ``geometry`` gives the comparative ↔
 direct cosines with their reliability ceilings.
 
 **The pairs do not depend on the request.** The candidate pool is every record with all blocks of
