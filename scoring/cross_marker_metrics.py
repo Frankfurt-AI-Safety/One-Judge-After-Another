@@ -287,20 +287,20 @@ def _fsum(terms: Sequence[np.ndarray], n: int) -> np.ndarray:
 
 # --------------------------------------------------------------------------- summaries ---------------
 @lru_cache(maxsize=128)
-def _draws(seed: int, n: int, n_boot: int) -> np.ndarray:
+def bootstrap_draws(seed: int, n: int, n_boot: int) -> np.ndarray:
     """The bootstrap indices of `summarize`: the same draws for the same (seed, n, n_boot), read-only."""
     idx = np.random.default_rng(seed).integers(0, n, size=(n_boot, n))
     idx.setflags(write=False)
     return idx
 
 
-class _Resampler:
+class Resampler:
     """`summarize` for many statistics of one record set: the draws and, with a ``scale``, its resampled
     SD are computed once and shared."""
 
     def __init__(self, n: int, n_boot: int, seed: int, scale: Optional[Sequence[float]] = None):
         self.n = n
-        self.idx = _draws(seed, n, n_boot) if n else None
+        self.idx = bootstrap_draws(seed, n, n_boot) if n else None
         self.scale = None
         if scale is not None:
             u = np.asarray(scale, dtype=float)
@@ -347,7 +347,7 @@ def summarize(values: Sequence[float], n_boot: int = DEFAULT_N_BOOT, seed: int =
     across records — ``scaled_mean`` with ``scaled_ci_low``/``scaled_ci_high`` from the same bootstrap
     draws, re-estimating the SD in every replicate, since it comes from the same records — and
     ``scale_sd`` itself."""
-    return _Resampler(len(values), n_boot, seed, scale).summary(values)
+    return Resampler(len(values), n_boot, seed, scale).summary(values)
 
 
 def summarize_balanced(strong: Sequence[float], weak: Sequence[float], n_boot: int = DEFAULT_N_BOOT,
@@ -418,8 +418,8 @@ def _margin_effects(m: np.ndarray, design: FactorialDesign, encoding: str, n_boo
     disparities, interactions, additivity, strata, levels. ``scale`` (per record: D on the unmarked
     control) adds the scaled effects to the first three."""
     effects = _effects(m, design)
-    with_scale = _Resampler(len(m), n_boot, seed, scale)
-    plain = _Resampler(len(m), n_boot, seed)
+    with_scale = Resampler(len(m), n_boot, seed, scale)
+    plain = Resampler(len(m), n_boot, seed)
     disparity = {axis: with_scale.summary(effects[f"main:{axis}"])
                  for axis in design.axes if design.axis_pairs(axis, encoding)}
     disparity["intersection"] = with_scale.summary(effects["corner"])
@@ -677,7 +677,7 @@ def _axis_effects(m: np.ndarray, design: FactorialDesign, encoding: str, n_boot:
                   scale: Optional[Sequence[float]] = None) -> Dict[str, Dict[str, float]]:
     """Axis disparities (main effects) and the corner of per-record, per-cell values ([records, cells])."""
     effects = _effects(m, design)
-    res = _Resampler(len(m), n_boot, seed, scale)
+    res = Resampler(len(m), n_boot, seed, scale)
     out = {axis: res.summary(effects[f"main:{axis}"]) for axis in design.axes if design.axis_pairs(axis, encoding)}
     out["intersection"] = res.summary(effects["corner"])
     return out

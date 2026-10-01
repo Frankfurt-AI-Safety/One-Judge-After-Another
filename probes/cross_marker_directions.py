@@ -149,10 +149,16 @@ def cosine(u: torch.Tensor, v: torch.Tensor) -> float:
 def fold_assignment(record_ids: Sequence[str], strong: Mapping[str, Hashable], k: int,
                     seed: int) -> Dict[str, int]:
     """record -> fold in 0..k-1, dealt round-robin after a seeded shuffle within each group of ``strong`` (the
-    quality label; the comparative design passes the pairing), so every fold holds the groups in the pool's
-    proportion. Each group has its own shuffle, so the order the groups are visited in changes nothing."""
+    quality label; the comparative design passes the pairing), so every fold holds each group's records to
+    within one. Each group's deal starts at fold 0, so the remainders gather on the low folds (3 groups of 10 in 4
+    folds: 9/9/6/6), and a group smaller than ``k`` fills only its first folds. Each group has its own shuffle,
+    seeded by the group's ``str`` (so two groups may not share one), and the order the groups are visited in changes
+    nothing."""
+    groups = {strong[r] for r in record_ids}
+    if len({str(g) for g in groups}) != len(groups):
+        raise ValueError(f"group labels {sorted(map(repr, groups))} collide as strings (the shuffle seed)")
     folds: Dict[str, int] = {}
-    for group in sorted({strong[r] for r in record_ids}, key=repr):
+    for group in sorted(groups, key=repr):
         ids = sorted(r for r in record_ids if strong[r] == group)
         stable_rng(seed, "cross_marker_folds", group).shuffle(ids)
         for i, rid in enumerate(ids):

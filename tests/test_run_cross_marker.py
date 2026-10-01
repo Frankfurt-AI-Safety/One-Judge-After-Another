@@ -440,6 +440,16 @@ def test_main_end_to_end(run_main, manifest, tmp_path, caplog):
     assert len(run_main.loads) == 1
 
 
+def test_a_cli_variant_gets_its_own_name(run_main, manifest, tmp_path):
+    # a setting changed on the CLI never takes the configured run's name (the config's own values do)
+    run_main("--n-boot", "10", "--encodings", "explicit")
+    out = tmp_path / "artifacts/results/demographic" / (f"crossmarker_credit_{manifest.parent.name}_Tiny-RM"
+                                                         "__encodings-explicit__n_boot-10.json")
+    assert out.exists()
+    assert not (tmp_path / "artifacts/results/demographic"
+                / f"crossmarker_credit_{manifest.parent.name}_Tiny-RM.json").exists()
+
+
 def test_bad_requests_stop_before_the_model_loads(run_main, manifest):
     with pytest.raises(SystemExit, match="not in cells.jsonl"):
         run_main("--encodings", "explicit,phonetic")

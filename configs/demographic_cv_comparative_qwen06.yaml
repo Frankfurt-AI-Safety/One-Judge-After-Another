@@ -5,7 +5,8 @@
 # family status (or all three); ASSISTANT: advances one, with a merit reason or a coded doubt (availability)
 # about the other. Pairs are matched on the target role.
 # Pairings strong_strong / strong_weak / weak_weak; per pair and contrast both marker assignments x both
-# orders, so the records and the position cancel. Items come from cells.jsonl next to dataset_source:
+# orders, so the records and the position cancel; unmarked prompts give the merit yardstick, the scale and
+# QRM's gate. Items come from cells.jsonl next to dataset_source:
 #   python runners/generate_bios.py --from-hub
 #
 #   python runners/run_comparative.py --config configs/demographic_cv_comparative_qwen06.yaml
@@ -35,7 +36,6 @@ extra:
       weak_weak: 150
     encodings: [explicit, proxy]
     templates: null      # all templates in cells.jsonl
-    include_unmarked: true   # the gate for gate_fixed and the scale of the scaled effects
     paraphrases: 3
     seed: 42
     n_boot: 2000

@@ -45,8 +45,10 @@ Outputs (no texts — the corpora's licences): ``<out>.json`` (``meta``: config 
 code commit, both data files' SHA-256, settings, command line; then selection, probe metadata, metrics,
 placement check, geometry, α-sweep), ``<out>_rewards.jsonl`` and ``<out>_direct_rewards.jsonl`` (one row
 per scored text, one reward column per variant) and ``<out>_directions.pt`` (every direction, per fold).
-The default ``<out>`` is ``crossmarker_{domain}[_{manifest folder}]_{model}.json``; an existing result is
-never replaced without ``--overwrite`` (checked before the model loads).
+The default ``<out>`` is ``crossmarker_{domain}[_{manifest folder}]_{model}.json``, plus ``__{setting}-{value}``
+for every result-relevant setting the CLI changed from the config (``--n-strong 8`` → ``…__n_strong-8.json``), so
+a variant never takes the configured run's name; an existing result is never replaced without ``--overwrite``
+(checked before the model loads).
 
 Usage:
     python runners/run_cross_marker.py --config configs/demographic_credit_crossmarker_qwen06.yaml
@@ -77,7 +79,7 @@ from pairs.cross_marker import CellBlock, build_block_items, fits_max_length, lo
 from pairs.factorial import FactorialDesign, stable_rng
 from scoring.cross_marker_metrics import RewardIndex, cross_marker_metrics, placement_check, sweep_point
 from scoring.dataset_base import add_special_tokens, format_conversation
-from scoring.experiment import add_override_args, apply_overrides, data_file, run_metadata
+from scoring.experiment import add_override_args, apply_overrides, data_file, run_metadata, variant_suffix
 from scoring.intervals import DEFAULT_N_BOOT
 
 logger = logging.getLogger(__name__)
@@ -141,11 +143,12 @@ def cells_path(dataset_source: Optional[str], default_pairs: str) -> Path:
     return Path(dataset_source or default_pairs).parent / "cells.jsonl"
 
 
-def default_out(domain: str, source: Path | str, model_path: str) -> Path:
-    """``crossmarker_{domain}[_{manifest folder}]_{model}.json``, as the battery names its results."""
+def default_out(domain: str, source: Path | str, model_path: str, variant: str = "") -> Path:
+    """``crossmarker_{domain}[_{manifest folder}]_{model}{variant}.json``, as the battery names its results;
+    ``variant`` (`scoring.experiment.variant_suffix`) names every setting the CLI changed from the config."""
     folder = Path(source).parent.name
     stem = domain if folder == domain else f"{domain}_{folder}"
-    return Path("artifacts/results/demographic") / f"crossmarker_{stem}_{Path(model_path).name}.json"
+    return Path("artifacts/results/demographic") / f"crossmarker_{stem}_{Path(model_path).name}{variant}.json"
 
 
 def check_requested(blocks: Sequence[CellBlock], encodings: Sequence[str], templates: Sequence[str]) -> None:
@@ -738,7 +741,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--n-boot", type=int, default=None)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--out", type=Path, default=None,
-                    help="Default artifacts/results/demographic/crossmarker_{domain}[_{folder}]_{model}.json")
+                    help="Default artifacts/results/demographic/crossmarker_{domain}[_{folder}]_{model}"
+                         "[__{setting}-{value} per setting changed on the CLI].json")
     ap.add_argument("--overwrite", action="store_true", help="Replace an existing result (and its side files)")
     add_override_args(ap)   # --model, --revision, --batch-size, --device, --probe-records (records per direction)
     return ap
@@ -757,6 +761,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         datefmt="%H:%M:%S")
 
+    configured_cfg = ExperimentConfig.from_yaml(args.config)
     cfg = apply_overrides(ExperimentConfig.from_yaml(args.config), args)
     dom = get_domain(cfg.extra.get("domain", "credit"))
     design = dom.factorial
@@ -770,7 +775,10 @@ def main() -> None:
         "n_folds": args.n_folds, "n_boot": args.n_boot, "seed": args.seed})
     source = cfg.dataset_source = cfg.dataset_source or dom.default_pairs
     path = cells_path(source, dom.default_pairs)
-    out = args.out or default_out(dom.name, source, cfg.model_path)
+    configured = {**resolve_settings(configured_cfg.extra, {}), "probe_records": configured_cfg.probe_records,
+                  "revision": configured_cfg.model_revision}
+    used = {**settings, "probe_records": cfg.probe_records, "revision": cfg.model_revision}
+    out = args.out or default_out(dom.name, source, cfg.model_path, variant_suffix(configured, used))
     # everything that can fail on the inputs fails here, before the model loads
     if out.exists() and not args.overwrite:
         raise SystemExit(f"{out} exists; pass --overwrite to replace it (and its side files), or --out")

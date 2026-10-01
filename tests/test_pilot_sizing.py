@@ -188,3 +188,32 @@ def test_main_tells_a_comparative_summary_from_a_cross_marker_one(tmp_path, monk
     assert {r["group"] for r in result["pairs_per_pairing"]} == {"strong_strong", "strong_weak", "weak_weak"}
     assert {r["group"] for r in result["records_per_group"]} == {"strong", "weak"}
     assert len(result["pairs_per_pairing_max_over_models"]) == 3
+
+
+def test_comparative_rows_carry_the_pilots_probe_split():
+    from runners.pilot_sizing import size_comparative
+
+    rows = size_comparative({**_comparative(), "probe_records": 150}, deltas=[0.2], families=[1])
+    assert {r["probe_records"] for r in rows} == {150}
+
+
+def test_two_inputs_of_one_kind_for_the_same_model_are_refused(tmp_path, monkeypatch):
+    import json
+
+    from runners import pilot_sizing
+
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    a.write_text(json.dumps(_comparative()))
+    b.write_text(json.dumps(_comparative()))           # e.g. a smoke run and the pilot of the same model
+    monkeypatch.setattr("sys.argv", ["pilot_sizing.py", "--inputs", str(a), str(b), "--out", str(tmp_path / "s.json")])
+    with pytest.raises(SystemExit, match="two comparative inputs"):
+        pilot_sizing.main()
+    # one model's pilot split into per-encoding runs is fine
+    a.write_text(json.dumps({**_comparative(), "settings": {"encodings": ["explicit"]}}))
+    b.write_text(json.dumps({**_comparative(), "settings": {"encodings": ["proxy"]}}))
+    pilot_sizing.main()
+    # an unrecognised input is named as such, before any duplicate check
+    a.write_text(json.dumps({"results": {}}))
+    b.write_text(json.dumps({"results": {}}))
+    with pytest.raises(SystemExit, match="neither"):
+        pilot_sizing.main()

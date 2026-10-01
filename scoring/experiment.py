@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import re
 import logging
 import sys
 from dataclasses import dataclass, field
@@ -133,6 +134,22 @@ def apply_overrides(cfg: "ExperimentConfig", args: argparse.Namespace) -> "Exper
         if value is not None:
             setattr(cfg, attr, value)
     return cfg
+
+
+def variant_suffix(configured: Dict[str, Any], used: Dict[str, Any]) -> str:
+    """``__{key}-{value}`` for every setting whose value in ``used`` (the run's, after the CLI) differs from
+    ``configured`` (the config's), in ``used``'s key order: a run that departs from its config never takes the
+    config's result name. Lists and mappings join their values with ``-``; anything but letters, digits, ``.``,
+    ``-`` and ``_`` becomes ``_`` (a revision ``refs/pr/2`` would otherwise make directories). Callers pass only
+    settings that change the result (not batch size or device)."""
+    def text(value: Any) -> str:
+        if isinstance(value, dict):
+            value = list(value.values())
+        if isinstance(value, (list, tuple)):
+            value = "-".join(map(str, value)) or "none"
+        return re.sub(r"[^A-Za-z0-9._-]", "_", str(value))
+
+    return "".join(f"__{k}-{text(v)}" for k, v in used.items() if configured.get(k) != v)
 
 
 def data_file(path: Path | str) -> Dict[str, Any]:

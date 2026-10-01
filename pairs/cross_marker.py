@@ -345,10 +345,13 @@ def block_from_row(row: Dict[str, Any], design: FactorialDesign) -> CellBlock:
         raise BlockMismatch(f"{row.get('id')}: cells strip to {len(unmarked)} different unmarked texts")
     if len(starts) != 1:
         raise BlockMismatch(f"{row.get('id')}: the clauses start at {len(starts)} different positions")
+    names = proxy_names(row.get("exemplar") or {})
+    if row.get("encoding") == "proxy" and not names:
+        raise BlockMismatch(f"{row.get('id')}: a proxy block whose exemplar names no proxy first names")
     return CellBlock(record_id=str(row["source_record_id"]), template_id=str(row["template_id"]),
                      encoding=str(row["encoding"]), real_fields=dict(row.get("real_fields") or {}),
                      texts=texts, clauses=clauses, unmarked=unmarked.pop(),
-                     names=proxy_names(row.get("exemplar") or {}))
+                     names=names)
 
 
 def proxy_names(exemplar: Dict[str, Any]) -> FrozenSet[str]:

@@ -25,11 +25,17 @@ import torch
 def pair_contrasts(states: torch.Tensor, rows: Sequence[Mapping[str, Any]], axis: str
                    ) -> Tuple[List[str], torch.Tensor]:
     """The pairs (sorted) and their mean "chosen is protected" state contrast on ``axis`` ([pairs, d]); ``rows``
-    are aligned with ``states``. Raises if a choice lacks its counterpart under the other assignment."""
+    are aligned with ``states``. Raises when the axis has no rows, a row occurs twice, or a row lacks its
+    counterpart under the other assignment (each row is used exactly once, as one side of one difference)."""
     at: Dict[Tuple[str, str, str, str, str, str], int] = {}
     for i, r in enumerate(rows):
         if r["axis"] == axis:
-            at[(r["pair_id"], r["template_id"], r["order"], r["kind"], r["protected"], r["chosen"])] = i
+            key = (r["pair_id"], r["template_id"], r["order"], r["kind"], r["protected"], r["chosen"])
+            if key in at:
+                raise ValueError(f"duplicate row {key}")
+            at[key] = i
+    if not at:
+        raise ValueError(f"no rows for axis {axis!r}")
     pos: List[int] = []
     neg: List[int] = []
     owner: List[str] = []
@@ -43,6 +49,9 @@ def pair_contrasts(states: torch.Tensor, rows: Sequence[Mapping[str, Any]], axis
         pos.append(i)
         neg.append(j)
         owner.append(pid)
+    if 2 * len(pos) != len(at):
+        unused = sorted(set(at.values()) - set(pos) - set(neg))
+        raise ValueError(f"{axis}: {len(unused)} rows lack the swapped assignment, e.g. row {unused[0]}")
     ids = sorted(set(owner))
     index = {p: k for k, p in enumerate(ids)}
     own = torch.tensor([index[p] for p in owner], dtype=torch.long)

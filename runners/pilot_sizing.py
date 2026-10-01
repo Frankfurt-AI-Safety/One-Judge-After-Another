@@ -28,8 +28,11 @@ checks (strong–strong / weak–weak: half the pool; strong–weak: the smaller
 largest N for a direction that fails even there, which is reported) and per domain; the domain's answer is the
 maximum over directions, encodings and models.
 
-Every input must be a cross-marker summary, a comparative summary or a probe curve (anything else is refused); the output lists the
-inputs with their SHA-256, code commit and model commit.
+Every input must be a cross-marker summary, a comparative summary or a probe curve (anything else is refused), and
+no two inputs of one kind may come from the same model, domain, manifest and encodings (they would count as two
+models in the maximum; per-encoding runs of one model are fine);
+the output lists the inputs with their SHA-256, code commit and model commit, and each comparative row the pilot's
+``probe_records`` (the pairing capacity is measured after that probe split).
 
 Usage:
     python runners/pilot_sizing.py --inputs artifacts/results/demographic/pilot/*.json
@@ -156,7 +159,8 @@ def size_comparative(summary: Mapping[str, Any], deltas: Sequence[float], famili
             need = {f"delta={d:g},m={m}": (required_n(rs[binding], d, m, alpha, power) if binding else None)
                     for d in deltas for m in families}
             rows.append({"model": summary.get("model"), "domain": summary.get("domain"), "encoding": encoding,
-                         "group": pairing, "family": MAIN, "n_pilot": items[binding]["n"] if binding else None,
+                         "group": pairing, "family": MAIN, "probe_records": summary.get("probe_records"),
+                         "n_pilot": items[binding]["n"] if binding else None,
                          "available": available, "binding_contrast": binding, "r": rs.get(binding),
                          "r_by_contrast": rs, "unsized": sorted(set(items) - set(rs)),
                          "outside_rule": {k: v["r"] for k, v in outside.items()}, "required": need,
@@ -213,10 +217,23 @@ def input_record(path: Path, data: Mapping[str, Any], kind: str) -> Dict[str, An
             "model_revision": (meta.get("config") or {}).get("model_revision")}
 
 
+def input_kind(data: Mapping[str, Any]) -> Optional[str]:
+    """``probe_curve``, ``comparative`` or ``cross_marker`` by content (a comparative summary also has ``metrics`` and
+    ``selection``, so it is told apart first by ``pairing`` and ``pairs``); None for anything else."""
+    if "directions" in data and "grid" in data:
+        return "probe_curve"
+    if "metrics" in data and "pairing" in data and "pairs" in data:
+        return "comparative"
+    if "metrics" in data and "selection" in data:
+        return "cross_marker"
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--inputs", nargs="+", type=Path, required=True,
-                    help="Pilot JSONs: cross-marker summaries and/or probe curves (told apart by content)")
+                    help="Pilot JSONs: cross-marker and comparative summaries and probe curves (told apart by "
+                         "content)")
     ap.add_argument("--deltas", default=",".join(map(str, DEFAULT_DELTAS)))
     ap.add_argument("--families", default=",".join(map(str, DEFAULT_FAMILIES)))
     ap.add_argument("--alpha", type=float, default=0.05)
@@ -230,19 +247,28 @@ def main() -> None:
     pair_rows: List[Dict[str, Any]] = []
     curves: List[Dict[str, Any]] = []
     inputs: List[Dict[str, Any]] = []
+    seen: Dict[tuple, Path] = {}
     for path in args.inputs:
         data = json.loads(path.read_text())
-        if "directions" in data and "grid" in data:
+        kind = input_kind(data)
+        if kind is None:
+            raise SystemExit(f"{path}: neither a cross-marker or comparative summary nor a probe curve")
+        settings = data.get("settings") or {}
+        key = (kind, data.get("model"), data.get("domain"), data.get("direct_manifest"),
+               tuple(settings.get("encodings") or ()))
+        if key in seen:
+            raise SystemExit(f"{path} and {seen[key]}: two {kind} inputs for {key[1]} on {key[2]} "
+                             f"({key[3]}, encodings {list(key[4])}) — they would count as two models")
+        seen[key] = path
+        if kind == "probe_curve":
             curves.append(data)
             inputs.append(input_record(path, data, "probe_curve"))
-        elif "metrics" in data and "pairing" in data and "pairs" in data:   # before the cross-marker test
+        elif kind == "comparative":
             pair_rows += size_comparative(data, deltas, families, args.alpha, args.power)
             inputs.append(input_record(path, data, "comparative"))
-        elif "metrics" in data and "selection" in data:
+        else:
             rows += size_crossmarker(data, deltas, families, args.alpha, args.power)
             inputs.append(input_record(path, data, "cross_marker"))
-        else:
-            raise SystemExit(f"{path}: neither a cross-marker or comparative summary nor a probe curve")
     result = {"inputs": inputs, "deltas": deltas, "families": families, "alpha": args.alpha, "power": args.power,
               "records_per_group": rows, "records_per_group_max_over_models": max_over_models(rows),
               "pairs_per_pairing": pair_rows, "pairs_per_pairing_max_over_models": max_over_models(pair_rows),

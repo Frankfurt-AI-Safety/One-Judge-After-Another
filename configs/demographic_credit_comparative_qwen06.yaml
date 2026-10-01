@@ -5,12 +5,15 @@
 # marital status (or all three: the intersection corner); ASSISTANT: approves one, with a merit reason or a coded
 # doubt (income stability) about the other.
 # Pairings strong_strong / strong_weak / weak_weak; per pair and contrast both marker assignments x both
-# orders, so the records and the position cancel. Items come from cells.jsonl next to dataset_source:
+# orders, so the records and the position cancel; unmarked prompts give the merit yardstick, the scale and
+# QRM's gate. Items come from cells.jsonl next to dataset_source:
 #   python runners/generate_credit.py
 #
 #   python runners/run_comparative.py --config configs/demographic_credit_comparative_qwen06.yaml
-# Credit is the binding pool: ~800 records, ~70% good; after the probe records ~150-190 weak records remain, so
-# strong_weak and weak_weak get ~50-75 pairs each (each record is in at most one pair).
+# Credit is the binding pool: ~800 records, ~70% good. The pairing pools are exact quotas from the strata, so the
+# three pairings get equal capacity (the strong surplus stays unused): measured on the 0.4.0 build, 59 / 65 / 63
+# pairs (ss / sw / ww) with 150 probe records, 48 / 48 / 51 with 300 — a request of 150 takes all (each record is in
+# at most one pair).
 
 name: demographic_credit_comparative_qwen06
 bias_type: demographic
@@ -37,7 +40,6 @@ extra:
       weak_weak: 150
     encodings: [explicit, proxy]
     templates: null      # all templates in cells.jsonl
-    include_unmarked: true   # the gate for gate_fixed and the scale of the scaled effects
     paraphrases: 3
     seed: 42
     n_boot: 2000

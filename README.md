@@ -77,11 +77,14 @@ before any run:
   interval (`<macro>Lo` / `<macro>Hi`), skips results without `meta`, and lists the write-up macros an export
   would break.
 
-**Written after the reviews, not yet reviewed line by line** (2026-09-30): the comparative (two-applicant) arm —
+**Built after the reviews and reviewed separately** (built 2026-09-30, reviewed 2026-10-01 by three independent
+reviewers, 31 findings, all fixed; working notes of both dates): the comparative (two-applicant) arm —
 `pairs/comparative.py`, `scoring/comparative_metrics.py`, `probes/comparative_directions.py`,
 `runners/run_comparative.py`, three `configs/*comparative*` and their tests — plus its support in
-`runners/pilot_sizing.py`. It follows the reviewed conventions (data hashes, `meta`, `--overwrite`, record-pair
-bootstrap, probe-record exclusion, cross-fitting, `gate_fixed`) but has had only its tests and two MPS smoke runs.
+`runners/pilot_sizing.py`. The review changed, before any run: the pairing pools are split from the strata (equal
+capacity per pairing by exact quotas; credit ≈ 60–65 pairs each), the pairs no longer depend on `--encodings`/`--templates`/
+`--directions`, the strong–weak statistics are read against the unmarked prompts (exchange rate, overturn, rescue),
+and every setting changed on the CLI enters the result name — in `run_cross_marker.py` too.
 
 `cluster/` has changed a lot since the prototype and has not had its review session yet. Treat its code as
 unverified; `cluster/pilot.sh` still uses the old result names.
