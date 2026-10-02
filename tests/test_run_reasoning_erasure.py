@@ -151,22 +151,6 @@ def test_bad_inputs_are_refused_before_the_model_loads(run):
     assert run.loads == []
 
 
-def test_pooling_the_folds_keeps_each_applicant_one_cluster():
-    # two folds of two applicants × two states; fold 0's MLP right on applicant 0 only, fold 1's on both
-    item = lambda ok, label: (ok, ok, label, False)
-    folds = [[item(True, 1), item(True, 0), item(False, 1), item(False, 0)],
-             [item(True, 1), item(True, 0), item(True, 1), item(True, 0)]]
-    groups = [0, 0, 1, 1]                                   # one fold's states → applicant
-    pooled = rre.pool_folds(folds, groups, n_boot=200, seed=0)
-    iv = pooled["intervals"]["mlp_acc"]
-    assert pooled["mlp_acc"] == 0.75 and (iv["n_clusters"], iv["n_items"]) == (2, 8)
-    # applicant 0 scores 1, applicant 1 scores ½: resampling whole applicants gives 0.5–1, never another split
-    assert iv["ci_low"] == 0.5 and iv["ci_high"] == 1.0
-    assert [f["mlp_acc"] for f in pooled["by_fold"]] == [0.5, 1.0]
-    with pytest.raises(ValueError, match="cluster keys"):
-        rre.pool_folds(folds, groups[:3], n_boot=10, seed=0)
-
-
 def test_each_premise_slice_of_the_pooled_eval_is_that_premise(run, monkeypatch):
     # the eval states of all premises are embedded together and sliced per premise: a fake embedding encodes each
     # text's premise, and the valence labels differ for the favourable-truth premise, so a permuted slice shows

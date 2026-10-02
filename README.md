@@ -182,10 +182,12 @@ Deliberately **not** carried over:
   (`tests/test_decision_response.py::TestSubstratePortingGap`; the "experience" claim, which had no truth value on
   a Bias-in-Bios record, was deleted on 2026-09-30). The blatant decision-response arm covers all three domains and
   reads no record fields.
-- **LEACE has only been applied to the reasoning concepts**, never to a demographic direction.
-  The reward-vs-representation claim is scoped accordingly. The earlier "entangled" result is not evidence: the
-  surface of the old verdicts alone reproduces it (bag-of-words vectors, MLP after LEACE 0.98); the redesigned
-  test has not been run.
+- **LEACE on the demographic attributes is built but has not run** (`runners/run_demographic_erasure.py`, built
+  and reviewed once 2026-10-02): the direct arm's states, every axis and its two-way interactions, LEACE on the
+  concept and on every cell, held-out proxy names (crossed records × names intervals), a bag-of-words lexical control
+  of the marker clause and the reward gap after each erasure. Until it runs, the reward-vs-representation claim is scoped to the reasoning concepts,
+  whose earlier "entangled" result is not evidence either: the surface of the old verdicts alone reproduces it
+  (bag-of-words vectors, MLP after LEACE 0.98); the redesigned test has not been run.
 - **`auto_influence` is a preference rate.** It saturates at 1.00 for any consistently-signed
   effect and degenerates to noise once an effect is nulled — and both ends are where we read
   it. Report `mean_gap` / `abs_mean_gap` as the primary magnitude alongside it.

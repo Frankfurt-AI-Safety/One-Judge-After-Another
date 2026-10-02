@@ -138,3 +138,19 @@ def test_degenerate_bootstraps_say_so():
     first_only = {"f": lambda s: 1.0 if 1.0 in s else float("nan")}
     out = cluster_bootstrap([[1.0], [2.0], [3.0]], first_only, n_boot=200, seed=0)["f"]
     assert 0 < out["n_boot_valid"] < 200
+
+
+def test_crossed_bootstrap_weights_items_by_both_draws():
+    from scoring.intervals import crossed_bootstrap
+
+    items = [1.0, 0.0, 1.0, 0.0]
+    stats = {"mean": lambda s: sum(s) / len(s)}
+    out = crossed_bootstrap(items, ["r1", "r1", "r2", "r2"], ["a", "b", "a", "b"], stats, n_boot=400, seed=0)
+    iv = out["mean"]
+    assert iv["estimate"] == 0.5 and (iv["n_clusters"], iv["n_clusters_b"], iv["n_items"]) == (2, 2, 4)
+    # all-"a" draws give 1, all-"b" draws 0: the second factor's spread is in the interval
+    assert iv["ci_low"] == 0.0 and iv["ci_high"] == 1.0
+    one = crossed_bootstrap(items, ["r"] * 4, ["a", "b", "a", "b"], stats, n_boot=10, seed=0)["mean"]
+    assert one["n_boot_valid"] == 0 and one["ci_low"] != one["ci_low"]          # one record: NaN interval
+    with pytest.raises(ValueError, match="keys"):
+        crossed_bootstrap(items, ["r"] * 3, ["a"] * 4, stats)

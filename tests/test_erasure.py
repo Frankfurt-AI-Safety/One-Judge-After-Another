@@ -7,6 +7,7 @@ where the linear probe cannot.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -148,3 +149,119 @@ def test_the_mlp_vote_needs_an_odd_number_of_seeds():
     with pytest.raises(ValueError, match="odd"):
         from probes.erasure import probe_recoverability
         probe_recoverability(X, y, X, y, n_boot=0, mlp_seeds=2)
+
+
+def test_pooling_the_folds_keeps_each_cluster_one_cluster():
+    from probes.erasure import pool_folds
+
+    # two folds of two applicants × two states; fold 0's MLP right on applicant 0 only, fold 1's on both
+    item = lambda ok, label: (ok, ok, label, False)
+    folds = [[item(True, 1), item(True, 0), item(False, 1), item(False, 0)],
+             [item(True, 1), item(True, 0), item(True, 1), item(True, 0)]]
+    groups = [0, 0, 1, 1]                                   # one fold's states → applicant
+    pooled = pool_folds(folds, [groups, groups], n_boot=200, seed=0)
+    iv = pooled["intervals"]["mlp_acc"]
+    assert pooled["mlp_acc"] == 0.75 and (iv["n_clusters"], iv["n_items"]) == (2, 8)
+    # applicant 0 scores 1, applicant 1 scores ½: resampling whole applicants gives 0.5–1, never another split
+    assert iv["ci_low"] == 0.5 and iv["ci_high"] == 1.0
+    assert [f["mlp_acc"] for f in pooled["by_fold"]] == [0.5, 1.0]
+    with pytest.raises(ValueError, match="cluster key"):
+        pool_folds(folds, [groups, groups[:3]], n_boot=10, seed=0)
+    with pytest.raises(ValueError, match="cluster key"):
+        pool_folds(folds, [groups], n_boot=10, seed=0)
+
+
+def test_pooling_folds_that_evaluate_different_states():
+    from probes.erasure import pool_folds
+
+    # name folds: each fold scores other states of the records; a record's states of every fold form one cluster
+    item = lambda ok, label: (ok, ok, label, False)
+    folds = [[item(True, 1), item(False, 0)], [item(True, 0), item(True, 1), item(True, 0)], []]
+    keys = [["r0", "r1"], ["r0", "r1", "r1"], []]
+    pooled = pool_folds(folds, keys, n_boot=200, seed=0)
+    iv = pooled["intervals"]["mlp_acc"]
+    assert pooled["mlp_acc"] == 0.8 and (iv["n_clusters"], iv["n_items"]) == (2, 5)
+    # r0: 2 of 2 right, r1: 2 of 3 right; resampled whole: 2/3 (r1 twice) to 1 (r0 twice)
+    assert iv["ci_low"] == pytest.approx(2 / 3) and iv["ci_high"] == 1.0
+    assert pooled["by_fold"][2] is None and [f["mlp_acc"] for f in pooled["by_fold"][:2]] == [0.5, 1.0]
+
+
+def test_a_feature_erased_to_rounding_is_not_rescaled_into_a_separator():
+    # bag-of-words-like: two features that ARE the label (one word per pole) plus label-free ones. LEACE leaves the
+    # two at 0.5 ± float32 rounding; standardising that residue to unit variance made it a perfect separator
+    from probes.erasure import SNAP_RTOL
+
+    from itertools import product
+
+    grid = np.array(list(product((0, 1), repeat=5)))                         # label × 4 label-free words, balanced
+    rows = np.vstack([grid] * 12)
+    y = rows[:, 0]
+    X = torch.tensor(np.column_stack([y, 1 - y, rows[:, 1:]]), dtype=torch.float32)
+    tr, ev = slice(0, 32 * 9), slice(32 * 9, 32 * 12)
+    er = leace_erase(X[tr], y[tr])
+    Etr, Eev = apply_eraser(er, X[tr]), apply_eraser(er, X[ev])
+    assert 0 < Etr[:, 0].std() <= SNAP_RTOL * X[tr][:, 0].std()             # rounding, not signal
+    naive = probe_recoverability(Etr, y[tr], Eev, y[ev], n_boot=0)
+    assert naive["linear_acc"] > 0.95                                         # the bug, kept visible
+    guarded = probe_recoverability(Etr, y[tr], Eev, y[ev], n_boot=0, unerased_tr=X[tr])
+    assert guarded["snapped_features"] == 2
+    assert guarded["linear_acc"] < 0.65 and guarded["mlp_acc"] < 0.65
+    # without erasure nothing is snapped
+    assert probe_recoverability(X[tr], y[tr], X[ev], y[ev], n_boot=0, unerased_tr=X[tr])["snapped_features"] == 0
+    with pytest.raises(ValueError, match="shape"):
+        probe_recoverability(Etr, y[tr], Eev, y[ev], n_boot=0, unerased_tr=X[ev])
+
+
+def test_a_word_in_every_text_is_snapped_too():
+    # review 2026-10-02: a feature constant BEFORE erasure (a word in every clause) gets a label-correlated rounding
+    # residue from LEACE; it must be snapped as well, but it does not count as one the erasure left behind
+    from itertools import product
+
+    grid = np.array(list(product((0, 1), repeat=5)))
+    rows = np.vstack([grid] * 12)
+    y = rows[:, 0]
+    X = torch.tensor(np.column_stack([y, 1 - y, np.ones(len(y)), rows[:, 1:]]), dtype=torch.float32)
+    tr, ev = slice(0, 32 * 9), slice(32 * 9, 32 * 12)
+    er = leace_erase(X[tr], y[tr])
+    Etr, Eev = apply_eraser(er, X[tr]), apply_eraser(er, X[ev])
+    # the residue the review measured (std ~4e-8), planted on both splits as LEACE's own residue is (a function of x)
+    Etr[:, 2] = 1 + torch.tensor((y[tr] - 0.5) * 8e-8, dtype=torch.float64).float()
+    Eev[:, 2] = 1 + torch.tensor((y[ev] - 0.5) * 8e-8, dtype=torch.float64).float()
+    Etr[:, :2], Eev[:, :2] = 0.5, 0.5                                     # the label words: exactly erased here
+    assert Etr[:, 2].std() > 0
+    naive = probe_recoverability(Etr, y[tr], Eev, y[ev], n_boot=0)
+    assert naive["linear_acc"] > 0.95                                     # the bug, kept visible
+    guarded = probe_recoverability(Etr, y[tr], Eev, y[ev], n_boot=0, unerased_tr=X[tr])
+    assert guarded["linear_acc"] < 0.65 and guarded["mlp_acc"] < 0.65
+    assert guarded["snapped_features"] == 1                    # the constant word (woman/man were left exactly 0.5)
+
+
+def test_chance_is_each_folds_majority_share():
+    from probes.erasure import pool_folds
+
+    # fold 0: 3 of 4 labels 1; fold 1: 1 of 4. Pooled share ½, but within each fold an uninformative probe can reach ¾
+    item = lambda label: (True, True, label, False)
+    folds = [[item(1), item(1), item(1), item(0)], [item(0), item(0), item(0), item(1)]]
+    pooled = pool_folds(folds, [list("abcd"), list("abcd")], n_boot=50, seed=0)
+    assert pooled["chance"] == 0.75
+    # the same states in one fit: the plain majority share
+    assert pool_folds([folds[0] + folds[1]], [list("abcdabcd")], n_boot=0, seed=0)["chance"] == 0.5
+
+
+def test_names_resampled_crossed_widen_the_interval():
+    from probes.erasure import pool_folds
+
+    # 40 records × 4 names; the probe is right on every name but one, where it is always wrong: a record bootstrap
+    # treats that name as fixed, the crossed one also draws names
+    folds, keys, names = [[]], [[]], [[]]
+    for r in range(40):
+        for n in "ABCD":
+            folds[0].append((n != "D", n != "D", r % 2, False))
+            keys[0].append(r)
+            names[0].append(n)
+    records = pool_folds(folds, keys, n_boot=500, seed=0)["intervals"]["mlp_acc"]
+    crossed = pool_folds(folds, keys, n_boot=500, seed=0, keys_b=names)["intervals"]["mlp_acc"]
+    assert records["ci_high"] - records["ci_low"] < 1e-9           # every record scores ¾: no spread over records
+    assert crossed["ci_high"] - crossed["ci_low"] > 0.2 and crossed["n_clusters_b"] == 4
+    with pytest.raises(ValueError, match="second key"):
+        pool_folds(folds, keys, n_boot=10, seed=0, keys_b=[names[0][:-1]])

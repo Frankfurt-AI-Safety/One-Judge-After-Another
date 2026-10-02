@@ -24,7 +24,7 @@
 # 70B one at the sizes of amendment (1) (cross-marker 100 + 100 / 50 + 50; comparative 50 / 25 pairs per pairing).
 # Part 2, TEST RUNS — every other planned experiment once: the placement matrix, the reasoning arm (flip, probe,
 # erasure per domain, then the cross-domain transfer), the direct arm (battery per domain, the grade-level stage
-# design, A2 on both positioned manifests), A2's main-effect decomposition, the blatant decision floor, additivity,
+# design, A2 on both positioned manifests), the demographic erasure test per domain, A2's main-effect decomposition, the blatant decision floor, additivity,
 # the real-field check and the Bias-in-Bios scrub check. Lane `small` runs them at the configured (main-run)
 # sizes — the full-scale dress rehearsal —, lanes `8b` and `70b` at reduced sizes, for timings and plumbing.
 # Nothing in part 2 sizes anything; no decision is read from it before the headline family is fixed.
@@ -113,6 +113,7 @@ C_CREDIT=(); C_HIRING=(); C_EDU=()                     # the configured 150 per 
 M_PAIRS=(); M_EDU_PAIRS=()                             # the matrix on the comparative arm's configured pairs
 R_FLIP=(); R_ITEMS=()                                  # reasoning: the runners' defaults (200 + 200)
 A2=(); SCRUB=(); DECISION=()
+ERASE=()                                               # demographic erasure: the runner's default, 200 eval records
 case "$LANE" in
   8b)
     M_PAIRS=(--n-pairs 30); M_EDU_PAIRS=(--n-pairs 30)
@@ -124,6 +125,7 @@ case "$LANE" in
     M_PAIRS=(--n-pairs 15); M_EDU_PAIRS=(--n-pairs 8)
     R_FLIP=(--n-items 100); R_ITEMS=(--probe-items 100 --eval-items 100)
     A2=(--n-essays 150); SCRUB=(--probe-items 300 --eval-items 300)
+    ERASE=(--eval-records 100)
     ;;
   smoke)
     PR=(--probe-records 20); CURVE=(--grid 10,20 --max-eval 40 --n-boot 50)
@@ -132,6 +134,7 @@ case "$LANE" in
     M_PAIRS=("${C_CREDIT[@]}"); M_EDU_PAIRS=("${C_CREDIT[@]}")
     R_FLIP=(--n-items 8); R_ITEMS=(--probe-items 8 --eval-items 8)
     A2=(--n-essays 6); SCRUB=(--probe-items 20 --eval-items 20); DECISION=(--n-items 8)
+    ERASE=(--eval-records 8 --name-folds 2 --n-boot 50)
     ;;
 esac
 
@@ -170,6 +173,12 @@ step battery_education      run_battery.py --config "$EDU_D"   "${PR[@]}" "${EDU
 step battery_grade_level    run_battery.py --config "$STAGE_D" "${PR[@]}" "${EDU_BATCH[@]}"
 step battery_a2_plausible   run_battery.py --config "$EDUPOS"  "${PR[@]}" "${EDU_BATCH[@]}"
 step battery_a2_implausible run_battery.py --config "$EDUPOS"  --dataset-source "$IMPLAUSIBLE" "${PR[@]}" "${EDU_BATCH[@]}"
+# LEACE + non-linear probe on the demographic attributes (RQ3): its training states are the battery's probe texts
+# (cache hits); most eval texts are new (the battery evaluates 200 pairs)
+step erasure_demographic_credit    run_demographic_erasure.py --config "$CREDIT_D" "${ERASE[@]}" "${PR[@]}"
+step erasure_demographic_hiring    run_demographic_erasure.py --config "$HIRING_D" "${ERASE[@]}" "${PR[@]}"
+step erasure_demographic_education run_demographic_erasure.py --config "$EDU_D"    "${ERASE[@]}" "${PR[@]}" \
+  "${EDU_BATCH[@]}"
 # A2's main-effect decomposition, the result group and its control
 step a2_maineffect_plausible   run_positioned_maineffect.py --config "$EDUPOS" --standpoint-fit plausible \
   "${A2[@]}" "${EDU_BATCH[@]}"

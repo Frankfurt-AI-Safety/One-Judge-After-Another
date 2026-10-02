@@ -21,12 +21,17 @@ and both classes must occur in a training split.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Hashable, Optional, Sequence, Tuple
+from typing import Any, Dict, Hashable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
 
 from probes.probe import project_to_null_space
+
+
+# A feature whose spread after an erasure is at most this share of its spread before is constant up to float rounding
+# (float32 leaves ~1e-7 of a unit-scale feature): `probe_recoverability` sets it to its mean before standardising.
+SNAP_RTOL = 1e-4
 
 
 def _as_tensor(y) -> torch.Tensor:
@@ -71,6 +76,7 @@ def probe_recoverability(
     X_tr: torch.Tensor, y_tr, X_ev: torch.Tensor, y_ev, seed: int = 0,
     groups_ev: Optional[Sequence[Hashable]] = None, n_boot: Optional[int] = None,
     reference_ok: Optional[Sequence[bool]] = None, return_items: bool = False, mlp_seeds: int = 1,
+    unerased_tr: Optional[torch.Tensor] = None,
 ) -> Dict[str, Any]:
     """Held-out recoverability of concept ``y`` from activations: linear vs non-linear probe accuracy,
     with the majority-class ``chance`` baseline. Features standardized on the train split.
@@ -89,6 +95,15 @@ def probe_recoverability(
     `recoverability_summary` pools over several fits (the reasoning erasure test's paraphrase folds). ``mlp_seeds`` > 1
     fits that many MLPs (seeds ``seed``, ``seed + 1``, …; an odd number) and takes their majority vote per state: one
     early-stopped fit can miss a non-linear structure another finds.
+
+    ``unerased_tr`` (the training states before an erasure, aligned with ``X_tr``) guards the standardisation: a
+    feature whose whole variance was the erased concept is left constant only up to float rounding (e.g. a
+    bag-of-words feature "woman" after LEACE: 0.5 ± 2e-7), and scaling it to unit variance would hand that residue to
+    both probes as a perfect separator (found 2026-10-02 on the demographic test's lexical control). The same holds
+    for a feature constant BEFORE erasure (a word in every text: LEACE gives it a label-correlated residue of ~4e-8;
+    review 2026-10-02). Features whose training spread after erasure is at most `SNAP_RTOL` of their spread before,
+    or that were constant before, are set to their training mean in both splits; ``snapped_features`` counts those
+    the erasure had left non-constant. Without it, nothing is snapped.
     """
     from sklearn.linear_model import LogisticRegression
     from sklearn.neural_network import MLPClassifier
@@ -102,6 +117,18 @@ def probe_recoverability(
         raise ValueError(f"{len(groups_ev)} groups for {len(yev)} eval states")
     if reference_ok is not None and len(reference_ok) != len(yev):
         raise ValueError(f"{len(reference_ok)} reference flags for {len(yev)} eval states")
+
+    snapped = 0
+    if unerased_tr is not None:
+        ref = unerased_tr.float().cpu().numpy()
+        if ref.shape != Xtr.shape:
+            raise ValueError(f"unerased_tr has shape {ref.shape}, the training states {Xtr.shape}")
+        spread, after = ref.std(axis=0), Xtr.std(axis=0)
+        dead = (after <= SNAP_RTOL * spread) | (spread == 0)
+        mean = Xtr.mean(axis=0)
+        Xtr, Xev = Xtr.copy(), Xev.copy()
+        Xtr[:, dead], Xev[:, dead] = mean[dead], mean[dead]
+        snapped = int((dead & (after > 0)).sum())
 
     scaler = StandardScaler().fit(Xtr)
     Xtr, Xev = scaler.transform(Xtr), scaler.transform(Xev)
@@ -119,18 +146,22 @@ def probe_recoverability(
     items = list(zip(lin_ok.tolist(), mlp_ok.tolist(), yev.tolist(), ref))
     keys = list(range(len(items))) if groups_ev is None else list(groups_ev)
     out = {**recoverability_summary(items, keys, seed=seed, n_boot=n_boot, reference=reference_ok is not None),
-           "n_train": int(len(ytr)), "n_eval": int(len(yev))}
+           "n_train": int(len(ytr)), "n_eval": int(len(yev)), "snapped_features": snapped}
     if return_items:
         out["items"] = items
     return out
 
 
-def recoverability_summary(items: Sequence[Tuple[bool, bool, int, bool]], keys: Sequence[Hashable], seed: int = 0,
-                           n_boot: Optional[int] = None, reference: bool = False) -> Dict[str, Any]:
-    """Accuracies, ``chance`` (the majority-class share) and their intervals over resamples of whole ``keys``
-    clusters, from per-state ``items`` (linear correct, MLP correct, label, reference correct) — of one fit, or of
-    several pooled (then a key names the same unit, e.g. an applicant, in every fit)."""
-    from scoring.intervals import DEFAULT_N_BOOT, cluster_bootstrap, clusters_of
+def recoverability_summary(items: Sequence[Tuple], keys: Sequence[Hashable], seed: int = 0,
+                           n_boot: Optional[int] = None, reference: bool = False,
+                           keys_b: Optional[Sequence[Hashable]] = None) -> Dict[str, Any]:
+    """Accuracies, ``chance`` and their intervals over resamples of whole ``keys`` clusters, from per-state ``items``
+    (linear correct, MLP correct, label, reference correct[, fit]) — of one fit, or of several pooled (then a key
+    names the same unit, e.g. an applicant, in every fit). ``chance`` is the majority-class share; for pooled fits
+    (items carrying their fit as a fifth entry, `pool_folds`) the item-weighted mean of each fit's own majority share,
+    the most an uninformative probe can reach in each fit. ``keys_b`` (a second key per item, e.g. its proxy first
+    name) resamples both factors crossed (`scoring.intervals.crossed_bootstrap`)."""
+    from scoring.intervals import DEFAULT_N_BOOT, cluster_bootstrap, clusters_of, crossed_bootstrap
 
     if len(keys) != len(items):
         raise ValueError(f"{len(keys)} cluster keys for {len(items)} items")
@@ -139,8 +170,10 @@ def recoverability_summary(items: Sequence[Tuple[bool, bool, int, bool]], keys: 
         return lambda s: float(np.mean([it[k] for it in s]))
 
     def chance(s) -> float:
-        share = float(np.mean([it[2] for it in s]))
-        return max(share, 1.0 - share)
+        by_fit: Dict[Hashable, List[int]] = {}
+        for it in s:
+            by_fit.setdefault(it[4] if len(it) > 4 else None, []).append(it[2])
+        return float(sum(max(sum(ls), len(ls) - sum(ls)) for ls in by_fit.values()) / len(s))
 
     stats = {"linear_acc": acc(0), "mlp_acc": acc(1), "chance": chance,
              "linear_above_chance": lambda s: acc(0)(s) - chance(s),
@@ -148,19 +181,57 @@ def recoverability_summary(items: Sequence[Tuple[bool, bool, int, bool]], keys: 
     if reference:
         stats.update({"reference_acc": acc(3), "linear_minus_reference": lambda s: acc(0)(s) - acc(3)(s),
                       "mlp_minus_reference": lambda s: acc(1)(s) - acc(3)(s)})
-    intervals = cluster_bootstrap(clusters_of(items, keys), stats,
-                                  n_boot=DEFAULT_N_BOOT if n_boot is None else n_boot, seed=seed)
+    n_boot = DEFAULT_N_BOOT if n_boot is None else n_boot
+    if keys_b is None:
+        intervals = cluster_bootstrap(clusters_of(items, keys), stats, n_boot=n_boot, seed=seed)
+    else:
+        intervals = crossed_bootstrap(items, keys, keys_b, stats, n_boot=n_boot, seed=seed)
     return {"linear_acc": acc(0)(items), "mlp_acc": acc(1)(items), "chance": chance(items), "intervals": intervals}
 
 
-def bag_of_words(train_texts: Sequence[str], eval_texts: Sequence[str]):
+def pool_folds(folds: Sequence[Sequence[Tuple[bool, bool, int, bool]]], keys: Sequence[Sequence[Hashable]],
+               n_boot: int, seed: int, keys_b: Optional[Sequence[Sequence[Hashable]]] = None) -> Dict[str, Any]:
+    """Several fits' eval items pooled (`recoverability_summary`, a key naming the same cluster in every fold, so a
+    cluster's states of every fold are resampled together) with intervals, and each fold's point values
+    (``by_fold``). ``keys`` holds one key list per fold, aligned with that fold's items: the same list in every fold
+    when every fold reads the same states (the reasoning test's paraphrase folds), another one per fold when the folds
+    evaluate different states (the demographic test's name folds; a fold without eval states reads None in
+    ``by_fold``). ``chance`` is taken per fold (each fold's majority share, item-weighted): where the folds' label
+    shares differ, a probe could otherwise beat the pooled share without information, e.g. by predicting its training
+    minority. ``keys_b`` (one second-key list per fold, e.g. the proxy names) makes the interval a crossed bootstrap."""
+    if len(keys) != len(folds) or any(len(k) != len(f) for k, f in zip(keys, folds)):
+        raise ValueError("one cluster key per item of every fold")
+    if keys_b is not None and (len(keys_b) != len(folds) or any(len(k) != len(f) for k, f in zip(keys_b, folds))):
+        raise ValueError("one second key per item of every fold")
+    items = [(*it[:4], f) for f, its in enumerate(folds) for it in its]
+    point = lambda its: {k: v for k, v in recoverability_summary(its, list(range(len(its))), seed=seed, n_boot=0)
+                         .items() if k != "intervals"}
+    flat_b = None if keys_b is None else [k for ks in keys_b for k in ks]
+    return {**recoverability_summary(items, [k for ks in keys for k in ks], seed=seed, n_boot=n_boot, keys_b=flat_b),
+            "by_fold": [point(f) if f else None for f in folds]}
+
+
+def erasure_verdict(rows: Dict[str, Any]) -> str:
+    """Read a row: the concept must be decodable without erasure (the ``none`` row's linear probe above chance), else
+    the row says nothing — e.g. the probes do not transfer to the evaluated states; then the MLP after LEACE (the
+    ``leace`` row): above chance ⇒ non-linearly recoverable (entangled), not ⇒ low-complexity."""
+    if not rows["none"]["intervals"]["linear_above_chance"]["ci_low"] > 0:
+        return "not decodable without erasure: says nothing"
+    if rows["leace"]["intervals"]["mlp_above_chance"]["ci_low"] > 0:
+        return "non-linearly recoverable after LEACE (entangled)"
+    return "not recoverable after LEACE (low-complexity)"
+
+
+def bag_of_words(train_texts: Sequence[str], eval_texts: Sequence[str], token_pattern: str = r"[A-Za-z']+"):
     """Binary bag-of-words vectors (float32 tensors) of ``train_texts`` and ``eval_texts``, the vocabulary taken from
     the training texts: a representation with nothing but word identity. Run through the same erasure and probes as
     the model's states, it is the **lexical control**: what surface features alone recover. A model's
-    non-linear recovery after LEACE says more than the text's surface only where it exceeds this control."""
+    non-linear recovery after LEACE says more than the text's surface only where it exceeds this control.
+    ``token_pattern`` defines a word (default: letters only; the demographic test adds digits, which carry its ages
+    and birth years)."""
     from sklearn.feature_extraction.text import CountVectorizer
 
-    vec = CountVectorizer(binary=True, lowercase=True, token_pattern=r"[A-Za-z']+").fit(train_texts)
+    vec = CountVectorizer(binary=True, lowercase=True, token_pattern=token_pattern).fit(train_texts)
     as_tensor = lambda texts: torch.tensor(vec.transform(texts).toarray(), dtype=torch.float32)
     return as_tensor(train_texts), as_tensor(eval_texts)
 

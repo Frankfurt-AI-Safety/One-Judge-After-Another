@@ -36,9 +36,10 @@ answer**, read from the 95% interval of ``mlp_above_chance`` (clustered by appli
 correlated), one-sided: clearly above 0 ⇒ non-linearly recoverable / entangled; reaching 0 or below ⇒ low-complexity
 (the baseline is the majority-class share, >= 0.5, so a probe at chance sits at or below it) — but only where the
 concept is decodable without erasure (the "none" row's linear probe above chance): the demographic premise is never
-trained on, so there a row at chance may only mean the probes do not transfer to it (``verdict``, `erasure_verdict`).
+trained on, so there a row at chance may only mean the probes do not transfer to it (``verdict``,
+`probes.erasure.erasure_verdict`).
 Every row pools the three folds (each fold's probes on the eval states of its held-out wording; the interval resamples
-applicants with all their folds; `probes.erasure.recoverability_summary`), and ``by_fold`` gives each fold's point
+applicants with all their folds; `probes.erasure.pool_folds`), and ``by_fold`` gives each fold's point
 values. Each row comes
 with the **lexical control** (``lexical_control``): the same pipeline on bag-of-words vectors of the same verdicts
 (`probes.erasure.bag_of_words`). The model's recovery says more than the text's surface only where it exceeds it.
@@ -81,8 +82,8 @@ from scoring.demographic_experiment import DemographicBiasExperiment
 from scoring.intervals import DEFAULT_N_BOOT
 from probes.probe import get_embeddings
 from probes.erasure import (
-    apply_diffmean, apply_eraser, bag_of_words, diffmean_direction, leace_erase, probe_recoverability,
-    recoverability_summary,
+    apply_diffmean, apply_eraser, bag_of_words, diffmean_direction, erasure_verdict, leace_erase, pool_folds,
+    probe_recoverability,
 )
 from runners.run_decision_response import select_items
 from runners.run_reasoning_flip import reasoning_records
@@ -143,18 +144,8 @@ def erasure_rows(Xtr: torch.Tensor, ytr: List[int], Xev: torch.Tensor, yev: List
             eraser = leace_erase(Xtr, ytr if erase is None else erase)
             tr, ev = apply_eraser(eraser, Xtr), apply_eraser(eraser, Xev)
         rows[method] = probe_recoverability(tr, ytr, ev, yev, seed=seed, groups_ev=groups_ev, n_boot=0,
-                                            return_items=True, mlp_seeds=MLP_SEEDS)
+                                            return_items=True, mlp_seeds=MLP_SEEDS, unerased_tr=Xtr)
     return rows
-
-
-def pool_folds(folds: List[List[Any]], groups: List[int], n_boot: int, seed: int) -> Dict[str, Any]:
-    """The eval states' items of every fold pooled (an applicant's states of every fold resampled together; the same
-    applicant index in every fold) with intervals, and each fold's point values (``by_fold``)."""
-    items = [it for f in folds for it in f]
-    point = lambda its: {k: v for k, v in recoverability_summary(its, list(range(len(its))), seed=seed, n_boot=0)
-                         .items() if k != "intervals"}
-    return {**recoverability_summary(items, groups * len(folds), seed=seed, n_boot=n_boot),
-            "by_fold": [point(f) for f in folds]}
 
 
 def run_domain(exp, cfg, dom, premises: Tuple[str, str, str], probe_recs: List[Any], eval_recs: List[Any], seed: int,
@@ -167,6 +158,8 @@ def run_domain(exp, cfg, dom, premises: Tuple[str, str, str], probe_recs: List[A
     fitted_on = (frame.control, frame.favourable)
     model = {(p, c, m): [] for p in premises for c in CONCEPTS for m in METHODS}
     lexical = {(p, c, m): [] for p in premises for c in CONCEPTS for m in METHODS}
+    # features an erasure left constant up to rounding, summed over the folds (`probes.erasure.probe_recoverability`)
+    snapped = {(kind, c, m): 0 for kind in ("model", "lexical") for c in CONCEPTS for m in METHODS}
     eval_ids = None
     for fit, held in PARAPHRASE_FOLDS:
         train = Split(exp.tokenizer, [it for p in fitted_on for it in reasoning_items(dom, p, probe_recs, fit, seed)])
@@ -189,31 +182,23 @@ def run_domain(exp, cfg, dom, premises: Tuple[str, str, str], probe_recs: List[A
             for store, (X, E) in ((model, (Xtr, Xev)), (lexical, (Ltr, Lev))):
                 rows = erasure_rows(X, train.labels[c], E, labels, groups, seed, erase)
                 for m in METHODS:
+                    snapped[("model" if store is model else "lexical", c, m)] += rows[m]["snapped_features"]
                     for k, p in enumerate(premises):
                         store[(p, c, m)].append(rows[m]["items"][k * size:(k + 1) * size])
-    groups = evals[premises[0]].groups
+    keys = [evals[premises[0]].groups] * len(PARAPHRASE_FOLDS)    # every fold reads the same applicants
     out = []
     for p in premises:
         for c in CONCEPTS:
-            rows = {m: pool_folds(model[(p, c, m)], groups, n_boot, seed) for m in METHODS}
+            rows = {m: pool_folds(model[(p, c, m)], keys, n_boot, seed) for m in METHODS}
             out.append({"premise": p, "concept": c, "fitted_on": list(fitted_on),
                         "erased_jointly": list(JOINT) if c in JOINT else [c],
                         "favourable_true": frame.premises[p].favourable_true, "n_train": len(train.texts),
                         "n_eval": size, "folds": len(PARAPHRASE_FOLDS), "rows": rows,
-                        "lexical_control": {m: pool_folds(lexical[(p, c, m)], groups, n_boot, seed) for m in METHODS},
+                        "lexical_control": {m: pool_folds(lexical[(p, c, m)], keys, n_boot, seed) for m in METHODS},
+                        "snapped_features": {kind: {m: snapped[(kind, c, m)] for m in METHODS}
+                                             for kind in ("model", "lexical")},
                         "verdict": erasure_verdict(rows)})
     return out
-
-
-def erasure_verdict(rows: Dict[str, Any]) -> str:
-    """Read a row: the concept must be decodable without erasure (the linear probe's interval above chance), else the
-    row says nothing — on the demographic premise, which is never trained on, that means the probes do not transfer
-    to it; then the MLP after LEACE: above chance ⇒ non-linearly recoverable (entangled), not ⇒ low-complexity."""
-    if not rows["none"]["intervals"]["linear_above_chance"]["ci_low"] > 0:
-        return "not decodable without erasure: says nothing"
-    if rows["leace"]["intervals"]["mlp_above_chance"]["ci_low"] > 0:
-        return "non-linearly recoverable after LEACE (entangled)"
-    return "not recoverable after LEACE (low-complexity)"
 
 
 def default_out(domain: str, model_path: str, variant: str = "") -> Path:

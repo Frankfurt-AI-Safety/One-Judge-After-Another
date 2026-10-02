@@ -74,6 +74,45 @@ def cluster_bootstrap(clusters: Sequence[Sequence[Any]], stats: Mapping[str, Sta
     return out
 
 
+def crossed_bootstrap(items: Sequence[Any], keys: Sequence[Hashable], keys_b: Sequence[Hashable],
+                      stats: Mapping[str, Stat], n_boot: int = DEFAULT_N_BOOT,
+                      seed: int = 0) -> Dict[str, Dict[str, float]]:
+    """`cluster_bootstrap` for items crossed in two random factors (e.g. records × proxy first names): each replicate
+    resamples both factors' levels independently with replacement, and an item enters as often as the product of its
+    two levels' draw counts (the two-way "pigeonhole" bootstrap; conservative). The interval then covers another draw
+    of records *and* of the second factor's levels, which a record bootstrap treats as fixed. Entries as in
+    `cluster_bootstrap`, plus ``n_clusters_b``; NaN intervals when either factor has fewer than two levels."""
+    if not len(keys) == len(keys_b) == len(items):
+        raise ValueError(f"{len(keys)} and {len(keys_b)} keys for {len(items)} items")
+    levels_a, levels_b = list(dict.fromkeys(keys)), list(dict.fromkeys(keys_b))
+    ia = np.asarray([levels_a.index(k) for k in keys]) if items else np.zeros(0, dtype=int)
+    ib = np.asarray([levels_b.index(k) for k in keys_b]) if items else np.zeros(0, dtype=int)
+    everything = list(items)
+    nan = float("nan")
+    extra = {"n_clusters": len(levels_a), "n_clusters_b": len(levels_b), "n_items": len(everything)}
+    if len(levels_a) < 2 or len(levels_b) < 2:
+        return {name: {"estimate": float(fn(everything)) if everything else nan, "ci_low": nan, "ci_high": nan,
+                       **extra, "n_boot_valid": 0} for name, fn in stats.items()}
+    rng = np.random.default_rng(seed)
+    boot: Dict[str, List[float]] = {name: [] for name in stats}
+    for _ in range(n_boot):
+        ca = np.bincount(rng.integers(0, len(levels_a), len(levels_a)), minlength=len(levels_a))
+        cb = np.bincount(rng.integers(0, len(levels_b), len(levels_b)), minlength=len(levels_b))
+        weight = ca[ia] * cb[ib]
+        sample = [x for x, w in zip(everything, weight) for _ in range(w)]
+        for name, fn in stats.items():
+            boot[name].append(fn(sample) if sample else nan)
+    out: Dict[str, Dict[str, float]] = {}
+    for name, fn in stats.items():
+        values = np.asarray(boot[name], dtype=float)
+        values = values[~np.isnan(values)]
+        out[name] = {"estimate": float(fn(everything)),
+                     "ci_low": float(np.percentile(values, 2.5)) if values.size else nan,
+                     "ci_high": float(np.percentile(values, 97.5)) if values.size else nan,
+                     **extra, "n_boot_valid": int(values.size)}
+    return out
+
+
 # --------------------------------------------------------------------------- matched pairs (A vs B) ---
 def _mean(xs: Sequence[float]) -> float:
     return float(np.mean(xs)) if len(xs) else float("nan")
