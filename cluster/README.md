@@ -426,6 +426,30 @@ both GPUs; education dominates). Part 1 runs first in every lane, so the sizing 
    carry ids and numbers only, so they can be copied to the Mac (the `_rewards.jsonl` side files too; the
    `_directions.pt` files hold directions only).
 
+**First loads of the other models** (2026-10-02). Before a main run commits GPU hours to a model the pilot does not
+cover, three steps:
+
+1. Download every missing checkpoint (no GPU; already-cached files are skipped; ~0.5 TB for the mid tier and the
+   second 70B — `--check` prints the free space first):
+   ```bash
+   det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config resources.slots=0 --config idle_timeout=24h --config description=prefetch_all python cluster/prefetch_models.py --tier all
+   ```
+2. `cluster/load_check.py` on one GPU: each model loaded as the runners load it (pinned revision, attention,
+   offload refusal, `verify_score_path`), then peak memory and texts/s at 2,048 and 4,096 tokens for batch 1, 2,
+   4, … up to the first out-of-memory. Results in `artifacts/results/load_check/` (numbers only). **While pilot lanes
+   run, do not re-stage** (it would change `STAGED_COMMIT` under them): copy the script to `$PFSS/tools/` and run it
+   from the staged repo, which it imports unchanged (`meta.script_sha256` names the copy):
+   ```bash
+   ssh det-stage mkdir -p /pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/tools                      # Mac, a slots=0 shell open
+   scp cluster/load_check.py det-stage:/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/tools/
+   det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config idle_timeout=12h --config description=load_check bash -c "cd \$PFSS/OneBiasAfterAnotherFork && python \$PFSS/tools/load_check.py"
+   ```
+3. Once the lanes have finished (re-stage then): the smoke lane on the model, every runner at a tiny size, with
+   a batch that `load_check` showed to fit:
+   ```bash
+   det command run -d -w IL_rm_bias --config-file cluster/config.yaml --config idle_timeout=24h --config description=smoke_qrm bash -c "PILOT_EXTRA='--batch-size 2' bash cluster/pilot.sh smoke nicolinho/QRM-Gemma-2-27B"
+   ```
+
 | models | `resources.slots` |
 |---|---|
 | 0.6B, DeBERTa, 3× 8B | 1 |

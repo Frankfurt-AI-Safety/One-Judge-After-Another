@@ -33,14 +33,24 @@
 # $PFSS/pilot_logs/<step>_<lane>.log. A step whose JSON exists is skipped, so resubmitting a lane resumes it; a
 # failing step is logged and the lane moves on. The lane ends with a list of the failed steps.
 # (no `set -u`: macOS's bash 3.2, which runs the local dry run, treats an empty array as unset)
+#
+# `pilot.sh smoke <model>` runs the smoke lane on another model: every runner at a tiny size, the first real run of
+# a model the pilot does not cover (e.g. QRM's gated head). Its outputs are tagged smoke_<model name>; pass a smaller
+# batch for a large model with PILOT_EXTRA="--batch-size 2" (cluster/load_check.py says what fits).
 
-LANE="${1:?usage: pilot.sh smoke|small|8b|70b}"
+LANE="${1:?usage: pilot.sh smoke|small|8b|70b  |  pilot.sh smoke <model>}"
+TAG=$LANE
 case "$LANE" in
   smoke|small) MODEL=Skywork/Skywork-Reward-V2-Qwen3-0.6B ;;
   8b)    MODEL=Skywork/Skywork-Reward-V2-Llama-3.1-8B ;;
   70b)   MODEL=allenai/Llama-3.1-70B-Instruct-RM-RB2 ;;
   *)     echo "unknown lane: $LANE (smoke|small|8b|70b)"; exit 2 ;;
 esac
+if [ -n "${2:-}" ]; then
+  [ "$LANE" = smoke ] || { echo "a model argument is for the smoke lane only"; exit 2; }
+  MODEL=$2
+  TAG="smoke_$(basename "$MODEL")"
+fi
 PFSS="${PFSS:?PFSS is not set -- cluster/config.yaml sets it in every task}"
 cd "${PILOT_REPO:-$PFSS/OneBiasAfterAnotherFork}" || exit 1
 
@@ -75,7 +85,7 @@ FAILED=()
 step() {  # step <name> <runner> <args...>
   local name=$1 runner=$2
   shift 2
-  local out="$OUT/${name}_${LANE}.json" log="$LOGS/${name}_${LANE}.log"
+  local out="$OUT/${name}_${TAG}.json" log="$LOGS/${name}_${TAG}.log"
   if [ -f "$out" ]; then
     echo "$(date +%T) skip   $name (output exists)"
     return
@@ -125,7 +135,7 @@ case "$LANE" in
     ;;
 esac
 
-echo "$(date +%T) pilot lane $LANE: $MODEL"
+echo "$(date +%T) pilot lane $TAG: $MODEL"
 
 # ---- part 1: sizing --------------------------------------------------------------------------------------------
 step probecurve_credit      run_probe_curve.py   --config "$CREDIT_X" "${CURVE[@]}"
@@ -183,4 +193,4 @@ step additivity_education   run_additivity.py --domain education --encoding expl
 step realfield_credit       run_realfield.py  --config "$CREDIT_D" "${PR[@]}"
 step scrub_hiring           validate_bios_scrub.py --config "$HIRING_D" "${SCRUB[@]}" "${PR[@]}"
 
-echo "$(date +%T) pilot lane $LANE finished: ${#FAILED[@]} failed step(s)${FAILED[*]:+: ${FAILED[*]}}"
+echo "$(date +%T) pilot lane $TAG finished: ${#FAILED[@]} failed step(s)${FAILED[*]:+: ${FAILED[*]}}"
