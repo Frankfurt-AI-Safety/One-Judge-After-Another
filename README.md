@@ -123,7 +123,9 @@ the applicants differing in one axis (or all three), each pair under both marker
 the records and the position cancel from the marker effect r(choose protected) − r(choose reference). The
 **placement matrix** (`runners/run_placement_matrix.py`, exploratory, built and reviewed 2026-10-01) scores the
 comparative pairs' records in all three placements and nulls each placement's direction in the others, with one fold
-assignment and one bootstrap over pairs.
+assignment and one bootstrap over pairs. Across **domains and encodings** (`runners/run_demographic_transfer.py`,
+exploratory, built and reviewed once 2026-10-03) every direct-arm direction is projected out of every domain's direct gap and decision
+disparity, with proxy first names held out of the fit.
 
 ## Quick start
 
@@ -189,9 +191,19 @@ Deliberately **not** carried over:
   whose earlier "entangled" result is not evidence either: the surface of the old verdicts alone reproduces it
   (bag-of-words vectors, MLP after LEACE 0.98); the redesigned test has not been run.
 - **The RewardBench 2 accuracy guardrail (RQ4) is built but has not run** (`runners/run_rewardbench_guardrail.py`,
-  built 2026-10-02, not reviewed yet): every direct-arm direction, LEACE eraser and joint projection against the
+  built 2026-10-02, reviewed once 2026-10-03): every direct-arm direction, LEACE eraser and joint projection against the
   unedited model on RewardBench 2, non-inferiority at 2 points (the base paper used 5), after the unedited scores
   reproduce the published ones.
+- **The transfer of the demographic directions across domains and encodings (RQ5) is built but has not run**
+  (`runners/run_demographic_transfer.py` + `probes/transfer_directions.py`, built and reviewed once 2026-10-03):
+  every direct-arm direction (domain × encoding × axis) projected out of every target, on the direct gap and on the
+  cross-marker decision disparity, each row labelled by what it shares with the target (own, encoding, domain; a
+  component where an intersection and a single axis overlap; off-axis and unrelated as the specificity controls); a
+  held-out-template row, the single-axis directions against the intersection, a pooled other-domains direction and
+  random directions; proxy first names held out of every fit (the domains share the name pools); a paired-accuracy
+  reading with a bag-of-words and a bag-of-tokens control of the marker clauses. Only sex (three domains) and age
+  (credit, hiring) exist in more than one domain, and credit and hiring share most marker words. Proxy targets'
+  intervals condition on the name pools.
 - **`auto_influence` is a preference rate.** It saturates at 1.00 for any consistently-signed
   effect and degenerates to noise once an effect is nulled — and both ends are where we read
   it. Report `mean_gap` / `abs_mean_gap` as the primary magnitude alongside it.

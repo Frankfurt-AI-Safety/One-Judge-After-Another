@@ -388,7 +388,9 @@ step at a tiny size. With 4 A100s (since 2026-10-01) `small`, `8b` and `70b` run
   ~60). `70b`: amendment (1), cross-marker 100 + 100 (education 50 + 50), comparative 50 pairs per pairing
   (education 25), education at batch 2 (comparative: 1).
 - **Part 2, test runs** of everything else: the placement matrix, the reasoning arm (flip, probe, erasure per domain,
-  the transfer), the direct arm (battery per domain, grade-level stage, A2 on both positioned manifests), A2's main
+  the transfer), the direct arm (battery per domain, grade-level stage, A2 on both positioned manifests), the
+  demographic erasure test, the transfer of the demographic directions across domains and encodings (on the
+  cross-marker steps' records), the RewardBench 2 guardrail, A2's main
   effect, the decision floor (both encodings), additivity, the real-field check, the scrub check. `small` at the
   configured sizes (the full-scale dress rehearsal), `8b` and `70b` reduced (sizes at the top of `pilot.sh`).
   Nothing in part 2 sizes anything.
