@@ -230,9 +230,8 @@ Education essays are long: expect roughly 3x the credit runtime per record.
 
 **Every model is checked at load** (`verify_score_path`): the pipeline's reward, which is the score
 head on the pooled last-token state, must reproduce the model's own score on two texts. A model that
-pools differently is refused rather than silently mis-scored. As of 2026-09-24 that is **the
-OpenAssistant DeBERTa RM** (first-token `ContextPooler`); it cannot run until it has its own pooling and
-projection site.
+pools differently is refused rather than silently mis-scored (e.g. the OpenAssistant DeBERTa RM, first-token
+`ContextPooler`, which was dropped from the RM set on 2026-10-02).
 
 **QRM-Gemma-2-27B** (since 2026-09-26) is loaded with our own implementation of its architecture
 (`scoring/qrm.py`): its remote code imports a transformers constant that no longer exists, so
@@ -327,8 +326,8 @@ hiring ~4.4 h, education ~17.5 h, **~27 h of both GPUs per 70B model**, two thir
    not representative.
 
 **`.bin`-only checkpoints.** transformers >= 4.50 refuses PyTorch `.bin` weights under torch < 2.6
-(CVE-2025-32434), and the image has torch 2.3. Both AllenAI RB2 models (8B, 70B) and the DeBERTa RM publish
-only `.bin` on main. The RB2 models load from Hugging Face's own safetensors conversion (SFconvertbot pull
+(CVE-2025-32434), and the image has torch 2.3. Both AllenAI RB2 models (8B, 70B) publish only `.bin` on
+main. The RB2 models load from Hugging Face's own safetensors conversion (SFconvertbot pull
 requests), pinned in `scoring/backend.py::PINNED_REVISIONS`; `prefetch_models.py` fetches that revision and skips
 `.bin` wherever safetensors exist. Checked on the Hub 2026-09-26: the Nemotron ids exist; the two 32B ones are
 sequence classifiers stored in fp32 (~128 GB download, 64 GB in bf16), **Llama-3.3-Nemotron-70B-Reward is a
@@ -452,7 +451,7 @@ cover, three steps:
 
 | models | `resources.slots` |
 |---|---|
-| 0.6B, DeBERTa, 3× 8B | 1 |
+| 0.6B, 3× 8B | 1 |
 | 2× 27B, 2× 32B (54–64 GB bf16) | 1 |
 | 2× 70B (~140 GB bf16) | **2** |
 

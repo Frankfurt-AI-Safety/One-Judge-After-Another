@@ -112,7 +112,7 @@ def _load_transformers(config: Any) -> Tuple[Any, Any]:
     # Pin RIGHT padding. Every activation read in probe.py gathers the last real token via
     # `attention_mask.sum(dim=1) - 1`, which is only the last token under right padding; with
     # left padding that index lands mid-sequence on a pad and the scores are silently wrong.
-    # Of the eleven models, both Gemma-2-27B tokenizers (Skywork, QRM) default to 'left' (checked 2026-09-28).
+    # Of the ten models, both Gemma-2-27B tokenizers (Skywork, QRM) default to 'left' (checked 2026-09-28).
     tokenizer.padding_side = "right"
 
     # "cuda" / "auto" → let HF shard the model across all visible GPUs.

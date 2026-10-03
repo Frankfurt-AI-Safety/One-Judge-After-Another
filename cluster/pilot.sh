@@ -24,7 +24,8 @@
 # 70B one at the sizes of amendment (1) (cross-marker 100 + 100 / 50 + 50; comparative 50 / 25 pairs per pairing).
 # Part 2, TEST RUNS — every other planned experiment once: the placement matrix, the reasoning arm (flip, probe,
 # erasure per domain, then the cross-domain transfer), the direct arm (battery per domain, the grade-level stage
-# design, A2 on both positioned manifests), the demographic erasure test per domain, A2's main-effect decomposition, the blatant decision floor, additivity,
+# design, A2 on both positioned manifests), the demographic erasure test per domain, the RewardBench 2 guardrail,
+# A2's main-effect decomposition, the blatant decision floor, additivity,
 # the real-field check and the Bias-in-Bios scrub check. Lane `small` runs them at the configured (main-run)
 # sizes — the full-scale dress rehearsal —, lanes `8b` and `70b` at reduced sizes, for timings and plumbing.
 # Nothing in part 2 sizes anything; no decision is read from it before the headline family is fixed.
@@ -114,6 +115,7 @@ M_PAIRS=(); M_EDU_PAIRS=()                             # the matrix on the compa
 R_FLIP=(); R_ITEMS=()                                  # reasoning: the runners' defaults (200 + 200)
 A2=(); SCRUB=(); DECISION=()
 ERASE=()                                               # demographic erasure: the runner's default, 200 eval records
+GUARD=()                                               # RewardBench 2 guardrail: the whole benchmark
 case "$LANE" in
   8b)
     M_PAIRS=(--n-pairs 30); M_EDU_PAIRS=(--n-pairs 30)
@@ -135,6 +137,7 @@ case "$LANE" in
     R_FLIP=(--n-items 8); R_ITEMS=(--probe-items 8 --eval-items 8)
     A2=(--n-essays 6); SCRUB=(--probe-items 20 --eval-items 20); DECISION=(--n-items 8)
     ERASE=(--eval-records 8 --name-folds 2 --n-boot 50)
+    GUARD=(--max-items 10 --n-boot 50)
     ;;
 esac
 
@@ -179,6 +182,10 @@ step erasure_demographic_credit    run_demographic_erasure.py --config "$CREDIT_
 step erasure_demographic_hiring    run_demographic_erasure.py --config "$HIRING_D" "${ERASE[@]}" "${PR[@]}"
 step erasure_demographic_education run_demographic_erasure.py --config "$EDU_D"    "${ERASE[@]}" "${PR[@]}" \
   "${EDU_BATCH[@]}"
+# RQ4's accuracy guardrail on RewardBench 2 (the direct-arm directions and erasers of every domain; the benchmark's
+# rows up to 4,096 tokens, so the education batch)
+step rewardbench_guardrail  run_rewardbench_guardrail.py --config $CFG/rewardbench2_guardrail_qwen06.yaml "${GUARD[@]}" \
+  "${PR[@]}" "${EDU_BATCH[@]}"
 # A2's main-effect decomposition, the result group and its control
 step a2_maineffect_plausible   run_positioned_maineffect.py --config "$EDUPOS" --standpoint-fit plausible \
   "${A2[@]}" "${EDU_BATCH[@]}"

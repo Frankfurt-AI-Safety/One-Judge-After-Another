@@ -1,0 +1,67 @@
+# Published RewardBench 2 subset scores, for the guardrail's reproduction check (runners/run_rewardbench_guardrail.py):
+# the unedited model must reproduce them before any edit is read. Source: the leaderboard's results dataset
+# allenai/reward-bench-2-results, files eval-set/<model>.json, at the revision below (fetched 2026-10-02). The overall
+# score is the unweighted mean of the six. No published entry (2026-10-02) for the three NVIDIA Nemotron reward models:
+# their reproduction check reads "not available".
+source: allenai/reward-bench-2-results
+# Models whose per-completion scores the leaderboard publishes (eval-set-scores/<model>.json, ~16 MB each, at the same
+# revision; checked 2026-10-03): the reproduction check also requires our completion rewards to correlate with theirs
+# (extra.completion_r_min). Skywork-Reward-Gemma-2-27B has subset scores only.
+per_completion:
+  - Skywork/Skywork-Reward-V2-Qwen3-0.6B
+  - Skywork/Skywork-Reward-V2-Llama-3.1-8B
+  - Skywork/Skywork-Reward-V2-Qwen3-8B
+  - allenai/Llama-3.1-8B-Instruct-RM-RB2
+  - nicolinho/QRM-Gemma-2-27B
+  - allenai/Llama-3.1-70B-Instruct-RM-RB2
+revision: b19c7033e964187d12e74a43a07f2d727a3d37e5
+scores:
+  "Skywork/Skywork-Reward-V2-Qwen3-0.6B":
+    "Factuality": 0.58
+    "Precise IF": 0.4
+    "Math": 0.7158469945355191
+    "Safety": 0.8444444444444444
+    "Focus": 0.794949494949495
+    "Ties": 0.33972908870307145
+  "Skywork/Skywork-Reward-V2-Llama-3.1-8B":
+    "Factuality": 0.8463157894736842
+    "Precise IF": 0.6625
+    "Math": 0.7759562841530054
+    "Safety": 0.9666666666666667
+    "Focus": 0.9838383838383838
+    "Ties": 0.8123904054919743
+  "Skywork/Skywork-Reward-V2-Qwen3-8B":
+    "Factuality": 0.7989473684210526
+    "Precise IF": 0.5
+    "Math": 0.7704918032786885
+    "Safety": 0.94
+    "Focus": 0.9636363636363636
+    "Ties": 0.7293703022757848
+  "allenai/Llama-3.1-8B-Instruct-RM-RB2":
+    "Factuality": 0.7431578947368421
+    "Precise IF": 0.44375
+    "Math": 0.6174863387978142
+    "Safety": 0.8955555555555555
+    "Focus": 0.907070707070707
+    "Ties": 0.7638056465519024
+  "Skywork/Skywork-Reward-Gemma-2-27B":
+    "Factuality": 0.7368421052631579
+    "Precise IF": 0.403125
+    "Math": 0.7049180327868853
+    "Safety": 0.9422222222222222
+    "Focus": 0.9323232323232323
+    "Ties": 0.8261235237195598
+  "nicolinho/QRM-Gemma-2-27B":
+    "Factuality": 0.7852631578947369
+    "Precise IF": 0.371875
+    "Math": 0.6994535519125683
+    "Safety": 0.9577777777777777
+    "Focus": 0.9535353535353536
+    "Ties": 0.8320965188064731
+  "allenai/Llama-3.1-70B-Instruct-RM-RB2":
+    "Factuality": 0.8126315789473684
+    "Precise IF": 0.41875
+    "Math": 0.6994535519125683
+    "Safety": 0.8844444444444445
+    "Focus": 0.8646464646464647
+    "Ties": 0.8834617406200967

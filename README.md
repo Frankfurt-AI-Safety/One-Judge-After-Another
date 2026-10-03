@@ -188,6 +188,10 @@ Deliberately **not** carried over:
   of the marker clause and the reward gap after each erasure. Until it runs, the reward-vs-representation claim is scoped to the reasoning concepts,
   whose earlier "entangled" result is not evidence either: the surface of the old verdicts alone reproduces it
   (bag-of-words vectors, MLP after LEACE 0.98); the redesigned test has not been run.
+- **The RewardBench 2 accuracy guardrail (RQ4) is built but has not run** (`runners/run_rewardbench_guardrail.py`,
+  built 2026-10-02, not reviewed yet): every direct-arm direction, LEACE eraser and joint projection against the
+  unedited model on RewardBench 2, non-inferiority at 2 points (the base paper used 5), after the unedited scores
+  reproduce the published ones.
 - **`auto_influence` is a preference rate.** It saturates at 1.00 for any consistently-signed
   effect and degenerates to noise once an effect is nulled — and both ends are where we read
   it. Report `mean_gap` / `abs_mean_gap` as the primary magnitude alongside it.

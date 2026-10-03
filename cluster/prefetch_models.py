@@ -12,7 +12,7 @@ have to be pushed from a machine that does (see cluster/README.md).
 
     export HF_HOME=/pfss/mlde/workspaces/mlde_wsp_IL_rm_bias/hf_cache
     python cluster/prefetch_models.py --check          # connectivity + disk only
-    python cluster/prefetch_models.py --tier small     # 0.6B + DeBERTa, ~2 GB
+    python cluster/prefetch_models.py --tier small     # 0.6B, ~1 GB
     python cluster/prefetch_models.py --tier 8b        # the three 8B models
     python cluster/prefetch_models.py --tier all
 """
@@ -36,7 +36,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # the repo roo
 # logit, loaded through scoring/logit_reward.py.
 MODELS = [
     ("Skywork/Skywork-Reward-V2-Qwen3-0.6B",      0.6, "small", True),
-    ("OpenAssistant/reward-model-deberta-v3-large-v2", 0.4, "small", True),
     ("Skywork/Skywork-Reward-V2-Llama-3.1-8B",      8, "8b",   True),
     ("Skywork/Skywork-Reward-V2-Qwen3-8B",          8, "8b",   True),
     ("allenai/Llama-3.1-8B-Instruct-RM-RB2",        8, "8b",   True),
@@ -49,6 +48,23 @@ MODELS = [
 ]
 
 TIERS = ["small", "8b", "mid", "70b"]
+
+# What every tier needs for the RQ4 guardrail (runners/run_rewardbench_guardrail.py), read from its own configs so the
+# revisions cannot drift: RewardBench 2 at the revision the guardrail config pins (~7 MB), and the leaderboard's
+# per-completion scores of the models configs/rewardbench2_published.yaml lists (~16 MB each), which its reproduction
+# check needs.
+GUARDRAIL_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "rewardbench2_guardrail_qwen06.yaml"
+PUBLISHED = Path(__file__).resolve().parent.parent / "configs" / "rewardbench2_published.yaml"
+
+
+def guardrail_files() -> tuple:
+    """(dataset repo, revision) and the published per-completion files: [(repo, filename, revision)]."""
+    import yaml
+
+    extra = yaml.safe_load(GUARDRAIL_CONFIG.read_text())["extra"]
+    table = yaml.safe_load(PUBLISHED.read_text())
+    files = [(table["source"], f"eval-set-scores/{m}.json", table["revision"]) for m in table.get("per_completion", [])]
+    return ("allenai/reward-bench-2", extra["dataset_revision"]), files
 
 
 def preflight() -> bool:
@@ -121,6 +137,21 @@ def main() -> None:
             print(f"    FAILED: {type(e).__name__}: {e}")
             if not confirmed:
                 print("    (expected -- this id was never verified; find the real path first)")
+
+    from huggingface_hub import hf_hub_download
+
+    (repo, revision), files = guardrail_files()
+    print(f"--> dataset {repo} @ {revision[:10]}", flush=True)
+    try:
+        snapshot_download(repo, repo_type="dataset", revision=revision)
+    except Exception as e:  # noqa: BLE001
+        print(f"    FAILED: {type(e).__name__}: {e}")
+    for repo, filename, revision in files:
+        print(f"--> {repo}/{filename} @ {revision[:10]}", flush=True)
+        try:
+            hf_hub_download(repo, filename, repo_type="dataset", revision=revision)
+        except Exception as e:  # noqa: BLE001
+            print(f"    FAILED: {type(e).__name__}: {e}")
 
     for hf_id, _, _, _ in skipped:
         print(f"skipped (unverified id): {hf_id}")

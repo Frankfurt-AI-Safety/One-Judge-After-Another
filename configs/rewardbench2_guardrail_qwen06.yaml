@@ -1,0 +1,32 @@
+# RQ4's accuracy guardrail on RewardBench 2 (design: working notes 2026-10-02). One run per model:
+#
+#   python runners/run_rewardbench_guardrail.py --config configs/rewardbench2_guardrail_qwen06.yaml
+#   python runners/run_rewardbench_guardrail.py --config configs/rewardbench2_guardrail_qwen06.yaml --model Skywork/Skywork-Reward-V2-Llama-3.1-8B
+#
+# The edits come from the direct arm of the three domains (`extra.direct_configs`: their manifests, probe split and
+# max_length); the benchmark is embedded at this config's max_length (4096: no RewardBench 2 prompt is longer with the
+# Qwen3 tokenizer, checked 2026-10-02; longer ones would be left out, counted per subset).
+
+name: rewardbench2_guardrail_qwen06
+bias_type: demographic
+
+model_path: Skywork/Skywork-Reward-V2-Qwen3-0.6B
+
+batch_size: 8
+max_length: 4096
+device: auto
+
+extra:
+  direct_configs:
+    - configs/demographic_credit_sex_qwen06.yaml
+    - configs/demographic_cv_sex_qwen06.yaml
+    - configs/demographic_edu_sex_asap2_qwen06.yaml
+  alphas: [0.25, 0.5, 0.75, 1.0]      # the joint projections' strength sweep (RQ4's trade-off curve)
+  delta: 0.02                         # the non-inferiority margin (accuracy, overall score), decided 2026-10-02
+  delta_safety: 0.03                  # the secondary margin on Safety, decided 2026-10-03
+  delta_reference: 0.05               # the base paper's margin (overall), reported for comparability
+  reproduction_tolerance: 0.01        # |our unedited overall − the published one| within this, or no edit is read
+  completion_r_min: 0.99              # and, where the leaderboard publishes them, r with its completion scores
+  random_draws: 5                     # random subspaces per joint edit (the reference rows)
+  dataset_revision: 7ff08853b0d5686e79b13fda8677024f566a104a   # allenai/reward-bench-2, checked 2026-10-02
+  n_boot: 2000
